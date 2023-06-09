@@ -1,36 +1,43 @@
 {
   "name": "ribu",
   "description": "A Concurrency Library for Javascript",
-	"exports": "./source/index.js",
   "version": "0.1.0",
-  "devDependencies": {
-    "sophi": "^0.1.0",
-    "typescript": "^5.1.3"
+  "files": ["source", "types", "test-utils"],
+  "exports": {
+    ".": {
+			"import": "./source/ribu.mjs"
+		},
+		"./test": {
+      "import": "./tests/test-utils.mjs"
+		}
   },
-  "files": [
-    "source"
-  ],
+  "types": "./types",
   "scripts": {
-    "test": "node ./tests/start.mjs",
+    "test": "node ./tests/runTests.mjs",
+    "test:watch": "node --watch ./tests/runTests.mjs",
     "test:cov": "cross-env 'NODE_OPTIONS=--loader @istanbuljs/esm-loader-hook --no-warnings' nyc npm test",
     "type-check": "tsc --noEmit --allowJs"
   },
   "engines": {},
+  "devDependencies": {
+    "eslint": "^8.42.0",
+    "sophi": "^0.1.1",
+    "typescript": "^5.1.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rickmed/ribu"
+  },
+  "issues": "https://github.com/rickmed/ribu/issues",
   "license": "MIT",
+  "author": {
+    "name": "Ricardo Medina"
+  },
   "keywords": [
     "concurrency",
     "fast",
     "js",
     "javascript",
     "typescript"
-  ],
-  "author": {
-    "name": "Ricardo Medina"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/rickmed/ribu"
-  },
-  "issues": "https://github.com/rickmed/ribu/issues"
-
+  ]
 }
