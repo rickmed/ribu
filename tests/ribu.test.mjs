@@ -4,7 +4,7 @@ import { go, Ch, wait } from "../source/ribu.mjs"
 import { sleep } from "./utils.mjs"
 
 
-topic("processes", () => {
+topic("processes basics", () => {
 
    const waitms = 0
 
@@ -68,5 +68,29 @@ topic("processes", () => {
       await sleep(waitms)
 
       check(processMutatedMe).with(true)
+   })
+
+})
+
+
+topic("process cancellation", () => {
+
+   it("simple child cancel", async () => {
+
+      let mutated = false
+
+      const proc = go(function*() {
+         yield wait(1)
+         mutated = true
+      })
+
+      go(function*() {
+         yield wait(0)
+         yield proc.cancel().rec
+      })
+
+      await sleep(0)
+
+      check(mutated).with(false)
    })
 })

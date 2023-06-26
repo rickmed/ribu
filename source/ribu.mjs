@@ -1,4 +1,4 @@
-import { CSP, wait as _wait, go as _go, Ch as _Ch } from "./core.mjs"
+import { CSP, _wait, _go, _Ch } from "./core.mjs"
 
 const csp = new CSP()
 

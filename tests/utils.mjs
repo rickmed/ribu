@@ -1,4 +1,4 @@
-import { go, Ch, wait, CSP as _CSP } from "../source/core.mjs"
+import { _go, _Ch, _wait, CSP as _CSP } from "../source/core.mjs"
 
 /** @param {number} ms */
 export function sleep(ms) {
@@ -16,9 +16,9 @@ export function CSP() {
 
 	/* No need to create a shared prototype to limit memory usage since these will be use sparingly */
 	return {
-		go: go(csp),
-		Ch: Ch(csp),
-		wait: wait(clock.setTimeout.bind(clock), csp),
+		go: _go(csp),
+		Ch: _Ch(csp),
+		wait: _wait(clock.setTimeout.bind(clock), csp),
 		clock,
 	}
 }

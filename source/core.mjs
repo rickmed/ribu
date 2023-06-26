@@ -1,4 +1,5 @@
 import { ArrayQueue } from "./buffers.mjs"
+import { Ch, go } from "./ribu.mjs"
 
 /* === Core API ============================================================= */
 
@@ -6,7 +7,7 @@ import { ArrayQueue } from "./buffers.mjs"
  * @param {CSP} csp
  * @returns {(gen_or_genFn: _Ribu.Gen_or_GenFn) => Process}
  */
-export const go = (csp) =>
+export const _go = (csp) =>
 
 	function go(gen_or_genFn) {
 		const gen = typeof gen_or_genFn === "function" ?
@@ -24,7 +25,7 @@ export const go = (csp) =>
  * @param {CSP} csp
  * @returns {(capacity?: number) => Chan<TChanVal>}
  */
-export const Ch = (csp) =>
+export const _Ch = (csp) =>
 	function Ch(capacity = 1) {
 		return new Chan(capacity, csp)
 	}
@@ -35,7 +36,7 @@ export const Ch = (csp) =>
  * @param {CSP} csp
  * @returns {(ms: number) => _Ribu.Yield}
  */
-export const wait = (setTimeout, csp) =>
+export const _wait = (setTimeout, csp) =>
 
 	function wait(ms) {
 
@@ -48,7 +49,7 @@ export const wait = (setTimeout, csp) =>
 
 		procBeingRan.setPark()
 
-		return YIELD
+		return YIELD_VAL
 	}
 
 
@@ -80,7 +81,7 @@ export class Chan {
 		this.#buffer = new ArrayQueue(capacity)
 	}
 
-	/** @param {TVal} msg */
+	/** @param {TVal=} msg */
 	put(msg) {
 
 		const { runningProc: currentProc } = this.#csp
@@ -89,7 +90,7 @@ export class Chan {
 		if (buffer.isFull) {
 			this.#waitingSenders.push(currentProc)
 			currentProc.setPark(msg)
-			return YIELD
+			return YIELD_VAL
 		}
 
 		currentProc.setResume()
@@ -102,11 +103,12 @@ export class Chan {
 
 			// don't push msg in buffer, put in directly in process to resume
 			receivingProc.queueToRun(msg)
-			return YIELD
+			return YIELD_VAL
 		}
 
-		buffer.push(msg)
-		return YIELD
+		// ok to coerce bc can't relate yield and .next() types either way
+		buffer.push(/** @type {TVal} */ (msg))
+		return YIELD_VAL
 	}
 
 	get rec() {
@@ -117,7 +119,7 @@ export class Chan {
 		if (buffer.isEmpty) {
 			this.#waitingReceivers.push(currentProc)
 			currentProc.setPark()
-			return YIELD
+			return YIELD_VAL
 		}
 
 		currentProc.setResume(buffer.pull())
@@ -125,13 +127,13 @@ export class Chan {
 		const waitingSenders = this.#waitingSenders
 		if (!waitingSenders.isEmpty) {
 
-			// senderProc is not undefined, just checked
+			// cast is ok since senderProc is not undefined, just checked with !isEmpty
 			const senderProc = /** @type {Proc} */ (waitingSenders.pull())
 			buffer.push(senderProc.pullOutMsg())
 			senderProc.queueToRun()
 		}
 
-		return YIELD
+		return YIELD_VAL
 	}
 }
 
@@ -148,8 +150,70 @@ export class Process {
 		this.#process = process
 	}
 
-	/** @todo */
-	cancel() { }
+	cancel() {
+		const cancelDone = Ch()
+
+		const proc = this.#process
+
+		if (proc.state === IN_CANCEL) {
+			go(function* voidCancelProc() {
+				yield cancelDone.put()
+			})
+		}
+		else {
+			go(function* cancelProc() {
+				/*
+					* put proc in cancel state and run genFn.return()
+					* in parallel, cancel its tracked resources:
+						for all children procs (need)
+				*/
+				yield cancelDone.put()
+			})
+
+		}
+
+		return cancelDone
+
+		/*
+			- need to wrap all tracked resources in a uniform .cancel() interface.
+				- a plain promise can't be cancelled (but the return value would be ignored)
+				- wait() needs to return an object with a .cancel() method which return a channel
+				- so now a Ribu.Yield is a 4632 | Cancellable
+
+			child procs (cancellable), channels (cancellable?), timeouts(), proms
+
+			** ARE CHANNELS CANCELLABLE?? is there any cleanup to do??
+				1) proc at "yield ch.put(msg)"
+					- ie, proc.#outMsg = msg & ch.#waitingSenders = [proc]
+						- I think ok bc eventually a proc will pullOut both of those
+							and proc can be finally GC and msg will not be lost.
+				2) proc at "yield ch.rec"
+					- ie, ch.#waitingReceivers = [proc]
+						- If I cancel proc, proc won't be GC until ch is GC.
+						- Also, any proc will send to a proc that will never rec, ie,
+							msg will be lost.
+						- that is not much a problem, problem is if proc is cancelled, the internal
+							sending of the msg may crash ribu (maybe??):
+							- no. will be ok bc will call gen.next(msg)
+								which will return done = true and get out of state machine interpreter
+
+
+		"if you're the receiver, you should never close the channel bc a sender panics on ch.send()"
+
+			- how to I cancel? need to genFn.return
+				- for gen to go to clean-up phase
+
+
+			- also need to check for the resources that this proc's "tracked resources"
+				- idea is to run in parallel:
+					* cancel/dispose of tracked resources:	child procs, channels, proms, timeouts
+					* this.genFn finally{}:
+						finally mostly likely will yield values (like proms) to dispose of async resources:
+
+
+		*/
+
+	}
 }
 
 
@@ -179,18 +243,25 @@ export class CSP {
 
 /* === Proc (the generator manager) ========================================= */
 
-export const YIELD = /** @type {const} */ (4632)
+export const YIELD_VAL = 4632
 
-const PARK = 1
-const RESUME = 2
+const IN_RUN = 1
+const IN_CANCEL = 2
+const PARK = 3
+const RESUME = 4
 
-/** @typedef { PARK | RESUME } State */
+/** @typedef { IN_RUN | IN_CANCEL } State */
+/** @typedef { PARK | RESUME } ExecNext */
 
 export class Proc {
 
 	#gen
-	/** @type {State} */
-	#state = RESUME  // runs immediately
+
+	// genFn is ran immediately
+	/** @readonly @type {State} */
+	state = IN_RUN
+	/** @type {ExecNext} */
+	#execNext = RESUME
 
 	/** @type {any} */
 	#inOrOutMsg = undefined   // bc first gen.next(inOrOutMsg) is ignored
@@ -212,13 +283,13 @@ export class Proc {
 		let gen_is_done = false
 		while (!gen_is_done) {
 
-			const state = this.#state
+			const exec = this.#execNext
 
-			if (state === PARK) {
+			if (exec === PARK) {
 				break
 			}
 
-			if (state === RESUME) {
+			if (exec === RESUME) {
 
 				const { done, value } = this.#gen.next(this.#inOrOutMsg)
 
@@ -227,7 +298,7 @@ export class Proc {
 					break
 				}
 
-				if (value === YIELD) {
+				if (value === YIELD_VAL) {
 					continue  // all ribu yieldables set the appropiate conditions to be checked in next loop
 				}
 
@@ -269,13 +340,13 @@ export class Proc {
 
 	/** @type {(inOrOutMsg?: any) => void} */
 	setResume(inOrOutMsg) {
-		this.#state = RESUME
+		this.#execNext = RESUME
 		this.#inOrOutMsg = inOrOutMsg
 	}
 
 	/** @type {(inOrOutMsg?: any) => void} */
 	setPark(inOrOutMsg) {
-		this.#state = PARK
+		this.#execNext = PARK
 		this.#inOrOutMsg = inOrOutMsg
 	}
 
