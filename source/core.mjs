@@ -34,7 +34,7 @@ export const _Ch = (csp) =>
 /**
  * @param {_Ribu.SetTimeout} setTimeout
  * @param {CSP} csp
- * @returns {(ms: number) => _Ribu.Yield}
+ * @returns {(ms: number) => _Ribu.YEILD}
  */
 export const _wait = (setTimeout, csp) =>
 
@@ -175,30 +175,28 @@ export class Process {
 		return cancelDone
 
 		/*
-			- need to wrap all tracked resources in a uniform .cancel() interface.
-				- a plain promise can't be cancelled (but the return value would be ignored)
-				- wait() needs to return an object with a .cancel() method which return a channel
-				- so now a Ribu.Yield is a 4632 | Cancellable
+			* before you could yield:
+				- prom -> .then(), put() -> YIELD_VAL, rec/wait() -> ??
+				- now, you could yield a ch directly which will interpreted as a ch.rec
+					- this is to avoid .rec in cancel(), wrapped-resources...
 
-			child procs (cancellable), channels (cancellable?), timeouts(), proms
+			* wait() needs to be cancellable. Options:
+				1) ad-hoc: track wait() calls internally
+				2) as any other cancellable-resource
 
-			** ARE CHANNELS CANCELLABLE?? is there any cleanup to do??
-				1) proc at "yield ch.put(msg)"
-					- ie, proc.#outMsg = msg & ch.#waitingSenders = [proc]
-						- I think ok bc eventually a proc will pullOut both of those
-							and proc can be finally GC and msg will not be lost.
-				2) proc at "yield ch.rec"
-					- ie, ch.#waitingReceivers = [proc]
-						- If I cancel proc, proc won't be GC until ch is GC.
-						- Also, any proc will send to a proc that will never rec, ie,
-							msg will be lost.
-						- that is not much a problem, problem is if proc is cancelled, the internal
-							sending of the msg may crash ribu (maybe??):
-							- no. will be ok bc will call gen.next(msg)
-								which will return done = true and get out of state machine interpreter
+			* you don't yield go()
+				* ribu tracks automatically owners iternally with go() calls
 
+			* so, a "cancellable" is an object with a .cancel() method (() => ch)
 
-		"if you're the receiver, you should never close the channel bc a sender panics on ch.send()"
+			* cancellable wait() (timeouts)?
+
+			* ?? Chans which you can only receive to avoid .rec?
+				eg: in yield proc.cancel(), promise-wrapped results, etc...
+
+			* change _ribu yieldable type and implement
+				- can yield, eg, {rec: ch}
+
 
 			- how to I cancel? need to genFn.return
 				- for gen to go to clean-up phase
