@@ -8,8 +8,5 @@
       "target": "ES2017",
       "lib": ["ES6", "DOM"],
       "moduleResolution":"node",
-   },
-   "exclude": [
-      "node_modules"
-   ]
+   }
 }

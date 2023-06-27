@@ -1,8 +1,7 @@
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
-import { go, Ch, wait } from "../source/ribu.mjs"
-import { sleep } from "./utils.mjs"
-
+import { go, ch, sleep } from "../source/ribu.mjs"
+import { promSleep } from "./utils.mjs"
 
 topic("processes basics", () => {
 
@@ -13,13 +12,13 @@ topic("processes basics", () => {
       let processMutatedMe = false
 
       function* proc1() {
-         yield wait(waitms)
+         yield sleep(waitms)
          processMutatedMe = true
       }
 
       go(proc1)
 
-      await sleep(waitms)
+      await promSleep(waitms)
 
       check(processMutatedMe).with(true)
    })
@@ -36,18 +35,18 @@ topic("processes basics", () => {
       }
 
       // type parameter of Ch makes no difference on ch.take bc generators can't connect next() with yield
-      /** @type {(ch: Ribu.Ch) => Ribu.Gen<number>} */
+      /** @type {(ch: Ribu.Ch<number>) => Ribu.Gen<number>} */
       function* proc2(ch) {
          const one = yield ch.rec
-         yield wait(waitms)
+         yield sleep(waitms)
          processMutatedMe = one
       }
 
-      const ch = Ch()
-      go(proc1(ch))
-      go(proc2(ch))
+      const ch1 = /** @type {Ribu.Ch<number>} */(ch())
+      go(proc1(ch1))
+      go(proc2(ch1))
 
-      await sleep(waitms)
+      await promSleep(waitms)
 
       check(processMutatedMe).with(1)
    })
@@ -65,7 +64,7 @@ topic("processes basics", () => {
 
       go(proc1)
 
-      await sleep(waitms)
+      await promSleep(waitms)
 
       check(processMutatedMe).with(true)
    })
@@ -75,21 +74,21 @@ topic("processes basics", () => {
 
 topic("process cancellation", () => {
 
-   it("simple child cancel", async () => {
+   it("manual/simple proc cancel", async () => {
 
       let mutated = false
 
-      const proc = go(function*() {
-         yield wait(1)
-         mutated = true
-      })
-
       go(function*() {
-         yield wait(0)
-         yield proc.cancel().rec
+         const childProc = go(function*() {
+            yield sleep(1)
+            mutated = true
+         })
+
+         yield sleep(0)
+         yield childProc.cancel().rec
       })
 
-      await sleep(0)
+      await promSleep(0)
 
       check(mutated).with(false)
    })
