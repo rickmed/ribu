@@ -1,15 +1,13 @@
-import { Chan } from "../source/channels.mjs"
-import { Proc } from "../source/Proc.mjs"
+import { BroadcastCh } from "../source/ribu.mjs"
+import { YIELD_VAL, Yieldable, Ch } from "./_ribu"
 
-
-type Ch<T = undefined> = Chan<T>
 
 type Proc = {
-   cancel: (deadline?: number) => Ch
    done: Ch
+   cancel: (deadline?: number) => Ch
 }
 
 type Gen<Rec = unknown> =
-   Generator<_Ribu.Yieldable, void, Rec>
+   Generator<Yieldable, void, Rec>
 
 export as namespace Ribu

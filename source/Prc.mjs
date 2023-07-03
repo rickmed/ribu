@@ -1,10 +1,16 @@
-import { go, ch, sleep, done } from "./ribu.mjs"
-
-import { csp } from "./initCsp.mjs"
+import { go, ch, sleep, done, BroadcastCh } from "./ribu.mjs"
 
 
-/** @type {Symbol} */
-export const YIELD_VAL = Symbol("ribu yield val")
+/**
+ * @template [TChVal=undefined]
+ * @typedef {_Ribu.Ch<TChVal>} Ch<TChVal>
+ */
+/** @typedef {Ribu.Proc} Proc */
+/** @typedef {Ribu.Gen} Gen */
+/** @typedef {_Ribu.GenFn} GenFn */
+
+
+export const YIELD_VAL = "RIBU_YIELD_VAL"
 
 const RUNNING = 1, CANCELLING = 2, DONE = 3
 const PARK = 1, RESUME = 2
@@ -16,18 +22,17 @@ export class Prc {
 
 	#gen
 	#csp
-	done = /** @type {Ribu.Ch} */ (ch())
 
 	/**
 	 * For bubbling errors up
-	 * undefined for top-root prcS
+	 * is undefined for root prcS
 	 * @type {Prc | undefined} */
 	#parentPrc = undefined
 
 	/** @type {Set<Prc> | undefined} */
-	childPrcS = undefined
+	$childPrcS = undefined
 
-	/** @type {_Ribu.GenFn | Function | undefined} */
+	/** @type {GenFn | Function | undefined} */
 	cancelFn = undefined
 
 	/** @type {RUNNING | CANCELLING | DONE} */  // genFn is ran immediately
@@ -35,21 +40,19 @@ export class Prc {
 	/** @type {PARK | RESUME} */
 	#execNext = RESUME
 
-	/** @type {any} */
+	/** @type {unknown} */
 	#inOrOutMsg = undefined   // bc first gen.next(inOrOutMsg) is ignored
 
-	/** @type {Ribu.Proc | undefined} */
+	done = new BroadcastCh()
+
+	/** @type {Proc | undefined} */
 	#$deadline = undefined
 
 	/**
-	 * @param {_Ribu.Gen_or_GenFn} gen_or_genFn
+	 * @param {Gen} gen
 	 * @param {_Ribu.Csp} csp
 	 */
-	constructor(gen_or_genFn, csp) {
-
-		const gen = isGenFn(gen_or_genFn) ?
-			/** @type {_Ribu.GenFn} */(gen_or_genFn)() :
-			gen_or_genFn
+	constructor(gen, csp) {
 
 		this.#gen = gen
 		this.#csp = csp
@@ -62,10 +65,10 @@ export class Prc {
 
 		this.#parentPrc = parentPrc
 
-		if (parentPrc.childPrcS === undefined) {
-			parentPrc.childPrcS = []
+		if (parentPrc.$childPrcS === undefined) {
+			parentPrc.$childPrcS = new Set()
 		}
-		parentPrc.childPrcS.add(this)
+		parentPrc.$childPrcS.add(this)
 	}
 
 	run() {
@@ -95,15 +98,16 @@ export class Prc {
 				}
 
 				// yielded a promise
-				if (typeof value?.then === "function") {
+				if (value instanceof Promise) {
 					const prom = value
+
 					const thisPrc = this
 
 					prom.then(onVal, onErr)
 					this.setPark()
 					break
 
-					/** @param {any} val */
+					/** @param {unknown} val */
 					function onVal(val) {
 						if (thisPrc.#state === DONE) {
 							return
@@ -112,7 +116,7 @@ export class Prc {
 						thisPrc.run()
 					}
 
-					/** @param {any} err */
+					/** @param {unknown} err */
 					function onErr(err) {
 						if (thisPrc.#state === DONE) {
 							return
@@ -131,7 +135,7 @@ export class Prc {
 
 		if (gen_is_done) {
 			this.#state = DONE
-			this.delParentChildRefs()
+			this.nilParentChildRefs()
 			const this_ = this
 			go(function* _notifyDone() { yield this_.done.put() })
 			return
@@ -146,113 +150,120 @@ export class Prc {
 		return outMsg
 	}
 
-	/** @type {(inOrOutMsg?: any) => void} */
+	/** @type {(inOrOutMsg?: unknown) => void} */
 	setResume(inOrOutMsg) {
 		this.#execNext = RESUME
 		this.#inOrOutMsg = inOrOutMsg
 	}
 
-	/** @type {(inOrOutMsg?: any) => void} */
+	/** @type {(inOrOutMsg?: unknown) => void} */
 	setPark(inOrOutMsg) {
 		this.#execNext = PARK
 		this.#inOrOutMsg = inOrOutMsg
 	}
 
-	/** @type {(inOrOutMsg?: any) => void} */
+	/** @type {(inOrOutMsg?: unknown) => void} */
 	queueToRun(inOrOutMsg) {
 		this.setResume(inOrOutMsg)
 		this.#csp.schedule(this)
 	}
 
-	/** @type {(msDeadline?: number) => Ribu.Ch} */
+	/** @type {(msDeadline?: number) => Ch} */
 	cancel(deadline = this.#csp.defaultDeadline) {
 
-		this.#state = DONE
-		this.#gen.return()
+		const state = this.#state
+		const notifyDone = this.done
+		const concuCancel = /** @type Ch<number> */ (/** @type unknown */ (ch()))
 
-		const doneCh = /** @type {Ribu.Ch} */ (ch())
-
-		const { cancelFn } = this
-		const $childPrcS = this.childPrcS
-
-		if ($childPrcS === undefined) {
-			if (cancelFn === undefined) {
-				return doneCh
-			}
-			if (cancelFn.constructor === Function) {
-				cancelFn()
-				return doneCh
-			}
+		if (state === DONE) {
+			// @todo: when I implement done -> results/errs, the results/errs must be kept inside cache
+			// and be returned here (for late proc.done callers)
+			return notifyDone
 		}
 
-		/* @todo: consider case where $childPrcS exists but cancelFn doesn't */
-		const $cancelFn = _go(/** @type {_Ribu.GenFn} */(cancelFn))
+		if (state === CANCELLING) {
+			go(function* _notifyConcuCancel() { yield concuCancel.put()})
+		}
 
-		this.#$deadline = this.new$deadline(deadline, doneCh, $cancelFn, /** @type {Set<Prc>} */ ($childPrcS))
+		this.#state = CANCELLING
+		this.#gen.return()
+
+		const {cancelFn, $childPrcS} = this
+
+		if ($childPrcS === undefined) {
+			if (cancelFn?.constructor === Function) {   // covers cancelFn is undefined | Fn
+				cancelFn()
+			}
+			this.#state = DONE
+			this.nilParentChildRefs()
+			return notifyDone
+		}
+
+		const $cancelFn = go(/** @type {GenFn} */(cancelFn))
+
+		this.#$deadline = this.new$deadline(deadline, notifyDone, $cancelFn, /** @type {Set<Prc>} */ ($childPrcS))
 
 		const this_ = this
 
-		_go(function* _updateDeadline() {
+		go(function* _updateDeadline() {
+			// update this.$deadline and call child.cancel again so that they can update deadline
 
-			yield 1  // @todo where do deadline updates come from??
-			this_.#$deadline = this_.new$deadline(deadline, doneCh, $cancelFn, /** @type {Set<Prc>} */ ($childPrcS))
+			yield concuCancel.rec
+			this_.#$deadline = this_.new$deadline(deadline, notifyDone, $cancelFn, /** @type {Set<Prc>} */ ($childPrcS)).rec
 		})
 
-		_go(function* _waitCancelFnAndChildren() {
-			yield done($cancelFn, ...[.../** @type {Set<Prc>} */ ($childPrcS)])
-			yield /** @type {Prc} */(this_.#$deadline).cancel()
-			yield doneCh.put()
+		go(function* _waitCancelFnAndChildren() {
+			yield done($cancelFn, ...[.../** @type {Set<Prc>} */ ($childPrcS)]).rec
+			yield /** @type {Prc} */(this_.#$deadline).cancel().rec
+			yield notifyDone.put()
 		})
 
-		this.delParentChildRefs()
-		return doneCh
+		this.nilParentChildRefs()
+		this.#state = DONE
+		return notifyDone
 	}
 
-	/** @type {(deadline: number, doneCh: Ribu.Ch, $cancelFn: Ribu.Proc, $childPrcS: Set<Prc>) => Ribu.Proc} */
+	/** @type {(deadline: number, doneCh: Ch, $cancelFn: Proc, $childPrcS: Set<Prc>) => Proc} */
 	new$deadline(deadline, doneCh, $cancelFn, $childPrcS) {
-		return _go(function* _deadline() {
+		const this_ = this
+		return go(function* _deadline() {
 			yield sleep(deadline)
-			yield this.hardCancel($cancelFn, $childPrcS)
+			yield this_.hardCancel($cancelFn, $childPrcS).rec
 			yield doneCh.put()
 		})
 	}
 
-	/** @type {(...procS: Ribu.Proc[]) => Ribu.Ch} */
+	/** @type {(...procS: Proc[]) => Ch} */
 	hardCancel(...procS) {
-		const doneCh = /** @type {Ribu.Ch} */ (ch())
+		const doneCh = /** @type {Ch} */ (ch())
 		this.#state = DONE  //  will most likely be done already by .cancel(), but just for good measure
-		_go(function* _hardCancel() {
-			yield done(...procS)
+		// @ todo call children and cancelFn .hardCancel()
+		go(function* _hardCancel() {
+			yield done(...procS).rec
 		})
-		this.delParentChildRefs()
+		this.nilParentChildRefs()
 		return doneCh
 	}
 
-	delParentChildRefs() {
-		this.#parentPrc?.childPrcS?.delete(this)
+	nilParentChildRefs() {
+		this.#parentPrc?.$childPrcS?.delete(this)
 		this.#parentPrc = undefined
 	}
 
 }
 
 
-/**
- * @param {_Ribu.Gen_or_GenFn} gen_or_genFn
- * @returns {_Ribu.Prc}
- */
-export function _go(gen_or_genFn) {
-	const prc = new Prc(gen_or_genFn, csp)
-	prc.run()
-	return prc
-}
+
+/*
+Yes I need some internal class state about cancellation
+bc Prc is just wrapped lightly from go() so prc.cancel() is called twice
+
+parentProc is cancelled (along with its child). Then, concurrently,
+granparentProc is cancelled, which calls proc.cancel() and
+child.cancel() again
+
+So need to update the deadline in proc and childProc
+(accounting for time passed
 
 
-const GenFnConstructor = function* () { }.constructor
-
-/** @type {(x: any) => boolean} */
-function isGenFn(x) {
-	if (x instanceof GenFnConstructor) {
-		return true
-	}
-	return false
-}
+*/

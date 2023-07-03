@@ -1,14 +1,16 @@
 export class Csp {
 
-	defaultDeadline
+	defaultDeadline = 3000
 	#scheduledPrcS = new Set()
 
 	/** @type {_Ribu.Prc | undefined} */
 	runningPrc = undefined
 
 	/** @param {number=} defaultDeadline */
-	constructor(defaultDeadline = 3000) {
-		this.defaultDeadline = defaultDeadline
+	constructor(defaultDeadline) {
+		if (defaultDeadline !== undefined) {
+			this.defaultDeadline = defaultDeadline
+		}
 	}
 
 	runScheduledPrcS() {

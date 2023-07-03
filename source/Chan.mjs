@@ -4,6 +4,7 @@ import { YIELD_VAL } from "./Prc.mjs"
 
 /**
  * @template TVal
+ * @implements {_Ribu.Ch<TVal>}
  */
 export class Chan {
 
@@ -27,10 +28,15 @@ export class Chan {
 		this.#buffer = new ArrayQueue(capacity)
 	}
 
-	/** @param {TVal=} msg */
+	/** @type {_Ribu.PutFn<TVal>} */
 	put(msg) {
 
 		const {runningPrc} = this.#csp
+
+		if (runningPrc === undefined) {
+			throw new Error(`can't put outside a process`)
+		}
+
 		const buffer = this.#buffer
 
 		if (buffer.isFull) {
@@ -57,9 +63,15 @@ export class Chan {
 		return YIELD_VAL
 	}
 
+	/** @return {YIELD_VAL} */
 	get rec() {
 
 		const {runningPrc} = this.#csp
+
+		if (runningPrc === undefined) {
+			throw new Error(`can't receive outside a process`)
+		}
+
 		const buffer = this.#buffer
 
 		if (buffer.isEmpty) {
@@ -75,7 +87,7 @@ export class Chan {
 
 			// cast is ok since senderPrc is not undefined, just checked with !isEmpty
 			const senderPrc = /** @type {_Ribu.Prc} */ (waitingSenders.pull())
-			buffer.push(senderPrc.pullOutMsg())
+			buffer.push(/** @type {TVal} */ (senderPrc.pullOutMsg()))
 			senderPrc.queueToRun()
 		}
 

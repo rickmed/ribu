@@ -1,26 +1,47 @@
-import { Proc } from "./Proc.mjs"
 import { Prc, YIELD_VAL } from "./Prc.mjs"
-import { Chan } from "./channels.mjs"
-
-import { csp } from "./initCsp.mjs"
+import { Chan } from "./Chan.mjs"
+import { Csp } from "./Csp.mjs"
 
 
 /**
- * @param {_Ribu.Gen_or_GenFn} gen_or_genFn
- * @param {{}=} opts
- * @returns {Ribu.Proc}
+ * @template [TVal=undefined]
+ * @typedef {_Ribu.Ch<TVal>} Ch<TVal>
  */
-export function go(gen_or_genFn, opts) {
-   const prc = new Prc(gen_or_genFn, csp)
-   const proc = new Proc(prc)
 
-   // @todo
-   // if (opts !== undefined) {
-      // for (const k in opts) {
-      //    const _proc = /** @type {{}} */proc
-      //    _proc[k] = opts[k]
-      // }
-   // }
+/** @typedef {Ribu.Proc} Proc */
+/** @typedef {_Ribu.Conf} Conf */
+
+
+const csp = new Csp()
+
+
+/**
+ * @template {Conf} TConf
+ * @param {_Ribu.Gen_or_GenFn} gen_or_genFn
+ * @param {(TConf extends _Ribu.ProcShape ? never : TConf)=} conf
+ * @returns {Proc & TConf}
+ */
+export function go(gen_or_genFn, conf) {
+
+	const gen = gen_or_genFn instanceof Function ? gen_or_genFn() :
+		gen_or_genFn
+
+   const prc = new Prc(gen, csp)
+
+   const ProcPrototype = {
+      done: prc.done,
+      cancel: prc.cancel.bind(prc)
+   }
+
+	// /** @type {Proc & TConf} */
+   const proc = Object.create(ProcPrototype)
+
+   if (conf !== undefined) {
+      for (const k in conf) {
+         const optsVal = conf[k]
+         proc[k] = optsVal
+      }
+   }
 
    prc.run()
    return proc
@@ -28,15 +49,15 @@ export function go(gen_or_genFn, opts) {
 
 
 /**
- * @template Tval=undefined
- * @type {(capacity?: number) => Ribu.Ch<Tval>}
+ * @type {(capacity?: number) => Ch}
  */
 export function ch(capacity = 1) {
-   return new Chan(capacity, csp)
+	const newch = new Chan(capacity, csp)
+   return newch
 }
 
 
-/** @type {(ms: number) => _Ribu.YIELD | never} */
+/** @type {(ms: number) => YIELD_VAL | never} */
 export function sleep(ms) {
 
    const procBeingRan = csp.runningPrc
@@ -59,12 +80,12 @@ export function sleep(ms) {
 }
 
 
-/** @type {(...procS: Ribu.Proc[]) => Ribu.Ch | never} */
+/** @type {(...procS: Proc[]) => Ch | never} */
 export function done(...procS_) {
 
-   const done = /** @type {Ribu.Ch} */ (ch())
+   const allDone = ch()
 
-   /** @type {Array<Ribu.Proc> | Set<_Ribu.Prc>} */
+   /** @type {Array<Proc> | Set<Proc>} */
    let procS = procS_
 
    if (procS.length === 0) {
@@ -72,9 +93,9 @@ export function done(...procS_) {
       if (runningPrc === undefined) {
          throw new Error(`ribu: can't call done without parameters and outside a generator function`)
       }
-      const {childPrcS} = runningPrc
+      const {$childPrcS: childPrcS} = runningPrc
       if (childPrcS === undefined) {
-         return done
+         return allDone
       }
       procS = childPrcS
    }
@@ -85,10 +106,10 @@ export function done(...procS_) {
          procSDone.push(proc.done)
       }
       yield all(...procSDone).rec
-      yield done.put()
+      yield allDone.put()
    })
 
-   return done
+   return allDone
 }
 
 
@@ -102,16 +123,16 @@ function onCancel(fn) {
 }
 
 
-/** @type {(...procS: Ribu.Proc[]) => Ribu.Ch} */
+/** @type {(...procS: Proc[]) => Ch} */
 export function cancel(...procS) {
 	const procCancelChanS = procS.map(p => p.cancel())
 	return all(...procCancelChanS)
 }
 
 
-/** @type {(...chanS: Ribu.Ch[]) => Ribu.Ch} */
+/** @type {(...chanS: Ch[]) => Ch} */
 export function all(...chanS) {
-	const allDone = /** @type {Ribu.Ch} */ (ch())
+	const allDone = ch()
 	const chansL = chanS.length
 	const notifyDone = ch(chansL)
 
@@ -135,9 +156,9 @@ export function all(...chanS) {
 }
 
 
-/** @type {(...chanS: Ribu.Ch[]) => Ribu.Ch} */
+/** @type {(...chanS: Ch[]) => Ch} */
 export function or(...chanS) {
-	const anyDone = /** @type {Ribu.Ch} */ (ch())
+	const anyDone = ch()
 	let done = false
 
 	for (const chan of chanS) {
@@ -155,10 +176,10 @@ export function or(...chanS) {
 }
 
 
-/** @type {(fn: Function) => Ribu.Ch} */
-export function runAsync(fn) {
-   const done = /** @type {Ribu.Ch}} */ (ch())
-   go(function* _runAsync() {
+/** @type {(fn: Function) => Ch} */
+export function doAsync(fn) {
+   const done = ch()
+   go(function* _doAsync() {
       fn()
       yield done.put()
    })
@@ -166,10 +187,65 @@ export function runAsync(fn) {
 }
 
 
-/** @type {(done?: Ribu.Ch) => Ribu.Ch} */
-export function async(done = /** @type {Ribu.Ch}} */ (ch())) {
-   go(function* _async() {
-      yield done.put()
-   })
-   return done
+// /** @type {(done?: Ch) => Ch} */
+// export function async(done = ch()) {
+//    go(function* _async() {
+//       yield done.put()
+//    })
+//    return done
+// }
+
+
+/**
+ * @implements {Ch}
+ */
+export class BroadcastCh {
+
+	/** @type {Ch | Array<Ch> | undefined} */
+	#listeners = undefined
+
+	/** @return {YIELD_VAL} */
+	get rec() {
+
+		const listenerCh = ch()
+		const listeners = this.#listeners
+
+		if (listeners === undefined) {
+			this.#listeners = listenerCh
+		}
+		else if (Array.isArray(listeners)) {
+			listeners.push(listenerCh)
+		}
+		else {
+			this.#listeners = []
+			this.#listeners.push(listenerCh)
+		}
+
+		return listenerCh.rec
+	}
+
+	/** @type {() => YIELD_VAL} */
+	put() {
+
+		const notifyDone = ch()
+		const listeners = this.#listeners
+
+		go(function* _emit() {
+			if (listeners === undefined) {
+				yield notifyDone.rec
+				return
+			}
+			if (Array.isArray(listeners)) {
+				for (const ch of listeners) {
+					yield ch.put()
+				}
+				yield notifyDone.rec
+				return
+			}
+			yield listeners.put()
+			yield notifyDone.rec
+		})
+
+		return notifyDone.put()
+	}
 }
