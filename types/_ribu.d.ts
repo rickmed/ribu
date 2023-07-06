@@ -1,16 +1,28 @@
 import { YIELD_VAL as _YIELD_VAL, Prc as _Prc } from "../source/Prc.mjs"
 import { Csp as _Csp } from "../source/Csp.mjs"
+import { Proc, Ch } from "./ribu"
+
+
+export as namespace _Ribu
+
+
+/** === Csp ================================================================ */
 
 type Csp = _Csp
+
+
+/** === Prc ================================================================ */
+
 type Prc = _Prc
+
+type CancelScope = {
+   $deadline: Proc,
+   $onCancel?: Prc,
+   childSCancelDone?: Ch,
+}
 
 
 /** === Chan ================================================================ */
-
-type Ch<TVal = undefined> = {
-   put: PutFn<TVal>
-   get rec(): YIELD_VAL,
-}
 
 type PutFn<TChVal> = (...args: (TChVal extends undefined ? [] : [TChVal])) => YIELD_VAL
 
@@ -26,14 +38,14 @@ type GenFn<Rec = unknown> = () => Ribu.Gen<Rec>
 
 type Gen_or_GenFn = Ribu.Gen | GenFn
 
-type ProcShape = {
-   [k in "cancel" | "done"]?: unknown
+
+/** === go() =========================================================== */
+
+type Conf<TKs extends string> = {
+   [K in TKs]:
+      K extends "cancel" | "done" ? never :
+      K extends "deadline" ? number :
+      Ch
 }
 
-type Conf = {
-   [k: string]: Ch
-}
-
-type EmptyObj = Record<never, never>
-
-export as namespace _Ribu
+type Ports<TConfKs extends string> = Omit<Conf<TConfKs>, "deadline">

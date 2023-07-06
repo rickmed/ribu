@@ -1,13 +1,14 @@
-import { go, ch, sleep, done, BroadcastCh } from "./ribu.mjs"
+import { go, sleep, BroadcastCh as BroadCastCh, all, doAsync } from "./ribu.mjs"
 
 
 /**
  * @template [TChVal=undefined]
- * @typedef {_Ribu.Ch<TChVal>} Ch<TChVal>
+ * @typedef {Ribu.Ch<TChVal>} Ch<TChVal>
  */
 /** @typedef {Ribu.Proc} Proc */
 /** @typedef {Ribu.Gen} Gen */
 /** @typedef {_Ribu.GenFn} GenFn */
+/** @typedef {_Ribu.CancelScope} CancelScope */
 
 
 export const YIELD_VAL = "RIBU_YIELD_VAL"
@@ -22,61 +23,61 @@ export class Prc {
 
 	#gen
 	#csp
+	done = new BroadCastCh()
 
-	/**
-	 * For bubbling errors up
-	 * is undefined for root prcS
-	 * @type {Prc | undefined} */
-	#parentPrc = undefined
-
-	/** @type {Set<Prc> | undefined} */
-	$childPrcS = undefined
-
-	/** @type {GenFn | Function | undefined} */
-	cancelFn = undefined
-
-	/** @type {RUNNING | CANCELLING | DONE} */  // genFn is ran immediately
+	/* genFn is ran immediately */
+	/** @type {RUNNING | CANCELLING | DONE} */
 	#state = RUNNING
 	/** @type {PARK | RESUME} */
 	#execNext = RESUME
-
 	/** @type {unknown} */
 	#inOrOutMsg = undefined   // bc first gen.next(inOrOutMsg) is ignored
 
-	done = new BroadcastCh()
+	/** @type {Prc | undefined} - For bubbling errors up (undefined for root prcS) */
+	#parentPrc = undefined
+	/** @type {Set<Prc> | undefined} - For auto cancel child Procs */
+	$childS = undefined
 
-	/** @type {Proc | undefined} */
-	#$deadline = undefined
+	/** @type {GenFn | Function | undefined} - Set up by ribu.onCancel() */
+	onCancel = undefined
+	/** @type {CancelScope=} - Concurrent state kept for Prc.cancel() calls */
+	#cancelScope = undefined
+	/** @type {number} */
+	deadline
 
 	/**
 	 * @param {Gen} gen
 	 * @param {_Ribu.Csp} csp
+	 * @param {number=} deadline
 	 */
-	constructor(gen, csp) {
+	constructor(gen, csp, deadline = csp.defaultDeadline) {
 
 		this.#gen = gen
 		this.#csp = csp
 
 		const parentPrc = csp.runningPrc
 
-		if (parentPrc === undefined) {
-			return
+		if (parentPrc) {
+			const parentDL = parentPrc.deadline
+			deadline = deadline > parentDL ? parentDL : deadline
+
+			this.#parentPrc = parentPrc
+
+			if (parentPrc.$childS === undefined) {
+				parentPrc.$childS = new Set()
+			}
+			parentPrc.$childS.add(this)
 		}
 
-		this.#parentPrc = parentPrc
-
-		if (parentPrc.$childPrcS === undefined) {
-			parentPrc.$childPrcS = new Set()
-		}
-		parentPrc.$childPrcS.add(this)
+		this.deadline = deadline
 	}
 
 	run() {
 
 		this.#csp.runningPrc = this
 
-		let gen_is_done = false
-		while (!gen_is_done) {
+		let genDone = false
+		while (true) {  // eslint-disable-line no-constant-condition
 
 			const exec = this.#execNext
 
@@ -89,7 +90,7 @@ export class Prc {
 				const { done, value } = this.#gen.next(this.#inOrOutMsg)
 
 				if (done === true) {
-					gen_is_done = true
+					genDone = true
 					break
 				}
 
@@ -126,18 +127,13 @@ export class Prc {
 					}
 				}
 
-				// @todo: yields a launch of a process
-
 				// @todo: remove this?
 				throw new Error(`can't yield something that is not a channel operation, sleep, go() or a promise`)
 			}
 		}
 
-		if (gen_is_done) {
-			this.#state = DONE
-			this.nilParentChildRefs()
-			const this_ = this
-			go(function* _notifyDone() { yield this_.done.put() })
+		if (genDone) {
+			go(this.#genDoneCleanup)
 			return
 		}
 
@@ -168,102 +164,157 @@ export class Prc {
 		this.#csp.schedule(this)
 	}
 
-	/** @type {(msDeadline?: number) => Ch} */
-	cancel(deadline = this.#csp.defaultDeadline) {
+	*#genDoneCleanup() {
 
-		const state = this.#state
-		const notifyDone = this.done
-		const concuCancel = /** @type Ch<number> */ (/** @type unknown */ (ch()))
+		this.#state = DONE
 
-		if (state === DONE) {
-			// @todo: when I implement done -> results/errs, the results/errs must be kept inside cache
-			// and be returned here (for late proc.done callers)
-			return notifyDone
+		const { done, $childS } = this
+
+		if ($childS && $childS.size > 0) {
+			yield this.#cancelChildS().rec
 		}
 
-		if (state === CANCELLING) {
-			go(function* _notifyConcuCancel() { yield concuCancel.put()})
+		this.#nilParentRefs()
+		yield done.put()
+	}
+
+	/** @type {() => Ch} */
+	cancel() {
+
+		const state = this.#state
+		const { done } = this
+
+		if (state === DONE || state === CANCELLING) {
+			/* @todo
+				when I implement done -> results/errs, the results/errs must be kept inside cache
+				and be returned here for late proc.done callers
+			*/
+			return done
 		}
 
 		this.#state = CANCELLING
 		this.#gen.return()
 
-		const {cancelFn, $childPrcS} = this
+		const { $childS, onCancel } = this
 
-		if ($childPrcS === undefined) {
-			if (cancelFn?.constructor === Function) {   // covers cancelFn is undefined | Fn
-				cancelFn()
+		if ($childS === undefined) {
+
+			if (onCancel === undefined) {
+				return doAsync(this.#cancelFinalCleanup, done)
 			}
-			this.#state = DONE
-			this.nilParentChildRefs()
-			return notifyDone
+
+			else if (onCancel.constructor === Function) {
+				onCancel()
+				return doAsync(this.#cancelFinalCleanup, done)
+			}
+			else { /* onCancel is GenFn */
+
+				this.#cancelScope = {
+					$deadline: this.#new$deadline(),
+					$onCancel: this.#new$onCancel(),
+				}
+
+				go(this.#handle$CancelS)
+				return done
+			}
+
+		}
+		else { /* Prc has childS */
+
+			// Since Prc has childS, need to launch a deadline process to hard
+			// cancel if childS.cancel() take too long
+
+			/** @type {CancelScope} */
+			const cancelScope = {
+				$deadline: this.#new$deadline(),
+				childSCancelDone: this.#cancelChildS(),
+			}
+
+			// if (onCancel === undefined) { no need to do anything else }
+
+			if (onCancel?.constructor === Function) {
+				onCancel()
+			}
+			else { /* onCancel is GenFn */
+				cancelScope.$onCancel = this.#new$onCancel()
+			}
+
+			this.#cancelScope = cancelScope
+			go(this.#handle$CancelS)
+			return done
+		}
+	}
+
+	/** @type {() => Proc} */
+	#new$deadline() {
+		const this_ = this
+		return go(function* _$deadline() {
+			yield sleep(this_.deadline)
+			yield this_.hardCancel().rec
+			yield this_.done.put()
+		})
+	}
+
+	*#handle$CancelS() {
+		const cancelScope = /** @type {CancelScope} */ (this.#cancelScope)
+		const { $onCancel, childSCancelDone, $deadline } = cancelScope
+
+		yield all($onCancel?.done, childSCancelDone).rec
+
+		// If I reach here, it means I wasn't cancelled by cancelScope.$deadline,
+		// so need to cancel $deadline
+
+		yield $deadline.cancel().rec
+		yield this.done.put()
+	}
+
+	/** @type {() => Ch} */
+	hardCancel() {
+		const { $childS } = this
+		const cancelScope = this.#cancelScope
+
+		/** @type {Array<Ch>} */
+		let doneChs = []
+
+		doneChs.push(doAsync(this.#cancelFinalCleanup, this.done))
+
+		if (cancelScope?.$onCancel) {
+			doneChs.push(cancelScope.$onCancel.hardCancel())
 		}
 
-		const $cancelFn = go(/** @type {GenFn} */(cancelFn))
+		if ($childS) {
+			for (const prc of $childS) {
+				doneChs.push(prc.hardCancel())
+			}
+		}
 
-		this.#$deadline = this.new$deadline(deadline, notifyDone, $cancelFn, /** @type {Set<Prc>} */ ($childPrcS))
-
-		const this_ = this
-
-		go(function* _updateDeadline() {
-			// update this.$deadline and call child.cancel again so that they can update deadline
-
-			yield concuCancel.rec
-			this_.#$deadline = this_.new$deadline(deadline, notifyDone, $cancelFn, /** @type {Set<Prc>} */ ($childPrcS)).rec
-		})
-
-		go(function* _waitCancelFnAndChildren() {
-			yield done($cancelFn, ...[.../** @type {Set<Prc>} */ ($childPrcS)]).rec
-			yield /** @type {Prc} */(this_.#$deadline).cancel().rec
-			yield notifyDone.put()
-		})
-
-		this.nilParentChildRefs()
-		this.#state = DONE
-		return notifyDone
+		return all(...doneChs)
 	}
 
-	/** @type {(deadline: number, doneCh: Ch, $cancelFn: Proc, $childPrcS: Set<Prc>) => Proc} */
-	new$deadline(deadline, doneCh, $cancelFn, $childPrcS) {
-		const this_ = this
-		return go(function* _deadline() {
-			yield sleep(deadline)
-			yield this_.hardCancel($cancelFn, $childPrcS).rec
-			yield doneCh.put()
-		})
-	}
-
-	/** @type {(...procS: Proc[]) => Ch} */
-	hardCancel(...procS) {
-		const doneCh = /** @type {Ch} */ (ch())
-		this.#state = DONE  //  will most likely be done already by .cancel(), but just for good measure
-		// @ todo call children and cancelFn .hardCancel()
-		go(function* _hardCancel() {
-			yield done(...procS).rec
-		})
-		this.nilParentChildRefs()
-		return doneCh
-	}
-
-	nilParentChildRefs() {
-		this.#parentPrc?.$childPrcS?.delete(this)
+	#nilParentRefs() {
+		this.#parentPrc?.$childS?.delete(this)
 		this.#parentPrc = undefined
 	}
 
+	#cancelFinalCleanup() {
+		this.#state = DONE
+		this.#nilParentRefs()
+	}
+
+	/** @type {() => Ch} */
+	#cancelChildS() {
+		const $childS = /** @type {Set<Prc>} */ (this.$childS)
+
+		let cancelChs = []
+		for (const prc of $childS) {
+			cancelChs.push(prc.cancel())
+		}
+		return all(...cancelChs)
+	}
+
+	/** @type {() => Prc} */
+	#new$onCancel() {
+		const onCancel = /** @type {GenFn} */(this.onCancel)
+		return new Prc(onCancel(), this.#csp)
+	}
 }
-
-
-
-/*
-Yes I need some internal class state about cancellation
-bc Prc is just wrapped lightly from go() so prc.cancel() is called twice
-
-parentProc is cancelled (along with its child). Then, concurrently,
-granparentProc is cancelled, which calls proc.cancel() and
-child.cancel() again
-
-So need to update the deadline in proc and childProc
-(accounting for time passed
-
-
-*/

@@ -11,12 +11,10 @@ topic("processes basics", () => {
 
       let processMutatedMe = false
 
-      function* proc1() {
+      go(function* proc1() {
          yield sleep(waitms)
          processMutatedMe = true
-      }
-
-      go(proc1)
+      })
 
       await promSleep(waitms)
 
@@ -74,21 +72,16 @@ topic("processes basics", () => {
 
 topic("process cancellation", () => {
 
-   it("manual/simple proc cancel", async () => {
+   it.only("ribu automatically cancels child if parent does not wait to be done", async () => {
 
       let mutated = false
 
-      go(function*() {
-         const childProc = go(function*() {
+      go(function*() {  // eslint-disable-line require-yield
+         go(function*() {
             yield sleep(1)
             mutated = true
          })
-
-         yield sleep(0)
-         yield childProc.cancel().rec
       })
-
-      await promSleep(0)
 
       check(mutated).with(false)
    })

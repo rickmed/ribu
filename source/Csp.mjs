@@ -1,6 +1,6 @@
 export class Csp {
 
-	defaultDeadline = 3000
+	defaultDeadline = 4000
 	#scheduledPrcS = new Set()
 
 	/** @type {_Ribu.Prc | undefined} */

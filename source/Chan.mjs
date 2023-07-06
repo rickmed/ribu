@@ -4,7 +4,7 @@ import { YIELD_VAL } from "./Prc.mjs"
 
 /**
  * @template TVal
- * @implements {_Ribu.Ch<TVal>}
+ * @implements {Ribu.Ch<TVal>}
  */
 export class Chan {
 

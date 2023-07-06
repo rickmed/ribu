@@ -5,46 +5,56 @@ import { Csp } from "./Csp.mjs"
 
 /**
  * @template [TVal=undefined]
- * @typedef {_Ribu.Ch<TVal>} Ch<TVal>
+ * @typedef {Ribu.Ch<TVal>} Ch<TVal>
  */
 
 /** @typedef {Ribu.Proc} Proc */
-/** @typedef {_Ribu.Conf} Conf */
+/** @typedef {_Ribu.Gen_or_GenFn} Gen_or_GenFn */
+/**
+ * @template {string} TconfKs
+ * @typedef {_Ribu.Conf<TconfKs>} Conf<TconfKs>
+ * */
 
 
 const csp = new Csp()
 
 
 /**
- * @template {Conf} TConf
- * @param {_Ribu.Gen_or_GenFn} gen_or_genFn
- * @param {(TConf extends _Ribu.ProcShape ? never : TConf)=} conf
- * @returns {Proc & TConf}
+ * @template {string} TKs
+ * @param {Gen_or_GenFn} gen_or_genFn
+ * @param {Conf<TKs>=} conf
+ * @returns {Proc & _Ribu.Ports<TKs>}
  */
 export function go(gen_or_genFn, conf) {
 
 	const gen = gen_or_genFn instanceof Function ? gen_or_genFn() :
 		gen_or_genFn
 
-   const prc = new Prc(gen, csp)
+	const deadline = /** @type {number=} */ (conf && ("deadline" in conf) ? conf.deadline : undefined)
+	const prc = new Prc(gen, csp, deadline)
 
-   const ProcPrototype = {
-      done: prc.done,
-      cancel: prc.cancel.bind(prc)
-   }
+	/** @type {Proc} */
+	const ProcPrototype = {
+		done: prc.done,
+		cancel() {
+			// is not prc.cancel.bind.(prc) bc I don't want plain js users to accidentally
+			// pass in a cancel deadline, which in important in Prc.cancel()
+			return prc.cancel()
+		}
+	}
 
-	// /** @type {Proc & TConf} */
-   const proc = Object.create(ProcPrototype)
+	const proc = Object.create(ProcPrototype)
 
-   if (conf !== undefined) {
-      for (const k in conf) {
-         const optsVal = conf[k]
-         proc[k] = optsVal
-      }
-   }
+	if (conf !== undefined) {
+		for (const k in conf) {
+			if (k === "deadline" || k === "cancel" || k === "done") continue
+			const optsVal = conf[k]
+			proc[k] = optsVal
+		}
+	}
 
-   prc.run()
-   return proc
+	prc.run()
+	return proc
 }
 
 
@@ -53,73 +63,81 @@ export function go(gen_or_genFn, conf) {
  */
 export function ch(capacity = 1) {
 	const newch = new Chan(capacity, csp)
-   return newch
+	return newch
 }
 
 
 /** @type {(ms: number) => YIELD_VAL | never} */
 export function sleep(ms) {
 
-   const procBeingRan = csp.runningPrc
-   if (procBeingRan === undefined) {
-      throw new Error(`ribu: can't call sleep outside a generator function`)
-   }
+	const procBeingRan = csp.runningPrc
+	if (procBeingRan === undefined) {
+		throw new Error(`ribu: can't call sleep outside a generator function`)
+	}
 
-   // @todo: not using yield down here is weird
-   go(function* sleepPrc() {  // eslint-disable-line require-yield
+	// @todo: not using yield down here is weird
+	go(function* sleepPrc() {  // eslint-disable-line require-yield
 
-      const timeoutID = setTimeout(() => {
-         procBeingRan.setResume()
-         procBeingRan.run()
-      }, ms)
+		const timeoutID = setTimeout(() => {
+			procBeingRan.setResume()
+			procBeingRan.run()
+		}, ms)
 
-      onCancel(() => clearTimeout(timeoutID))
-   })
+		onCancel(() => clearTimeout(timeoutID))
+	})
 
-   return YIELD_VAL
+	return YIELD_VAL
 }
 
 
 /** @type {(...procS: Proc[]) => Ch | never} */
-export function done(...procS_) {
+export function done(...procS) {
 
-   const allDone = ch()
+	const allDone = ch()
 
-   /** @type {Array<Proc> | Set<Proc>} */
-   let procS = procS_
+	/** @type {Array<Ch>} */
+	let doneChs
+	if (procS.length === 0) {
 
-   if (procS.length === 0) {
-      const {runningPrc} = csp
-      if (runningPrc === undefined) {
-         throw new Error(`ribu: can't call done without parameters and outside a generator function`)
-      }
-      const {$childPrcS: childPrcS} = runningPrc
-      if (childPrcS === undefined) {
-         return allDone
-      }
-      procS = childPrcS
-   }
+		const { runningPrc } = csp
 
-   go(function* _donePrc() {
-      const procSDone = []
-      for (const proc of procS) {
-         procSDone.push(proc.done)
-      }
-      yield all(...procSDone).rec
-      yield allDone.put()
-   })
+		if (runningPrc === undefined) {
+			throw new Error(`ribu: can't call done without parameters and outside a generator function`)
+		}
 
-   return allDone
+		const { $childS: $childPrcS } = runningPrc
+
+		if ($childPrcS === undefined) {
+			return allDone
+		}
+
+		const prcDoneChs = []
+		for (const prc of $childPrcS) {
+			prcDoneChs.push(prc.done)
+		}
+		doneChs = prcDoneChs
+	}
+	else {
+		doneChs = procS.map(proc => proc.done)
+	}
+
+
+	go(function* _donePrc() {
+		yield all(...doneChs).rec
+		yield allDone.put()
+	})
+
+	return allDone
 }
 
 
 /** @type {(fn: _Ribu.GenFn | Function) => void} */
 function onCancel(fn) {
-   const {runningPrc} = csp
-   if (runningPrc === undefined) {
-      throw new Error(`ribu: can't call onCancel outside a generator function`)
-   }
-   runningPrc.cancelFn = fn
+	const { runningPrc } = csp
+	if (runningPrc === undefined) {
+		throw new Error(`ribu: can't call onCancel outside a generator function`)
+	}
+	runningPrc.onCancel = fn
 }
 
 
@@ -130,13 +148,14 @@ export function cancel(...procS) {
 }
 
 
-/** @type {(...chanS: Ch[]) => Ch} */
+/** @type {(...chanS: Array<Ch | undefined>) => Ch} */
 export function all(...chanS) {
 	const allDone = ch()
 	const chansL = chanS.length
 	const notifyDone = ch(chansL)
 
 	for (const chan of chanS) {
+		if (chan === undefined) continue
 		go(function* () {
 			yield chan.rec
 			yield notifyDone.put()
@@ -176,24 +195,14 @@ export function or(...chanS) {
 }
 
 
-/** @type {(fn: Function) => Ch} */
-export function doAsync(fn) {
-   const done = ch()
-   go(function* _doAsync() {
-      fn()
-      yield done.put()
-   })
-   return done
+/** @type {(fn: Function, done?: Ch) => Ch} */
+export function doAsync(fn, done = ch()) {
+	go(function* _doAsync() {
+		fn()
+		yield done.put()
+	})
+	return done
 }
-
-
-// /** @type {(done?: Ch) => Ch} */
-// export function async(done = ch()) {
-//    go(function* _async() {
-//       yield done.put()
-//    })
-//    return done
-// }
 
 
 /**
