@@ -1,4 +1,4 @@
-import { YIELD_VAL as _YIELD_VAL, Prc as _Prc } from "../source/Prc.mjs"
+import { YIELD_VAL as _YIELD_VAL,  Prc as _Prc } from "../source/Prc.mjs"
 import { Csp as _Csp } from "../source/Csp.mjs"
 import { Proc, Ch } from "./ribu"
 
@@ -24,7 +24,13 @@ type CancelScope = {
 
 /** === Chan ================================================================ */
 
-type PutFn<TChVal> = (...args: (TChVal extends undefined ? [] : [TChVal])) => YIELD_VAL
+type Put<TChVal> =
+   (...args: (TChVal extends undefined ? [] : [TChVal])) =>
+      YIELD_VAL
+
+type Dispatch<TChVal> =
+(...args: (TChVal extends undefined ? [] : [TChVal])) =>
+   void | never
 
 
 /** === Generator =========================================================== */
@@ -43,9 +49,10 @@ type Gen_or_GenFn = Ribu.Gen | GenFn
 
 type Conf<TKs extends string> = {
    [K in TKs]:
-      K extends "cancel" | "done" ? never :
+      K extends keyof Prc ? never :
       K extends "deadline" ? number :
       Ch
 }
 
-type Ports<TConfKs extends string> = Omit<Conf<TConfKs>, "deadline">
+type Ports<TConfKs extends string> =
+   Omit<Conf<TConfKs>, "deadline">

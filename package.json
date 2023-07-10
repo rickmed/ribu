@@ -9,7 +9,7 @@
   ],
   "exports": {
     ".": {
-      "import": "./source/ribu.mjs"
+      "import": "./source/index.mjs"
     },
     "./test": {
       "import": "./tests/test-utils.mjs"
@@ -18,12 +18,13 @@
   "types": "./types",
   "scripts": {
     "test": "node ./tests/runTests.mjs",
-    "test:watch": "node --watch ./tests/runTests.mjs",
+    "test:watch": "node --stack-trace-limit=50 --watch ./tests/runTests.mjs",
     "test:cov": "cross-env 'NODE_OPTIONS=--loader @istanbuljs/esm-loader-hook --no-warnings' nyc npm test",
     "type-check": "tsc --noEmit --allowJs"
   },
   "engines": {},
   "devDependencies": {
+    "@types/node": "^20.4.1",
     "eslint": "^8.44.0",
     "sophi": "^0.1.1",
     "typescript": "^5.1.6"

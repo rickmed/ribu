@@ -1,70 +1,68 @@
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
-import { go, ch, sleep } from "../source/ribu.mjs"
+import { go, ch, sleep } from "../source/index.mjs"
 import { promSleep } from "./utils.mjs"
 
-topic("processes basics", () => {
+/**
+ * @template [TChVal=undefined]
+ * @typedef {Ribu.Ch<TChVal>} Ch<TChVal>
+ */
 
-   const waitms = 0
+topic("process basics", () => {
 
-   it("can wait", async () => {
+   it("it sleep without blocking", async () => {
 
-      let processMutatedMe = false
+      let mutated = undefined
 
       go(function* proc1() {
-         yield sleep(waitms)
-         processMutatedMe = true
+         yield sleep(0)
+         mutated = true
       })
 
-      await promSleep(waitms)
+      await promSleep(1)
+      mutated = false  // this statement should execute last
 
-      check(processMutatedMe).with(true)
+      check(mutated).with(false)
    })
 
 
-   it("can yield channels send/receive", async () => {
+   it("can send/receive on channels", async () => {
+      // @todo: put assertion inside main()
+      // now is not possiblw bc sophi does not fail on tests without ran assertions
 
-      /** @type {number} */
-      let processMutatedMe = 0
+      let mutated
 
-      /** @type {(ch: Ribu.Ch<number>) => Ribu.Gen} */
-      function* proc1(ch) {
-         yield ch.put(1)
+      const ch1 = /** @type {Ch<boolean>} */(ch())
+
+      /** @type {(ch: Ch<boolean>) => Ribu.Gen} */
+      function* child(ch) {
+         yield ch.put(false)
       }
 
-      // type parameter of Ch makes no difference on ch.take bc generators can't connect next() with yield
-      /** @type {(ch: Ribu.Ch<number>) => Ribu.Gen<number>} */
-      function* proc2(ch) {
-         const one = yield ch.rec
-         yield sleep(waitms)
-         processMutatedMe = one
+      // type parameter of Ch makes no difference at ch.take bc generators can't connect next() with yield
+      /** @type {(ch: Ch<boolean>) => Ribu.Gen<boolean>} */
+      function* main(ch) {
+         go(child(ch))
+         const _false = yield ch.rec
+         mutated = _false
       }
 
-      const ch1 = /** @type {Ribu.Ch<number>} */(ch())
-      go(proc1(ch1))
-      go(proc2(ch1))
+      go(main(ch1))
 
-      await promSleep(waitms)
-
-      check(processMutatedMe).with(1)
+      check(mutated).with(false)
    })
 
 
    it("can yield promises", async () => {
 
-      let processMutatedMe = false
-
-      /** @type {() => Ribu.Gen<boolean>} */
+      /** @type {() => Ribu.Gen<number>} */
       function* proc1() {
-         const res = yield sleep(waitms)
-         processMutatedMe = res
+         const res = yield Promise.resolve(1)
+         check(res).with(1)
       }
 
       go(proc1)
-
-      await promSleep(waitms)
-
-      check(processMutatedMe).with(true)
+      await promSleep(0)
    })
 
 })
@@ -72,12 +70,12 @@ topic("processes basics", () => {
 
 topic("process cancellation", () => {
 
-   it.only("ribu automatically cancels child if parent does not wait to be done", async () => {
+   it("ribu automatically cancels child if parent does not wait to be done", async () => {
 
       let mutated = false
 
-      go(function*() {  // eslint-disable-line require-yield
-         go(function*() {
+      go(function* main() {  // eslint-disable-line require-yield
+         go(function* sleeper() {
             yield sleep(1)
             mutated = true
          })

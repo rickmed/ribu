@@ -1,27 +1,28 @@
+import { run } from "./Prc.mjs"
+
 export class Csp {
 
-	defaultDeadline = 4000
-	#scheduledPrcS = new Set()
+	defaultDeadline = 5000
+	
+	/** @type {Set<_Ribu.Prc>} */
+	scheduledPrcS = new Set()
 
-	/** @type {_Ribu.Prc | undefined} */
-	runningPrc = undefined
-
-	/** @param {number=} defaultDeadline */
-	constructor(defaultDeadline) {
-		if (defaultDeadline !== undefined) {
-			this.defaultDeadline = defaultDeadline
-		}
-	}
+	/** @type {Array<_Ribu.Prc>} */
+	prcStack = []
 
 	runScheduledPrcS() {
-		for (const prc of this.#scheduledPrcS) {
-			this.#scheduledPrcS.delete(prc)
-			prc.run()
+		for (const prc of this.scheduledPrcS) {
+			this.scheduledPrcS.delete(prc)
+			run(prc)
 		}
 	}
 
 	/** @param {_Ribu.Prc} prc */
 	schedule(prc) {
-		this.#scheduledPrcS.add(prc)
+		this.scheduledPrcS.add(prc)
+	}
+
+	get runningPrc() {
+		return this.prcStack[this.prcStack.length - 1]
 	}
 }

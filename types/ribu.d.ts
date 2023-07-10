@@ -1,13 +1,14 @@
-import { BroadcastCh } from "../source/ribu.mjs"
-import { YIELD_VAL, Yieldable, PutFn } from "./_ribu"
+import { type } from "os"
+import { YIELD_VAL, Yieldable, Put, Dispatch } from "./_ribu"
 
 
 export as namespace Ribu
 
 
-type Ch<TVal = undefined> = {
-   put: PutFn<TVal>
+type Ch<TChVal = undefined> = {
+   put: Put<TChVal>
    get rec(): YIELD_VAL,
+   dispatch: Dispatch<TChVal>,
 }
 
 type Proc = {
