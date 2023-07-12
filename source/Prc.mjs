@@ -11,7 +11,6 @@ import { ch } from "./channels.mjs"
 /** @typedef {_Ribu.Gen_or_GenFn} Gen_or_GenFn */
 /** @typedef {Ribu.Gen} Gen */
 /** @typedef {_Ribu.GenFn} GenFn */
-/** @typedef {_Ribu.CancelScope} CancelScope */
 
 
 

@@ -15,12 +15,6 @@ type Csp = _Csp
 
 type Prc = _Prc
 
-type CancelScope = {
-   $deadline: Proc,
-   $onCancel?: Prc,
-   childSCancelDone?: Ch,
-}
-
 
 /** === Chan ================================================================ */
 
