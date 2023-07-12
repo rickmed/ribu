@@ -7,14 +7,13 @@ import { ch } from "./channels.mjs"
  * @template [TChVal=undefined]
  * @typedef {Ribu.Ch<TChVal>} Ch<TChVal>
  */
-/** @typedef {Ribu.Proc} Proc */
 /** @typedef {_Ribu.Gen_or_GenFn} Gen_or_GenFn */
 /** @typedef {Ribu.Gen} Gen */
 /** @typedef {_Ribu.GenFn} GenFn */
 
 
 
-/* === Prc class ====================================================== */
+/* === Proc class ====================================================== */
 
 export const YIELD_VAL = "RIBU_YIELD_VAL"
 
@@ -70,8 +69,8 @@ export class Prc {
 
 		const gen =
 			gen_or_genFn === undefined ? undefined :
-				gen_or_genFn instanceof Function ? gen_or_genFn() :
-					gen_or_genFn
+			gen_or_genFn instanceof Function ? gen_or_genFn() :
+			gen_or_genFn
 
 		this._gen = gen
 
@@ -368,7 +367,7 @@ function runChildSCancelAndOnCancel(prc) {
  * @template {string} TKs
  * @param {Gen_or_GenFn} gen_or_genFn
  * @param {_Ribu.Conf<TKs>=} conf
- * @returns {Prc & _Ribu.Ports<TKs>}
+ * @returns {Ribu.Proc<_Ribu.Ports<TKs>>}
  */
 export function go(gen_or_genFn, conf) {
 

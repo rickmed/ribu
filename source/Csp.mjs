@@ -3,7 +3,7 @@ import { run } from "./Prc.mjs"
 export class Csp {
 
 	defaultDeadline = 5000
-	
+
 	/** @type {Set<_Ribu.Prc>} */
 	scheduledPrcS = new Set()
 

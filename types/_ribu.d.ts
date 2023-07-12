@@ -1,6 +1,6 @@
-import { YIELD_VAL as _YIELD_VAL,  Prc as _Prc } from "../source/Prc.mjs"
+import { YIELD_VAL as _YIELD_VAL, Prc as _Prc } from "../source/Prc.mjs"
 import { Csp as _Csp } from "../source/Csp.mjs"
-import { Proc, Ch } from "./ribu"
+import { Ch } from "./ribu"
 
 
 export as namespace _Ribu
@@ -14,6 +14,12 @@ type Csp = _Csp
 /** === Prc ================================================================ */
 
 type Prc = _Prc
+
+type PublicProc = {
+   readonly done: Ch
+   readonly cancel: () => Ch
+   onCancel: GenFn | Function
+}
 
 
 /** === Chan ================================================================ */

@@ -68,6 +68,28 @@ topic("process basics", () => {
 })
 
 
+topic(`process can access "this" inside them`, () => {
+
+   it("with configured channels", async () => {
+
+      let mutated = false
+
+      /** @this {Ribu.Proc<{port1: Ch<boolean>}>} */
+      function* main() {
+         yield this.port1.put(true)
+         const _true = /** @type {boolean} */ (yield this.port1.rec)
+         mutated = _true
+      }
+
+      go(main, {port1: ch(2)})
+
+      await promSleep(0)
+
+      check(mutated).with(true)
+   })
+})
+
+
 topic("process cancellation", () => {
 
    it("ribu automatically cancels child if parent does not wait to be done", async () => {
@@ -82,5 +104,26 @@ topic("process cancellation", () => {
       })
 
       check(mutated).with(false)
+   })
+})
+
+
+
+topic.skip("process can wait for children processes", () => {
+
+   it("implicit waiting. No return values", async () => {
+
+      let mutated = false
+
+      go(function* main() {  // eslint-disable-line require-yield
+         go(function* sleeper() {
+            yield sleep(1)
+            mutated = true
+         })
+
+         // yield wait
+      })
+
+      check(mutated).with(true)
    })
 })
