@@ -17,8 +17,8 @@
   },
   "types": "./types",
   "scripts": {
-    "test": "node ./tests/runTests.mjs",
-    "test:watch": "node --stack-trace-limit=50 --watch ./tests/runTests.mjs",
+    "test": "tsx ./tests/runTests.mts",
+    "test:watch": "tsx watch ./tests/runTests.mts",
     "test:cov": "cross-env 'NODE_OPTIONS=--loader @istanbuljs/esm-loader-hook --no-warnings' nyc npm test",
     "type-check": "tsc --noEmit --allowJs"
   },
@@ -27,6 +27,7 @@
     "@types/node": "^20.4.1",
     "eslint": "^8.44.0",
     "sophi": "^0.1.1",
+    "tsx": "^3.12.7",
     "typescript": "^5.1.6"
   },
   "repository": {

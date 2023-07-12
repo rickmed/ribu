@@ -1,24 +1,24 @@
-import { all } from "./index.mjs"
-import csp from "./initCsp.mjs"
-import { ch } from "./channels.mjs"
-
-
-/**
- * @template [TChVal=undefined]
- * @typedef {Ribu.Ch<TChVal>} Ch<TChVal>
- */
-/** @typedef {_Ribu.Gen_or_GenFn} Gen_or_GenFn */
-/** @typedef {Ribu.Gen} Gen */
-/** @typedef {_Ribu.GenFn} GenFn */
-
+import { all } from "./index.mts"
+import csp from "./initCsp.mts"
+import { Ch, ch } from "./channels.mts"
 
 
 /* === Proc class ====================================================== */
 
 export const YIELD_VAL = "RIBU_YIELD_VAL"
 
-const RUNNING = "RUNNING", CANCELLING = "CANCELLING", DONE = "DONE"
-const RESUME = "RESUME", PARK = "PARK"
+export type YIELD_V = typeof YIELD_VAL
+
+export type Gen<Rec = unknown> =
+	Generator<YIELD_V | Promise<unknown>, void, Rec>
+
+type GenFn<Rec = unknown> =
+	(this: Prc, ...args: any[]) => Gen<Rec>
+
+type PrcState = "RUNNING" | "CANCELLING" | "DONE"
+type ExecNext = "RESUME" | "PARK"
+
+type OnCancel = Function | GenFn
 
 /**
  * The generator manager
@@ -26,53 +26,38 @@ const RESUME = "RESUME", PARK = "PARK"
 export class Prc {
 
 	/** undefined when instantiated in Cancellable  */
-	_gen
+	_gen?: Gen = undefined
 
-	/* defaults are RUNNING and RESUME because gen is ran immediately */
-	/** @type {RUNNING | CANCELLING | DONE} */
-	_state = RUNNING
-	/** @type {PARK | RESUME} */
-	_execNext = RESUME
+	/* defaults are RUNNING/RESUME because gen is ran immediately */
+	_state: PrcState = "RUNNING"
+	_execNext: ExecNext = "RESUME"
 
 	/**
 	 * Whatever is yield/.next() to/from the generator.
 	 * Default is undefined because first .next(genMsg) is ignored anyways
-	 * @type {unknown} */
-	_genMsg = undefined
+	 */
+	_genMsg: unknown = undefined
 
-	/** @type {Prc | undefined} - For bubbling errors up (undefined for root prcS) */
-	_parentPrc = undefined
-	/** @type {Set<Prc> | undefined} - For auto cancel child Procs */
-	_$childS = undefined
+	/** For bubbling errors up (undefined for root prcS) */
+	_parentPrc?: Prc = undefined
+	/** For auto cancel child Procs */
+	_$childS?: Set<Prc> = undefined
 
-	/** @type {GenFn | Function | undefined} */
-	onCancel = undefined
-	/** @type {number} */
-	_deadline
+	onCancel?: OnCancel  = undefined
+	_deadline: number
 
-	/**
-	 * Setup by sleep(). Used by .cancel() to clearTimeout(_timeoutID)
-	 * @type {NodeJS.Timeout | undefined} */
-	_timeoutID = undefined
+	/** Setup by sleep(). Used by .cancel() to clearTimeout(_timeoutID) */
+	_timeoutID?: NodeJS.Timeout = undefined
 
 	done = ch()
 
 	/**
-	 * @param {boolean=} isUserPrc
-		* Used to launch "special"/internal PrcS in Prc.cancel() which don't
-		* have children to auto cancel (that would create infinite loops)
-	 * @param {Gen_or_GenFn=} gen_or_genFn
-		  * undefined when instantiated in Cancellable
-	 * @param {number=} deadline
+	 * @param {boolean} isUserPrc
+		* Used to launch "special"/internal PrcS, used in Prc.cancel(), which don't
+		* have children to auto cancel that would create infinite loops.
+		* Used alongside with no genFn
 	 */
-	constructor(isUserPrc, gen_or_genFn, deadline = csp.defaultDeadline) {
-
-		const gen =
-			gen_or_genFn === undefined ? undefined :
-			gen_or_genFn instanceof Function ? gen_or_genFn() :
-			gen_or_genFn
-
-		this._gen = gen
+	constructor(isUserPrc: boolean, deadline = csp.defaultDeadline) {
 
 		const parentPrc = csp.runningPrc
 
@@ -100,7 +85,7 @@ export class Prc {
 		const state = this._state
 		const { done } = this
 
-		if (state === DONE) {
+		if (state === "DONE") {
 			/* @todo: when state === DONE (late .cancel() callers)
 				when I implement done -> results/errs, the results/errs must be kept inside cache
 				and be returned here for late proc.done callers
@@ -108,14 +93,14 @@ export class Prc {
 			return done
 		}
 
-		if (state === CANCELLING) {
+		if (state === "CANCELLING") {
 			/* @todo: concurrent .cancel() calls:
 				need to return some ch to caller that when cancel protocol is done it will notify
 			*/
 			return done
 		}
 
-		this._state = CANCELLING
+		this._state = "CANCELLING"
 		this._gen?.return()
 		csp.scheduledPrcS.delete(this)
 		ifSleepTimeoutClear(this)
@@ -153,9 +138,7 @@ export class Prc {
 	}
 }
 
-
-/** @type {(prc: Prc) => void} */
-export function run(prc) {
+export function run(prc: Prc): void {
 
 	csp.prcStack.push(prc)
 
@@ -164,15 +147,15 @@ export function run(prc) {
 
 		const exec = prc._execNext
 
-		if (exec === PARK) {
+		if (exec === "PARK") {
 			break
 		}
 
-		if (exec === RESUME) {
+		if (exec === "RESUME") {
 
-			// cast ok since _gen can only be undefined with Cancellable()
+			// ok to cast since _gen can only be undefined with Cancellable()
 			// which never calls .run()
-			const gen = /** @type {Ribu.Gen} */ (prc._gen)
+			const gen = prc._gen as Gen
 			const { done, value } = gen.next(prc._genMsg)
 
 			if (done === true) {
@@ -189,28 +172,25 @@ export function run(prc) {
 			if (value instanceof Promise) {
 				const prom = value
 
-				prom.then(onVal, onErr)
+				prom.then(
+					function onVal(val: unknown) {
+						if (prc._state !== "RUNNING") {
+							return
+						}
+						setResume(prc, val)
+						run(prc)
+					},
+					function onErr(err: unknown) {
+						if (prc._state !== "RUNNING") {
+							return
+						}
+						// @todo implement errors
+						throw err
+					}
+				)
+
 				setPark(prc)
 				break
-
-				// helpers
-				/** @param {unknown} val */
-				function onVal(val) {
-					if (prc._state !== RUNNING) {
-						return
-					}
-					setResume(prc, val)
-					run(prc)
-				}
-
-				/** @param {unknown} err */
-				function onErr(err) {
-					if (prc._state !== RUNNING) {
-						return
-					}
-					// @todo implement errors
-					throw err
-				}
 			}
 		}
 	}
@@ -218,40 +198,33 @@ export function run(prc) {
 	csp.prcStack.pop()
 
 	if (genDone) {
-		_go(_$finishGenNormalDone(prc))
+		_go(finishGenNormalDone, prc)
 		return
 	}
 
 	csp.runScheduledPrcS()
 }
 
-
-/** @type {(prc: Prc) => unknown} */
-export function pullOutMsg(prc) {
+export function pullOutMsg(prc: Prc): unknown {
 	const outMsg = prc._genMsg
 	prc._genMsg = undefined
 	return outMsg
 }
 
-
-/** @type {(prc: Prc, genMsg?: unknown) => YIELD_VAL} */
-export function setResume(prc, genMsg) {
-	prc._execNext = RESUME
+export function setResume(prc: Prc, genMsg?: unknown): YIELD_V  {
+	prc._execNext = "RESUME"
 	prc._genMsg = genMsg
 	return YIELD_VAL
 }
 
-/** @type {(prc: Prc, genMsg?: unknown) => YIELD_VAL} */
-export function setPark(prc, genMsg) {
-	prc._execNext = PARK
+export function setPark(prc: Prc, genMsg?: unknown): YIELD_V {
+	prc._execNext = "PARK"
 	prc._genMsg = genMsg
 	return YIELD_VAL
 }
 
-
-/** @param {Prc} prc */
-function* _$finishGenNormalDone(prc) {
-	prc._state = DONE
+function* finishGenNormalDone(prc: Prc) {
+	prc._state = "DONE"
 
 	const { done, _$childS } = prc
 
@@ -265,11 +238,9 @@ function* _$finishGenNormalDone(prc) {
 	yield done.put()
 }
 
+function cancelChildS(prc: Prc, done = ch()) {
 
-/** @type {(prc: Prc, done?: Ch) => Ch} */
-function cancelChildS(prc, done = ch()) {
-
-	const $childS = /** @type {Set<Prc>} */ (prc._$childS)
+	const $childS = prc._$childS as Set<Prc>
 
 	_go(function* _cancelChildS() {
 		let cancelChs = []
@@ -284,16 +255,13 @@ function cancelChildS(prc, done = ch()) {
 	return done
 }
 
-
-/** @type {(prc: Prc) => void} */
-function nilParentRefAndMarkDONE(prc) {
-	prc._state = DONE
+function nilParentRefAndMarkDONE(prc: Prc) {
+	prc._state = "DONE"
 	prc._parentPrc = undefined
 }
 
-
-/** @type {(prc: Prc) => Ch} - Doesn't reuse prc.done */
-function $onCancel(prc) {
+/** Doesn't reuse prc.done */
+function $onCancel(prc: Prc) {
 
 	const done = ch()
 
@@ -314,19 +282,15 @@ function $onCancel(prc) {
 	return done
 }
 
-
-/** @type {(prc: Prc) => void} */
-function hardCancel(prc) {
-	prc._state = DONE
+function hardCancel(prc: Prc) {
+	prc._state = "DONE"
 	ifSleepTimeoutClear(prc)
 	prc._gen?.return()
 	prc._parentPrc = undefined
 	prc._$childS = undefined
 }
 
-
-/** @type {(prc: Prc) => Ch} */
-function cancelChildSAndFinish(prc) {
+function cancelChildSAndFinish(prc: Prc) {
 	const { done } = prc
 
 	_go(function* cancelChildSAndFinish() {
@@ -337,18 +301,14 @@ function cancelChildSAndFinish(prc) {
 	return done
 }
 
-
-/** @type {(prc: Prc) => void} */
-function ifSleepTimeoutClear(prc) {
+function ifSleepTimeoutClear(prc: Prc) {
 	const timeoutID = prc._timeoutID
 	if (timeoutID !== undefined) {
 		clearTimeout(timeoutID)
 	}
 }
 
-
-/** @type {(prc: Prc) => Ch} */
-function runChildSCancelAndOnCancel(prc) {
+function runChildSCancelAndOnCancel(prc: Prc) {
 
 	_go(function* _handleChildSAndOnCancel() {
 		const childSCancelDone = cancelChildS(prc)
@@ -363,48 +323,74 @@ function runChildSCancelAndOnCancel(prc) {
 
 /* === Prc constructors ====================================================== */
 
+type Conf<TKs extends string> = {
+   [K in TKs]:
+      K extends keyof Prc ? never :
+      K extends "deadline" ? number :
+      Ch
+}
+
+type Ports<TConfKs extends string> =
+   Omit<Conf<TConfKs>, "deadline">
+
+type PublicProc = {
+	readonly done: Ch
+	readonly cancel: () => Ch
+	onCancel: GenFn | Function
+}
+
+type Proc<Ports> = PublicProc & Ports
+
 /**
  * @template {string} TKs
- * @param {Gen_or_GenFn} gen_or_genFn
+ * @param {GenFn} genFn
  * @param {_Ribu.Conf<TKs>=} conf
  * @returns {Ribu.Proc<_Ribu.Ports<TKs>>}
  */
-export function go(gen_or_genFn, conf) {
 
-	const deadline = /** @type {number=} */
-		(conf && ("deadline" in conf) ? conf.deadline : undefined)
+// const $p1 = go({deadline: 4000, filePathS: ch(30)}, genFn, "arg2"...)
+// const $p2 = go(genFn, "arg1", "arg2"...)
+// const $p3 = go(genFn)
 
-	const prc = new Prc(true, gen_or_genFn, deadline)
+export function go<_GenFnArgs, _ConfKs>(genFn: GenFn, ...genFnArgs: _GenFnArgs[]): Proc<_ConfKs> {
 
-	if (conf !== undefined) {
-		for (const k in conf) {
-			const optsVal = conf[k]
-			// @ts-ignore
-			prc[k] = optsVal
-		}
-	}
+	const proc = new Prc()
 
-	run(prc)
-	/* @ts-ignore */
-	return prc
+
+	// const deadline = /** @type {number=} */
+	// 	(conf && ("deadline" in conf) ? conf.deadline : undefined)
+
+	// const prc = new Prc(true, deadline, genFn)
+
+	// if (conf) {
+	// 	for (const k in conf) {
+	// 		const optsVal = conf[k]
+	// 		// @ts-ignore
+	// 		prc[k] = optsVal
+	// 	}
+	// }
+
+	// run(prc)
+	// /* @ts-ignore */
+	// return prc
 }
 
 
 /**
  * A way to create a new Prc which sets it up as a child of last called go()
-	  * so the parent can child.cancel() and thus onCancel is ran.
- * @type {(onCancel: Function | _Ribu.GenFn) => Prc}
+ * so the parent can child.cancel() and thus onCancel is ran.
  */
-export function Cancellable(onCancel) {
-	const prc = new Prc()
+export function Cancellable(onCancel: OnCancel) {
+	const prc = new Prc(true)
 	prc.onCancel = onCancel
 	return prc
 }
 
 
-/** @type {(gen_or_genFn: Gen_or_GenFn) => Prc}  */
-function _go(gen_or_genFn) {
-	const prc = new Prc(false, gen_or_genFn)
+/**
+ * @type {(genFn: GenFn, ...genFnArgs: unknown[]) => Prc<typeof genFnArgs>}  */
+function _go(genFn, ...genFnArgs) {
+	const prc = new Prc(false, undefined, genFn, ...genFnArgs)
 	run(prc)
 	return prc
 }
@@ -413,7 +399,7 @@ function _go(gen_or_genFn) {
 
 /* === Sleep ====================================================== */
 
-/** @type {(ms: number) => YIELD_VAL} */
+/** @type {(ms: number) => YIELD_V} */
 export function sleep(ms) {
 	const runningPrc = /** @type {_Ribu.Prc} */ (csp.runningPrc)
 	const timeoutID = setTimeout(() => {

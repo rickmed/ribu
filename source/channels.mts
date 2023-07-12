@@ -1,43 +1,44 @@
-import { pullOutMsg, run, setPark, setResume } from "./Prc.mjs"
-import csp from "./initCsp.mjs"
+import { pullOutMsg, run, setPark, setResume, YIELD_V, Prc } from "./Prc.mts"
+import csp from "./initCsp.mts"
 
 
-/**
- * @template [TChVal=undefined]
- * @param {number=} capacity
- */
-export function ch(capacity = 0) {
-	const _ch = /** @type {Ribu.Ch<TChVal>} */
-		(capacity === 0 ? new Chan() : new BufferedChan(capacity))
+export function ch<V = undefined>(capacity = 0): Ch<V> {
+	const _ch = capacity === 0 ? new Chan<V>() : new BufferedChan<V>(capacity)
 	return _ch
 }
 
 
-/** @template [TChVal=undefined] */
-class BaseChan {
+type Msg<V> = V extends undefined ? [] : [V]
 
-	/** @type ArrayQueue<_Ribu.Prc> @protected */
-	_waitingSenders = new ArrayQueue()
+export type Ch<V = undefined> = {
+   put(...msg: Msg<V>): YIELD_V,
+   get rec(): YIELD_V,
+   dispatch(msg: Msg<V>): void,
+}
 
-	/** @type ArrayQueue<_Ribu.Prc> @protected */
-	_waitingReceivers = new ArrayQueue()
+// type _BaseChan<V> = {
+//    dispatch: Dispatch<V>,
+// }
 
-	/** @type {_Ribu.Dispatch<TChVal>} */
-	dispatch(msg) {
-		const waitingReceiver = /** @type {_Ribu.Prc} */ (this._waitingReceivers.pull())
+class BaseChan<V> {
+
+	protected _waitingSenders = new Queue<Prc>()
+	protected _waitingReceivers = new Queue<Prc>()
+
+	dispatch(msg: Msg<V>): void {
+		// ok to cast. I would throw anyways and the error should be evident
+		const waitingReceiver = this._waitingReceivers.pull() as Prc
 		setResume(waitingReceiver, msg)
 		run(waitingReceiver)
 	}
 }
 
 
-/** @template [TChVal=undefined] */
-class Chan extends BaseChan {
+class Chan<V> extends BaseChan<V> {
 
-	/** @type {_Ribu.Put<TChVal>} */
-	put(msg) {
+   put(...msg: Msg<V>): YIELD_V {
 
-		const runningPrc = /** @type {_Ribu.Prc} */ (csp.runningPrc)
+		const runningPrc = csp.runningPrc
 
 		const { _waitingReceivers } = this
 
@@ -47,16 +48,15 @@ class Chan extends BaseChan {
 		}
 
 		// cast is ok since _waitingReceivers is NOT Empty
-		const receiverPrc = /** @type {_Ribu.Prc} */ (_waitingReceivers.pull())
+		const receiverPrc = _waitingReceivers.pull() as Prc
 		setResume(receiverPrc, msg)
 		csp.schedule(receiverPrc)
 		return setResume(runningPrc, undefined)
 	}
 
-	/** @return {_Ribu.YIELD_VAL} */
-	get rec() {
+	get rec(): YIELD_V {
 
-		const runningPrc = /** @type {_Ribu.Prc} */ (csp.runningPrc)
+		const runningPrc = csp.runningPrc
 
 		const { _waitingSenders } = this
 
@@ -66,7 +66,7 @@ class Chan extends BaseChan {
 		}
 
 		// cast is ok since _waitingSenders is NOT Empty
-		const senderPrc = /** @type {_Ribu.Prc} */ (_waitingSenders.pull())
+		const senderPrc = _waitingSenders.pull() as Prc
 		const msg = pullOutMsg(senderPrc)
 		setResume(senderPrc, undefined)
 		csp.schedule(senderPrc)
@@ -75,23 +75,19 @@ class Chan extends BaseChan {
 }
 
 
-/** @template [TChVal=undefined] */
-class BufferedChan extends BaseChan {
+class BufferedChan<V> extends BaseChan<V> {
 
-	/** @type ArrayQueue<TChVal> */
-	#buffer
-	isFull
+	#buffer: Queue<V>
+	isFull: boolean
 
-	/** @param {number} capacity */
-	constructor(capacity) {
+	constructor(capacity: number) {
 		super()
-		const buffer = new ArrayQueue(capacity)
+		const buffer = new Queue<V>(capacity)
 		this.#buffer = buffer
 		this.isFull = buffer.isFull
 	}
 
-	/** @type {_Ribu.Put<TChVal>} */
-	put(msg) {
+	put(...msg: Msg<V>): YIELD_V {
 
 		const runningPrc = /** @type {_Ribu.Prc} */ (csp.runningPrc)
 
@@ -104,19 +100,18 @@ class BufferedChan extends BaseChan {
 
 		const { _waitingReceivers } = this
 		if (_waitingReceivers.isEmpty) {
-			buffer.push( /** @type {TChVal} */(msg))
+			buffer.push(msg as V)
 			return setResume(runningPrc, undefined)
 		}
 
 		// cast is ok since _waitingReceivers is NOT Empty
-		const receiverPrc = /** @type {_Ribu.Prc} */ (_waitingReceivers.pull())
+		const receiverPrc = _waitingReceivers.pull() as Prc
 		setResume(receiverPrc, msg)
 		csp.schedule(receiverPrc)
 		return setResume(runningPrc, undefined)
 	}
 
-	/** @return {_Ribu.YIELD_VAL} */
-	get rec() {
+	get rec(): YIELD_V {
 
 		const runningPrc = /** @type {_Ribu.Prc} */ (csp.runningPrc)
 
@@ -133,7 +128,7 @@ class BufferedChan extends BaseChan {
 		}
 
 		// cast is ok since _waitingSenders is NOT Empty
-		const senderPrc = /** @type {_Ribu.Prc} */ (_waitingSenders.pull())
+		const senderPrc = _waitingSenders.pull() as Prc
 		const msg = pullOutMsg(senderPrc)
 		setResume(senderPrc, undefined)
 		csp.schedule(senderPrc)
@@ -142,11 +137,12 @@ class BufferedChan extends BaseChan {
 }
 
 
-/** @template TVal */
-class ArrayQueue {
+/**
+ * @todo rewrite to specialized data structure (ring buffer, LL...)
+ */
+class Queue<V> {
 
-	/** @type Array<TVal> */
-	#array = []
+	#array: Array<V> = []
 	#capacity
 
 	constructor(capacity = Number.MAX_SAFE_INTEGER) {
@@ -164,8 +160,7 @@ class ArrayQueue {
 		return this.#array.pop()
 	}
 
-	/** @param {TVal} x */
-	push(x) {
+	push(x: V) {
 		this.#array.unshift(x)
 	}
 }

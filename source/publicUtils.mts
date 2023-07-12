@@ -1,6 +1,6 @@
-import { go } from "./Prc.mjs"
-import { ch } from "./channels.mjs"
-import csp from "./initCsp.mjs"
+import { go } from "./Prc.mts"
+import { ch } from "./channels.mts"
+import csp from "./initCsp.mts"
 
 
 /**

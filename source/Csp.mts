@@ -1,14 +1,10 @@
-import { run } from "./Prc.mjs"
+import { run, Prc } from "./Prc.mts"
 
 export class Csp {
 
 	defaultDeadline = 5000
-
-	/** @type {Set<_Ribu.Prc>} */
-	scheduledPrcS = new Set()
-
-	/** @type {Array<_Ribu.Prc>} */
-	prcStack = []
+	scheduledPrcS: Set<Prc> = new Set()
+	prcStack: Array<Prc> = []
 
 	runScheduledPrcS() {
 		for (const prc of this.scheduledPrcS) {
@@ -17,8 +13,7 @@ export class Csp {
 		}
 	}
 
-	/** @param {_Ribu.Prc} prc */
-	schedule(prc) {
+	schedule(prc: Prc) {
 		this.scheduledPrcS.add(prc)
 	}
 
