@@ -12,13 +12,13 @@ export type YIELD_V = typeof YIELD_VAL
 export type Gen<Rec = unknown> =
 	Generator<YIELD_V | Promise<unknown>, void, Rec>
 
-type GenFn<Args, Ports> =
+type GenFn<Args = unknown, Ports = unknown> =
 	(this: Prc & Ports, ...args: Args[]) => Gen
 
 type PrcState = "RUNNING" | "CANCELLING" | "DONE"
 type ExecNext = "RESUME" | "PARK"
 
-type OnCancel<GenFnArgs> = Function | GenFn<GenFnArgs>
+type OnCancel = Function | GenFn
 
 /**
  * The generator manager
@@ -43,7 +43,7 @@ export class Prc {
 	/** For auto cancel child Procs */
 	_$childS?: Set<Prc> = undefined
 
-	onCancel?: OnCancel  = undefined
+	onCancel?: OnCancel = undefined
 	_deadline: number
 
 	/** Setup by sleep(). Used by .cancel() to clearTimeout(_timeoutID) */
@@ -114,7 +114,7 @@ export class Prc {
 			}
 
 			if (onCancel.constructor === Function) {
-				onCancel()
+				(onCancel as Function)()
 				nilParentRefAndMarkDONE(this)
 				return done
 			}
@@ -128,7 +128,7 @@ export class Prc {
 			}
 
 			if (onCancel.constructor === Function) {
-				onCancel()
+				(onCancel as Function)()
 				return cancelChildSAndFinish(this)
 			}
 
@@ -265,7 +265,7 @@ function $onCancel(prc: Prc) {
 	const done = ch()
 
 	const $onCancel = _go(function* $onCancel() {
-		yield _go( /** @type {GenFn} */(prc.onCancel)).done.rec
+		yield _go(prc.onCancel as GenFn).done.rec
 		// need to cancel $deadline because I won the race
 		yield $deadline.cancel().rec
 		nilParentRefAndMarkDONE(prc)
@@ -322,46 +322,55 @@ function runChildSCancelAndOnCancel(prc: Prc) {
 
 /* === Prc constructors ====================================================== */
 
-type Opt<TKs extends string> = {
-   [K in TKs]:
-      K extends keyof Prc ? never :
-      K extends "deadline" ? number :
-      Ch<any>
+// type Opt<TKs extends string> = {
+//    [K in TKs]:
+//       K extends keyof Prc ? never :
+//       K extends "deadline" ? number :
+//       Ch<any>
+// }
+
+// type Ports<OptKs extends string> =
+//    Omit<Opt<OptKs>, "deadline">
+
+// export type Proc<OptKs extends string> = Prc & Ports<OptKs>
+
+// export function Go<GenFnArgs, OptKs extends string>(
+// 	opt: Opt<OptKs>,
+// 	genFn: GenFn<GenFnArgs, Opt<OptKs>>,
+// 	...genFnArgs: GenFnArgs[]
+// ): Proc<OptKs> {
+
+
+type Ports<ChV> = {
+	[k: string]: Ch<ChV>
 }
 
-type Ports<OptKs extends string> =
-   Omit<Opt<OptKs>, "deadline">
 
-export type Proc<OptKs extends string> = Prc & Ports<OptKs>
+type GenFnThis<opt> = Prc & opt
+type Proc = Prc & Ports
 
-
-export function go<TGenFnArgs>(genFn: GenFn<TGenFnArgs>, ...genFnArgs: TGenFnArgs[]): Proc {
-
-	const prc = new Prc(true)
-	const gen = genFn.call(prc, ...genFnArgs)
-	prc._gen = gen
-	return prc
-}
-
-
-export function Go<GenFnArgs, OptKs extends string>(
-	opt: Opt<OptKs>,
-	genFn: GenFn<GenFnArgs, Opt<OptKs>>,
-	...genFnArgs: GenFnArgs[]
-): Proc<OptKs> {
+// problem is that opt can be any type
+	// so need to constraint it
+export function Go<ChV, Chk, V, Args>(
+	opt: {
+		[k: string]: Ch<ChV>  // ChV is undefined | number
+	},
+	genFn: GenFn<Args, typeof opt>,
+	...genFnArgs: Args[]
+): Prc & typeof opt {
 
 	const deadline = opt && ("deadline" in opt) ? (opt.deadline) as number : undefined
 
-	const prc = new Prc(true, deadline) as Proc<OptKs>
+	let prc = new Prc(true, deadline) as (Prc & typeof opt)
 
 	if (opt) {
 		for (const k in opt) {
-			if (k === "deadline") continue
 			const optsVal = opt[k]
 			prc[k] = optsVal
 		}
 	}
 
+	// need to cast bc prc does not contain & Ports
 	const gen = genFn.call(prc, ...genFnArgs)
 	prc._gen = gen
 
@@ -369,11 +378,22 @@ export function Go<GenFnArgs, OptKs extends string>(
 	return prc
 }
 
-Go({port1: ch<number>()}, function*(num) {
-	this.onCancel = () => {}
-	this.port1
-	yield this.port1.put(undefined)
-}, 3)
+
+Go({port1: ch(), portNum: ch<number>()}, function*(str) {
+	this.onCancel = function* () {}
+	yield this.port1.put()
+	yield this.portNum.put(5)
+}, "f")
+
+const ch1 = ch()
+
+
+export function go<TGenFnArgs>(genFn: GenFn<TGenFnArgs>, ...genFnArgs: TGenFnArgs[]): Proc {
+	const prc = new Prc(true)
+	const gen = genFn.call(prc, ...genFnArgs)
+	prc._gen = gen
+	return prc
+}
 
 
 /**

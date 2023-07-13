@@ -1,6 +1,6 @@
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
-import { go, ch, sleep, Ch, Gen } from "../source/index.mts"
+import { go, Go, ch, sleep, Ch, Gen } from "../source/index.mts"
 import { promSleep } from "./utils.mts"
 
 
@@ -66,13 +66,10 @@ topic.skip(`process can access "this" inside them`, () => {
 
       let mutated = false
 
-      function* main() {
+      Go({port1: ch<boolean>(2)}, function* main(): Gen<boolean> {
          yield this.port1.put(true)
-         const _true = /** @type {boolean} */ (yield this.port1.rec)
-         mutated = _true
-      }
-
-      go(main, {port1: ch(2)})
+         mutated = yield this.port1.rec
+      })
 
       await promSleep(0)
 

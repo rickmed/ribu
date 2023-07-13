@@ -1,22 +1,14 @@
-import { go, Proc } from "./Prc.mts"
+import { go, Prc } from "./Prc.mts"
 import { ch, Ch } from "./channels.mts"
 import csp from "./initCsp.mts"
 
 
-/**
- * @template [TVal=undefined]
- * @typedef {Ribu.Ch<TVal>} Ch<TVal>
- */
-
-/** @typedef {Ribu.Proc} Proc */
-
-
-export function wait(...procS: Proc[]): Ch | never {
+export function wait(...prcS: Prc[]): Ch | never {
 
 	const allDone = ch()
 
 	let doneChs: Array<Ch>
-	if (procS.length === 0) {
+	if (prcS.length === 0) {
 
 		const { runningPrc } = csp
 
@@ -37,7 +29,7 @@ export function wait(...procS: Proc[]): Ch | never {
 		doneChs = prcDoneChs
 	}
 	else {
-		doneChs = procS.map(proc => proc.done)
+		doneChs = prcS.map(proc => proc.done)
 	}
 
 
@@ -50,8 +42,8 @@ export function wait(...procS: Proc[]): Ch | never {
 }
 
 
-export function cancel(...procS: Proc[]): Ch {
-	const procCancelChanS = procS.map(p => p.cancel())
+export function cancel(...prcS: Prc[]): Ch {
+	const procCancelChanS = prcS.map(p => p.cancel())
 	return all(...procCancelChanS)
 }
 
