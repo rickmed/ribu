@@ -1,12 +1,8 @@
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
-import { go, ch, sleep } from "../source/index.mts"
+import { go, ch, sleep, Ch, Gen } from "../source/index.mts"
 import { promSleep } from "./utils.mts"
 
-/**
- * @template [TChVal=undefined]
- * @typedef {Ribu.Ch<TChVal>} Ch<TChVal>
- */
 
 topic("process basics", () => {
 
@@ -27,27 +23,24 @@ topic("process basics", () => {
 
 
    it("can send/receive on channels", async () => {
+
       // @todo: put assertion inside main()
       // now is not possible bc sophi does not fail on tests without ran assertions
 
       let mutated
 
-      const ch1 = /** @type {Ch<boolean>} */(ch())
+      const ch1 = ch<boolean>()
 
-      /** @type {(ch: Ch<boolean>) => Ribu.Gen} */
-      function* child(ch) {
+      function* child(ch: typeof ch1) {
          yield ch.put(false)
       }
 
-      // type parameter of Ch makes no difference at ch.take bc generators can't connect next() with yield
-      /** @type {(ch: Ch<boolean>) => Ribu.Gen<boolean>} */
-      function* main(ch) {
-         go(child(ch))
+      // if you inline the GenFn in go(), the GenFn's args are inferred
+      go(function* main(ch): Gen<boolean> {
+         go(child, ch)
          const _false = yield ch.rec
          mutated = _false
-      }
-
-      go(main(ch1))
+      }, ch1)
 
       check(mutated).with(false)
    })
@@ -55,9 +48,8 @@ topic("process basics", () => {
 
    it("can yield promises", async () => {
 
-      /** @type {() => Ribu.Gen<number>} */
       function* proc1() {
-         const res = yield Promise.resolve(1)
+         const res: number = yield Promise.resolve(1)
          check(res).with(1)
       }
 
@@ -74,7 +66,6 @@ topic.skip(`process can access "this" inside them`, () => {
 
       let mutated = false
 
-      /** @this {Ribu.Proc<{port1: Ch<boolean>}>} */
       function* main() {
          yield this.port1.put(true)
          const _true = /** @type {boolean} */ (yield this.port1.rec)

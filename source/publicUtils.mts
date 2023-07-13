@@ -1,5 +1,5 @@
-import { go } from "./Prc.mts"
-import { ch } from "./channels.mts"
+import { go, Proc } from "./Prc.mts"
+import { ch, Ch } from "./channels.mts"
 import csp from "./initCsp.mts"
 
 
@@ -11,13 +11,11 @@ import csp from "./initCsp.mts"
 /** @typedef {Ribu.Proc} Proc */
 
 
-/** @type {(...procS: Proc[]) => Ch | never} */
-export function wait(...procS) {
+export function wait(...procS: Proc[]): Ch | never {
 
 	const allDone = ch()
 
-	/** @type {Array<Ch>} */
-	let doneChs
+	let doneChs: Array<Ch>
 	if (procS.length === 0) {
 
 		const { runningPrc } = csp
@@ -52,25 +50,13 @@ export function wait(...procS) {
 }
 
 
-/** @type {(fn: _Ribu.GenFn | Function) => void} */
-export function onCancel(fn) {
-	const { runningPrc } = csp
-	if (runningPrc === undefined) {
-		throw new Error(`ribu: can't call onCancel outside a generator function`)
-	}
-	runningPrc.onCancel = fn
-}
-
-
-/** @type {(...procS: Proc[]) => Ch} */
-export function cancel(...procS) {
+export function cancel(...procS: Proc[]): Ch {
 	const procCancelChanS = procS.map(p => p.cancel())
 	return all(...procCancelChanS)
 }
 
 
-/** @type {(...chanS: Ch[]) => Ch} */
-export function all(...chanS) {
+export function all(...chanS: Ch[]): Ch {
 
 	const allDone = ch()
 	const chansL = chanS.length
@@ -96,8 +82,7 @@ export function all(...chanS) {
 }
 
 
-/** @type {(...chanS: Ch[]) => Ch} */
-export function or(...chanS) {
+export function or(...chanS: Ch[]): Ch {
 	const anyDone = ch()
 	let done = false
 
@@ -116,8 +101,7 @@ export function or(...chanS) {
 }
 
 
-/** @type {(fn: Function, done?: Ch) => Ch} */
-export function doAsync(fn, done = ch()) {
+export function doAsync(fn: Function, done = ch()): Ch {
 	go(function* _doAsync() {
 		fn()
 		yield done.put()

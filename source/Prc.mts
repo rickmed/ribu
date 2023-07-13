@@ -12,13 +12,13 @@ export type YIELD_V = typeof YIELD_VAL
 export type Gen<Rec = unknown> =
 	Generator<YIELD_V | Promise<unknown>, void, Rec>
 
-type GenFn<Rec = unknown> =
-	(this: Prc, ...args: any[]) => Gen<Rec>
+type GenFn<Args, Ports> =
+	(this: Prc & Ports, ...args: Args[]) => Gen
 
 type PrcState = "RUNNING" | "CANCELLING" | "DONE"
 type ExecNext = "RESUME" | "PARK"
 
-type OnCancel = Function | GenFn
+type OnCancel<GenFnArgs> = Function | GenFn<GenFnArgs>
 
 /**
  * The generator manager
@@ -53,9 +53,9 @@ export class Prc {
 
 	/**
 	 * @param {boolean} isUserPrc
-		* Used to launch "special"/internal PrcS, used in Prc.cancel(), which don't
-		* have children to auto cancel that would create infinite loops.
-		* Used alongside with no genFn
+		* Used to launch "special"/internal PrcS with _go(), which are used in
+		* Prc.cancel(). These PrcS don't have children to auto cancel that
+		* would create infinite loops of cancelling.
 	 */
 	constructor(isUserPrc: boolean, deadline = csp.defaultDeadline) {
 
@@ -79,8 +79,7 @@ export class Prc {
 		this._deadline = deadline
 	}
 
-	/** @type {() => Ch} */
-	cancel() {
+	cancel(): Ch {
 
 		const state = this._state
 		const { done } = this
@@ -323,57 +322,58 @@ function runChildSCancelAndOnCancel(prc: Prc) {
 
 /* === Prc constructors ====================================================== */
 
-type Conf<TKs extends string> = {
+type Opt<TKs extends string> = {
    [K in TKs]:
       K extends keyof Prc ? never :
       K extends "deadline" ? number :
-      Ch
+      Ch<any>
 }
 
-type Ports<TConfKs extends string> =
-   Omit<Conf<TConfKs>, "deadline">
+type Ports<OptKs extends string> =
+   Omit<Opt<OptKs>, "deadline">
 
-type PublicProc = {
-	readonly done: Ch
-	readonly cancel: () => Ch
-	onCancel: GenFn | Function
+export type Proc<OptKs extends string> = Prc & Ports<OptKs>
+
+
+export function go<TGenFnArgs>(genFn: GenFn<TGenFnArgs>, ...genFnArgs: TGenFnArgs[]): Proc {
+
+	const prc = new Prc(true)
+	const gen = genFn.call(prc, ...genFnArgs)
+	prc._gen = gen
+	return prc
 }
 
-type Proc<Ports> = PublicProc & Ports
 
-/**
- * @template {string} TKs
- * @param {GenFn} genFn
- * @param {_Ribu.Conf<TKs>=} conf
- * @returns {Ribu.Proc<_Ribu.Ports<TKs>>}
- */
+export function Go<GenFnArgs, OptKs extends string>(
+	opt: Opt<OptKs>,
+	genFn: GenFn<GenFnArgs, Opt<OptKs>>,
+	...genFnArgs: GenFnArgs[]
+): Proc<OptKs> {
 
-// const $p1 = go({deadline: 4000, filePathS: ch(30)}, genFn, "arg2"...)
-// const $p2 = go(genFn, "arg1", "arg2"...)
-// const $p3 = go(genFn)
+	const deadline = opt && ("deadline" in opt) ? (opt.deadline) as number : undefined
 
-export function go<_GenFnArgs, _ConfKs>(genFn: GenFn, ...genFnArgs: _GenFnArgs[]): Proc<_ConfKs> {
+	const prc = new Prc(true, deadline) as Proc<OptKs>
 
-	const proc = new Prc()
+	if (opt) {
+		for (const k in opt) {
+			if (k === "deadline") continue
+			const optsVal = opt[k]
+			prc[k] = optsVal
+		}
+	}
 
+	const gen = genFn.call(prc, ...genFnArgs)
+	prc._gen = gen
 
-	// const deadline = /** @type {number=} */
-	// 	(conf && ("deadline" in conf) ? conf.deadline : undefined)
-
-	// const prc = new Prc(true, deadline, genFn)
-
-	// if (conf) {
-	// 	for (const k in conf) {
-	// 		const optsVal = conf[k]
-	// 		// @ts-ignore
-	// 		prc[k] = optsVal
-	// 	}
-	// }
-
-	// run(prc)
-	// /* @ts-ignore */
-	// return prc
+	run(prc)
+	return prc
 }
+
+Go({port1: ch<number>()}, function*(num) {
+	this.onCancel = () => {}
+	this.port1
+	yield this.port1.put(undefined)
+}, 3)
 
 
 /**
@@ -386,12 +386,11 @@ export function Cancellable(onCancel: OnCancel) {
 	return prc
 }
 
-
-/**
- * @type {(genFn: GenFn, ...genFnArgs: unknown[]) => Prc<typeof genFnArgs>}  */
-function _go(genFn, ...genFnArgs) {
-	const prc = new Prc(false, undefined, genFn, ...genFnArgs)
-	run(prc)
+/** Internally used in Prc.cancel(). */
+function _go<TGenFnArgs>(genFn: GenFn<TGenFnArgs>, ...genFnArgs: TGenFnArgs[]): Proc {
+	const prc = new Prc(false)
+	const gen = genFn.call(prc, ...genFnArgs)
+	prc._gen = gen
 	return prc
 }
 
@@ -399,9 +398,8 @@ function _go(genFn, ...genFnArgs) {
 
 /* === Sleep ====================================================== */
 
-/** @type {(ms: number) => YIELD_V} */
-export function sleep(ms) {
-	const runningPrc = /** @type {_Ribu.Prc} */ (csp.runningPrc)
+export function sleep(ms: number): YIELD_V {
+	const runningPrc = csp.runningPrc
 	const timeoutID = setTimeout(() => {
 		setResume(runningPrc)
 		run(runningPrc)
