@@ -17,10 +17,11 @@
   },
   "types": "./types",
   "scripts": {
-    "test": "tsx ./tests/runTests.mts",
-    "test:watch": "tsx watch ./tests/runTests.mts",
+    "test": "clear; node --no-warnings --loader tsx ./tests/runTests.mts",
+    "test:watch": "clear; node --no-warnings --watch --loader tsx ./tests/runTests.mts",
     "test:cov": "cross-env 'NODE_OPTIONS=--loader @istanbuljs/esm-loader-hook --no-warnings' nyc npm test",
-    "type-check": "tsc --noEmit --allowJs"
+    "type-check": "tsc --noEmit",
+    "build": "rm -rf dist; tsc"
   },
   "engines": {},
   "devDependencies": {

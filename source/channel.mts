@@ -1,8 +1,8 @@
-import { pullOutMsg, run, setPark, setResume, YIELD_V, Prc } from "./Prc.mts"
-import csp from "./initCsp.mts"
+import { pullOutMsg, run, setPark, setResume, type YIELD_V, type Prc } from "./process.mjs"
+import csp from "./initCsp.mjs"
 
 
-export function ch<V = undefined>(capacity = 0): Ch<V> {
+export function ch<V = undefined>(capacity = 0):Ch<V> {
 	const _ch = capacity === 0 ? new Chan<V>() : new BufferedChan<V>(capacity)
 	return _ch
 }
@@ -11,9 +11,10 @@ export function ch<V = undefined>(capacity = 0): Ch<V> {
 type Msg<V> = V extends undefined ? [] : [V]
 
 export type Ch<V = undefined> = {
+	put(msg: V): YIELD_V,
    put(...msg: Msg<V>): YIELD_V,
    get rec(): YIELD_V,
-   dispatch(msg: Msg<V>): void,
+   dispatch(msg: V): void,
 }
 
 // type _BaseChan<V> = {
@@ -25,7 +26,7 @@ class BaseChan<V> {
 	protected _waitingSenders = new Queue<Prc>()
 	protected _waitingReceivers = new Queue<Prc>()
 
-	dispatch(msg: Msg<V>): void {
+	dispatch(msg: V): void {
 		// ok to cast. I would throw anyways and the error should be evident
 		const waitingReceiver = this._waitingReceivers.pull() as Prc
 		setResume(waitingReceiver, msg)
@@ -36,7 +37,7 @@ class BaseChan<V> {
 
 class Chan<V> extends BaseChan<V> {
 
-   put(...msg: Msg<V>): YIELD_V {
+   put(msg?: V): YIELD_V {
 
 		const runningPrc = csp.runningPrc
 
@@ -87,7 +88,7 @@ class BufferedChan<V> extends BaseChan<V> {
 		this.isFull = buffer.isFull
 	}
 
-	put(...msg: Msg<V>): YIELD_V {
+	put(msg?: V): YIELD_V {
 
 		const runningPrc = /** @type {_Ribu.Prc} */ (csp.runningPrc)
 

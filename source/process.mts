@@ -1,9 +1,9 @@
-import { all } from "./index.mts"
-import csp from "./initCsp.mts"
-import { Ch, ch } from "./channels.mts"
+import { all } from "./index.mjs"
+import csp from "./initCsp.mjs"
+import { type Ch, ch } from "./channel.mjs"
 
 
-/* === Proc class ====================================================== */
+/* === Prc class ====================================================== */
 
 export const YIELD_VAL = "RIBU_YIELD_VAL"
 
@@ -259,7 +259,6 @@ function nilParentRefAndMarkDONE(prc: Prc) {
 	prc._parentPrc = undefined
 }
 
-/** Doesn't reuse prc.done */
 function $onCancel(prc: Prc) {
 
 	const done = ch()
@@ -320,6 +319,7 @@ function runChildSCancelAndOnCancel(prc: Prc) {
 }
 
 
+
 /* === Prc constructors ====================================================== */
 
 // type Opt<TKs extends string> = {
@@ -378,20 +378,18 @@ export function Go<ChV, Chk, V, Args>(
 	return prc
 }
 
-
-Go({port1: ch(), portNum: ch<number>()}, function*(str) {
-	this.onCancel = function* () {}
-	yield this.port1.put()
-	yield this.portNum.put(5)
-}, "f")
-
-const ch1 = ch()
+// Go({port1: ch(), portNum: ch<number>()}, function*(str) {
+// 	this.onCancel = function* () {}
+// 	yield this.port1.put()
+// 	yield this.portNum.put(5)
+// }, "f")
 
 
-export function go<TGenFnArgs>(genFn: GenFn<TGenFnArgs>, ...genFnArgs: TGenFnArgs[]): Proc {
+export function go<Args>(genFn: GenFn<Args>, ...genFnArgs: Args[]): Proc {
 	const prc = new Prc(true)
 	const gen = genFn.call(prc, ...genFnArgs)
 	prc._gen = gen
+	run(prc)
 	return prc
 }
 
@@ -412,6 +410,46 @@ function _go<TGenFnArgs>(genFn: GenFn<TGenFnArgs>, ...genFnArgs: TGenFnArgs[]): 
 	const gen = genFn.call(prc, ...genFnArgs)
 	prc._gen = gen
 	return prc
+}
+
+
+
+/* === Waiting for result of processes to finish ============================ */
+
+export const waitAll = "RIBU_WAIT_ALL"
+
+export function wait(...prcS: Prc[]): Ch {
+
+	const allDone = ch()
+
+	let doneChs: Array<Ch>
+	if (prcS.length === 0) {
+
+		const { runningPrc } = csp
+
+		const { _$childS: $childPrcS } = runningPrc
+
+		if ($childPrcS === undefined) {
+			return allDone
+		}
+
+		const prcDoneChs = []
+		for (const prc of $childPrcS) {
+			prcDoneChs.push(prc.done)
+		}
+		doneChs = prcDoneChs
+	}
+	else {
+		doneChs = prcS.map(proc => proc.done)
+	}
+
+
+	go(function* _donePrc() {
+		yield all(...doneChs).rec
+		yield allDone.put()
+	})
+
+	return allDone
 }
 
 

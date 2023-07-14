@@ -1,45 +1,6 @@
-import { go, Prc } from "./Prc.mts"
-import { ch, Ch } from "./channels.mts"
-import csp from "./initCsp.mts"
-
-
-export function wait(...prcS: Prc[]): Ch | never {
-
-	const allDone = ch()
-
-	let doneChs: Array<Ch>
-	if (prcS.length === 0) {
-
-		const { runningPrc } = csp
-
-		if (runningPrc === undefined) {
-			throw new Error(`ribu: can't call done without parameters and outside a generator function`)
-		}
-
-		const { _$childS: $childPrcS } = runningPrc
-
-		if ($childPrcS === undefined) {
-			return allDone
-		}
-
-		const prcDoneChs = []
-		for (const prc of $childPrcS) {
-			prcDoneChs.push(prc.done)
-		}
-		doneChs = prcDoneChs
-	}
-	else {
-		doneChs = prcS.map(proc => proc.done)
-	}
-
-
-	go(function* _donePrc() {
-		yield all(...doneChs).rec
-		yield allDone.put()
-	})
-
-	return allDone
-}
+import { go, Prc } from "./process.mjs"
+import { ch, Ch } from "./channel.mjs"
+import csp from "./initCsp.mjs"
 
 
 export function cancel(...prcS: Prc[]): Ch {

@@ -6,7 +6,6 @@
       "allowJs": true,
       "checkJs": true,
       "sourceMap": true,
-      "noEmit": true,
-      "allowImportingTsExtensions": true,
+      "outDir": "./dist/",
    },
 }

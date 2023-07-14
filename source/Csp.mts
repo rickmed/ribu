@@ -1,4 +1,4 @@
-import { run, Prc } from "./Prc.mts"
+import { run, type Prc } from "./process.mjs"
 
 export class Csp {
 

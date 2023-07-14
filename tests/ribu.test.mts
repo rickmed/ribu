@@ -1,7 +1,7 @@
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
-import { go, Go, ch, sleep, Ch, Gen } from "../source/index.mts"
-import { promSleep } from "./utils.mts"
+import { go, Go, ch, sleep, Ch, Gen, wait, waitAll } from "../source/index.mjs"
+import { promSleep } from "./utils.mjs"
 
 
 topic("process basics", () => {
@@ -31,16 +31,16 @@ topic("process basics", () => {
 
       const ch1 = ch<boolean>()
 
-      function* child(ch: typeof ch1) {
-         yield ch.put(false)
+      function* child() {
+         yield ch1.put(false)
       }
 
       // if you inline the GenFn in go(), the GenFn's args are inferred
       go(function* main(ch): Gen<boolean> {
-         go(child, ch)
-         const _false = yield ch.rec
+         go(child)
+         const _false = yield ch1.rec
          mutated = _false
-      }, ch1)
+      })
 
       check(mutated).with(false)
    })
@@ -60,7 +60,7 @@ topic("process basics", () => {
 })
 
 
-topic.skip(`process can access "this" inside them`, () => {
+topic(`process can access "this" inside them`, () => {
 
    it("with configured channels", async () => {
 
@@ -80,37 +80,40 @@ topic.skip(`process can access "this" inside them`, () => {
 
 topic("process cancellation", () => {
 
-   it("ribu automatically cancels child if parent does not wait to be done", async () => {
+   it.only("ribu automatically cancels child if parent does not wait to be done", async () => {
 
       let mutated = false
 
-      go(function* main() {  // eslint-disable-line require-yield
+      go(function* main() {
          go(function* sleeper() {
-            yield sleep(1)
+            yield sleep(0)
             mutated = true
          })
       })
+
+      await promSleep(0)
 
       check(mutated).with(false)
    })
 })
 
 
+topic("process can wait for children processes", () => {
 
-topic.skip("process can wait for children processes", () => {
-
-   it("implicit waiting. No return values", async () => {
+   it("explicit waiting. No return values", async () => {
 
       let mutated = false
 
-      go(function* main() {  // eslint-disable-line require-yield
-         go(function* sleeper() {
-            yield sleep(1)
+      go(function* main() {
+         const child = go(function* sleeper() {
+            yield sleep(0)
             mutated = true
          })
 
-         // yield wait
+         // yield wait(child).rec
       })
+
+      await promSleep(0)
 
       check(mutated).with(true)
    })
