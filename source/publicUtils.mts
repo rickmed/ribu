@@ -1,4 +1,4 @@
-import { go, Prc } from "./process.mjs"
+import { go, _go, Prc } from "./process.mjs"
 import { ch, Ch } from "./channel.mjs"
 import csp from "./initCsp.mjs"
 

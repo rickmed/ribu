@@ -27,6 +27,7 @@ export class Prc {
 
 	/** undefined when instantiated in Cancellable  */
 	_gen?: Gen = undefined
+	_genName: string = ""
 
 	/* defaults are RUNNING/RESUME because gen is ran immediately */
 	_state: PrcState = "RUNNING"
@@ -80,7 +81,7 @@ export class Prc {
 	}
 
 	cancel(): Ch {
-		
+
 		const state = this._state
 		const { done } = this
 
@@ -138,7 +139,7 @@ export class Prc {
 }
 
 export function run(prc: Prc): void {
-
+console.dir(prc, {depth: 50, compact: false, showHidden: true})
 	csp.prcStack.push(prc)
 
 	let genDone = false
@@ -197,7 +198,7 @@ export function run(prc: Prc): void {
 	csp.prcStack.pop()
 
 	if (genDone) {
-		_go(finishGenNormalDone, prc)
+		_go(finishNormalDone, prc)
 		return
 	}
 
@@ -222,7 +223,7 @@ export function setPark(prc: Prc, genMsg?: unknown): YIELD_V {
 	return YIELD_VAL
 }
 
-function* finishGenNormalDone(prc: Prc) {
+function* finishNormalDone(prc: Prc) {
 	prc._state = "DONE"
 
 	const { done, _$childS } = prc
@@ -241,7 +242,7 @@ function cancelChildS(prc: Prc, done = ch()) {
 
 	const $childS = prc._$childS as Set<Prc>
 
-	_go(function* _cancelChildS() {
+	go(function* _cancelChildS() {
 		let cancelChs = []
 		for (const prc of $childS) {
 			cancelChs.push(prc.cancel())
@@ -303,6 +304,7 @@ function ifSleepTimeoutClear(prc: Prc) {
 	const timeoutID = prc._timeoutID
 	if (timeoutID !== undefined) {
 		clearTimeout(timeoutID)
+		prc._timeoutID = undefined
 	}
 }
 
@@ -362,6 +364,7 @@ export function Go<ChV, Chk, V, Args>(
 	const deadline = opt && ("deadline" in opt) ? (opt.deadline) as number : undefined
 
 	let prc = new Prc(true, deadline) as (Prc & typeof opt)
+	prc._genName = genFn.name
 
 	if (opt) {
 		for (const k in opt) {
@@ -387,6 +390,7 @@ export function Go<ChV, Chk, V, Args>(
 
 export function go<Args>(genFn: GenFn<Args>, ...genFnArgs: Args[]): Proc {
 	const prc = new Prc(true)
+	prc._genName = genFn.name
 	const gen = genFn.call(prc, ...genFnArgs)
 	prc._gen = gen
 	run(prc)
@@ -405,8 +409,9 @@ export function Cancellable(onCancel: OnCancel) {
 }
 
 /** Internally used in Prc.cancel(). */
-function _go<TGenFnArgs>(genFn: GenFn<TGenFnArgs>, ...genFnArgs: TGenFnArgs[]): Proc {
+export function _go<TGenFnArgs>(genFn: GenFn<TGenFnArgs>, ...genFnArgs: TGenFnArgs[]): Proc {
 	const prc = new Prc(false)
+	prc._genName = genFn.name
 	const gen = genFn.call(prc, ...genFnArgs)
 	prc._gen = gen
 	run(prc)
@@ -424,18 +429,18 @@ export function wait(...prcS: Prc[]): Ch {
 	const allDone = ch()
 
 	let doneChs: Array<Ch>
+
 	if (prcS.length === 0) {
 
 		const { runningPrc } = csp
+		const { _$childS } = runningPrc
 
-		const { _$childS: $childPrcS } = runningPrc
-
-		if ($childPrcS === undefined) {
+		if (_$childS === undefined) {
 			return allDone
 		}
 
 		const prcDoneChs = []
-		for (const prc of $childPrcS) {
+		for (const prc of _$childS) {
 			prcDoneChs.push(prc.done)
 		}
 		doneChs = prcDoneChs

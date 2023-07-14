@@ -110,10 +110,10 @@ topic("process can wait for children processes", () => {
             yield sleep(0)
             mutated = true
          })
+
          yield wait(child).rec
       })
 
-      console.log("dsad")
       await promSleep(0)
 
       check(mutated).with(true)
