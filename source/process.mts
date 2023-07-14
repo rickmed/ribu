@@ -80,7 +80,7 @@ export class Prc {
 	}
 
 	cancel(): Ch {
-
+		
 		const state = this._state
 		const { done } = this
 
@@ -409,6 +409,7 @@ function _go<TGenFnArgs>(genFn: GenFn<TGenFnArgs>, ...genFnArgs: TGenFnArgs[]): 
 	const prc = new Prc(false)
 	const gen = genFn.call(prc, ...genFnArgs)
 	prc._gen = gen
+	run(prc)
 	return prc
 }
 

@@ -66,7 +66,7 @@ topic(`process can access "this" inside them`, () => {
 
       let mutated = false
 
-      Go({port1: ch<boolean>(2)}, function* main(): Gen<boolean> {
+      Go({ port1: ch<boolean>(2) }, function* main(): Gen<boolean> {
          yield this.port1.put(true)
          mutated = yield this.port1.rec
       })
@@ -80,7 +80,7 @@ topic(`process can access "this" inside them`, () => {
 
 topic("process cancellation", () => {
 
-   it.only("ribu automatically cancels child if parent does not wait to be done", async () => {
+   it("ribu automatically cancels child if parent does not wait to be done", async () => {
 
       let mutated = false
 
@@ -100,19 +100,20 @@ topic("process cancellation", () => {
 
 topic("process can wait for children processes", () => {
 
-   it("explicit waiting. No return values", async () => {
+   it.only("explicit waiting. No return values", async () => {
 
       let mutated = false
 
       go(function* main() {
+
          const child = go(function* sleeper() {
             yield sleep(0)
             mutated = true
          })
-
-         // yield wait(child).rec
+         yield wait(child).rec
       })
 
+      console.log("dsad")
       await promSleep(0)
 
       check(mutated).with(true)
