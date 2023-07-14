@@ -1,8 +1,7 @@
-/** @param {number} ms */
-export function promSleep(ms) {
+export function promSleep(ms: number): Promise<void> {
 	return new Promise(res => {
 		setTimeout(() => {
-			res(true)
+			res()
 		}, ms)
 	})
 }

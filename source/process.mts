@@ -18,7 +18,8 @@ type GenFn<Args = unknown, Ports = unknown> =
 type PrcState = "RUNNING" | "CANCELLING" | "DONE"
 type ExecNext = "RESUME" | "PARK"
 
-type OnCancel = Function | GenFn
+type onCancelFn = () => unknown
+type OnCancel = onCancelFn | GenFn
 
 /**
  * The generator manager
@@ -115,7 +116,7 @@ export class Prc {
 			}
 
 			if (onCancel.constructor === Function) {
-				(onCancel as Function)()
+				(onCancel as onCancelFn)()
 				nilParentRefAndMarkDONE(this)
 				return done
 			}
@@ -129,7 +130,7 @@ export class Prc {
 			}
 
 			if (onCancel.constructor === Function) {
-				(onCancel as Function)()
+				(onCancel as onCancelFn)()
 				return cancelChildSAndFinish(this)
 			}
 
@@ -139,7 +140,7 @@ export class Prc {
 }
 
 export function run(prc: Prc): void {
-console.dir(prc, {depth: 50, compact: false, showHidden: true})
+	
 	csp.prcStack.push(prc)
 
 	let genDone = false
@@ -198,7 +199,7 @@ console.dir(prc, {depth: 50, compact: false, showHidden: true})
 	csp.prcStack.pop()
 
 	if (genDone) {
-		_go(finishNormalDone, prc)
+		go(finishNormalDone, prc)
 		return
 	}
 
@@ -243,7 +244,7 @@ function cancelChildS(prc: Prc, done = ch()) {
 	const $childS = prc._$childS as Set<Prc>
 
 	go(function* _cancelChildS() {
-		let cancelChs = []
+		let cancelChs = []  // eslint-disable-line prefer-const
 		for (const prc of $childS) {
 			cancelChs.push(prc.cancel())
 		}
@@ -264,15 +265,15 @@ function $onCancel(prc: Prc) {
 
 	const done = ch()
 
-	const $onCancel = _go(function* $onCancel() {
-		yield _go(prc.onCancel as GenFn).done.rec
+	const $onCancel = go(function* $onCancel() {
+		yield go(prc.onCancel as GenFn).done.rec
 		// need to cancel $deadline because I won the race
 		yield $deadline.cancel().rec
 		nilParentRefAndMarkDONE(prc)
 		yield done.put()
 	})
 
-	const $deadline = _go(function* _deadline() {
+	const $deadline = go(function* _deadline() {
 		yield sleep(prc._deadline)
 		hardCancel($onCancel)
 		yield done.put()
@@ -292,7 +293,7 @@ function hardCancel(prc: Prc) {
 function cancelChildSAndFinish(prc: Prc) {
 	const { done } = prc
 
-	_go(function* cancelChildSAndFinish() {
+	go(function* cancelChildSAndFinish() {
 		yield cancelChildS(prc, prc.done).rec
 		yield done.put()
 	})
@@ -310,7 +311,7 @@ function ifSleepTimeoutClear(prc: Prc) {
 
 function runChildSCancelAndOnCancel(prc: Prc) {
 
-	_go(function* _handleChildSAndOnCancel() {
+	go(function* _handleChildSAndOnCancel() {
 		const childSCancelDone = cancelChildS(prc)
 		const onCancelDone = $onCancel(prc)
 		yield all(childSCancelDone, onCancelDone).rec
@@ -363,7 +364,7 @@ export function Go<ChV, Chk, V, Args>(
 
 	const deadline = opt && ("deadline" in opt) ? (opt.deadline) as number : undefined
 
-	let prc = new Prc(true, deadline) as (Prc & typeof opt)
+	let prc = new Prc(true, deadline)    as (Prc & typeof opt)  // eslint-disable-line prefer-const
 	prc._genName = genFn.name
 
 	if (opt) {
@@ -407,6 +408,7 @@ export function Cancellable(onCancel: OnCancel) {
 	prc.onCancel = onCancel
 	return prc
 }
+
 
 /** Internally used in Prc.cancel(). */
 export function _go<TGenFnArgs>(genFn: GenFn<TGenFnArgs>, ...genFnArgs: TGenFnArgs[]): Proc {
@@ -464,7 +466,7 @@ export function wait(...prcS: Prc[]): Ch {
 
 export function sleep(ms: number): YIELD_V {
 	const runningPrc = csp.runningPrc
-	const timeoutID = setTimeout(() => {
+	const timeoutID = setTimeout(function _sleepTO() {
 		setResume(runningPrc)
 		run(runningPrc)
 	}, ms)

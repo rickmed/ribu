@@ -1,6 +1,7 @@
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
-import { go, Go, ch, sleep, Ch, Gen, wait, waitAll } from "../source/index.mjs"
+import { go, Go, ch, sleep, Gen, wait, waitAll } from "../source/index.mjs"
 import { promSleep } from "./utils.mjs"
 
 
@@ -36,7 +37,7 @@ topic("process basics", () => {
       }
 
       // if you inline the GenFn in go(), the GenFn's args are inferred
-      go(function* main(ch): Gen<boolean> {
+      go(function* main(): Gen<boolean> {
          go(child)
          const _false = yield ch1.rec
          mutated = _false
@@ -86,12 +87,13 @@ topic("process cancellation", () => {
 
       go(function* main() {
          go(function* sleeper() {
-            yield sleep(0)
+            yield sleep(3)
             mutated = true
          })
+         yield sleep(1)
       })
 
-      await promSleep(0)
+      await promSleep(2)
 
       check(mutated).with(false)
    })
@@ -100,21 +102,41 @@ topic("process cancellation", () => {
 
 topic("process can wait for children processes", () => {
 
-   it.only("explicit waiting. No return values", async () => {
+   it("explicit waiting with wait(...Procs). No return values", async () => {
 
       let mutated = false
 
       go(function* main() {
 
          const child = go(function* sleeper() {
-            yield sleep(0)
+            yield sleep(1)
             mutated = true
          })
 
          yield wait(child).rec
       })
 
-      await promSleep(0)
+      await promSleep(2)
+
+      check(mutated).with(true)
+   })
+
+
+   it("implicit waiting with waitAll. No return values", async () => {
+
+      let mutated = false
+
+      go(function* main() {
+
+         go(function* sleeper() {
+            yield sleep(1)
+            mutated = true
+         })
+
+         yield waitAll
+      })
+
+      await promSleep(2)
 
       check(mutated).with(true)
    })

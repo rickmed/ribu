@@ -1,6 +1,5 @@
-import { go, _go, Prc } from "./process.mjs"
+import { go, Prc } from "./process.mjs"
 import { ch, Ch } from "./channel.mjs"
-import csp from "./initCsp.mjs"
 
 
 export function cancel(...prcS: Prc[]): Ch {
@@ -54,7 +53,7 @@ export function or(...chanS: Ch[]): Ch {
 }
 
 
-export function doAsync(fn: Function, done = ch()): Ch {
+export function doAsync(fn: () => void, done = ch()): Ch {
 	go(function* _doAsync() {
 		fn()
 		yield done.put()

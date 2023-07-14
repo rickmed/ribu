@@ -8,18 +8,13 @@ export function ch<V = undefined>(capacity = 0):Ch<V> {
 }
 
 
-type Msg<V> = V extends undefined ? [] : [V]
-
 export type Ch<V = undefined> = {
 	put(msg: V): YIELD_V,
-   put(...msg: Msg<V>): YIELD_V,
+   put(...msg: V extends undefined ? [] : [V]): YIELD_V,
    get rec(): YIELD_V,
    dispatch(msg: V): void,
 }
 
-// type _BaseChan<V> = {
-//    dispatch: Dispatch<V>,
-// }
 
 class BaseChan<V> {
 
@@ -90,7 +85,7 @@ class BufferedChan<V> extends BaseChan<V> {
 
 	put(msg?: V): YIELD_V {
 
-		const runningPrc = /** @type {_Ribu.Prc} */ (csp.runningPrc)
+		const runningPrc = csp.runningPrc
 
 		const buffer = this.#buffer
 
@@ -114,7 +109,7 @@ class BufferedChan<V> extends BaseChan<V> {
 
 	get rec(): YIELD_V {
 
-		const runningPrc = /** @type {_Ribu.Prc} */ (csp.runningPrc)
+		const runningPrc = csp.runningPrc
 
 		const buffer = this.#buffer
 
