@@ -1,3 +1,2 @@
-export { go, Go, sleep, wait, waitAll, type Gen } from "./process.mjs"
-export { cancel, doAsync, all} from "./publicUtils.mjs"
-export { ch, type Ch } from "./channel.mjs"
+export { go, Go, sleep, wait, cancel, race, doAsync, type Gen } from "./process.mjs"
+export { ch, all, type Ch } from "./channel.mjs"

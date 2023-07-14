@@ -1,16 +1,17 @@
 import { all } from "./index.mjs"
 import csp from "./initCsp.mjs"
-import { type Ch, ch } from "./channel.mjs"
+import { ch, BaseChan, type Ch } from "./channel.mjs"
 
 
 /* === Prc class ====================================================== */
 
-export const YIELD_VAL = "RIBU_YIELD_VAL"
+export const YIELD = "RIBU_YIELD_VAL"
+export type YIELD_T = typeof YIELD
 
-export type YIELD_V = typeof YIELD_VAL
+export type YIELDABLE = YIELD_T | Ch<unknown> | Promise<unknown>
 
 export type Gen<Rec = unknown> =
-	Generator<YIELD_V | Promise<unknown>, void, Rec>
+	Generator<YIELDABLE, void, Rec>
 
 type GenFn<Args = unknown, Ports = unknown> =
 	(this: Prc & Ports, ...args: Args[]) => Gen
@@ -18,13 +19,13 @@ type GenFn<Args = unknown, Ports = unknown> =
 type PrcState = "RUNNING" | "CANCELLING" | "DONE"
 type ExecNext = "RESUME" | "PARK"
 
-type onCancelFn = () => unknown
+type onCancelFn = (...args: unknown[]) => unknown
 type OnCancel = onCancelFn | GenFn
 
 /**
  * The generator manager
  */
-export class Prc {
+export class Prc<ChV = unknown> {
 
 	/** undefined when instantiated in Cancellable  */
 	_gen?: Gen = undefined
@@ -51,7 +52,7 @@ export class Prc {
 	/** Setup by sleep(). Used by .cancel() to clearTimeout(_timeoutID) */
 	_timeoutID?: NodeJS.Timeout = undefined
 
-	done = ch()
+	done = ch<ChV>()
 
 	/**
 	 * @param {boolean} isUserPrc
@@ -123,7 +124,7 @@ export class Prc {
 
 			return $onCancel(this)
 		}
-		else { /* Prc has childS */
+		else { /* has _$childS */
 
 			if (onCancel === undefined) {
 				return cancelChildSAndFinish(this)
@@ -140,7 +141,7 @@ export class Prc {
 }
 
 export function run(prc: Prc): void {
-	
+
 	csp.prcStack.push(prc)
 
 	let genDone = false
@@ -164,8 +165,12 @@ export function run(prc: Prc): void {
 				break
 			}
 
-			if (value === YIELD_VAL) {
-				// all ribu yieldables set the appropiate conditions to be
+			if (value instanceof BaseChan) {
+				value.rec
+			}
+
+			if (value === YIELD) {
+				// ch.put()/rec and sleep() set the appropiate conditions to be
 				// checked in the next while loop
 				continue
 			}
@@ -212,27 +217,29 @@ export function pullOutMsg(prc: Prc): unknown {
 	return outMsg
 }
 
-export function setResume(prc: Prc, genMsg?: unknown): YIELD_V  {
+export function setResume(prc: Prc, genMsg?: unknown): YIELD_T {
 	prc._execNext = "RESUME"
 	prc._genMsg = genMsg
-	return YIELD_VAL
+	return YIELD
 }
 
-export function setPark(prc: Prc, genMsg?: unknown): YIELD_V {
+export function setPark(prc: Prc, genMsg?: unknown): YIELD_T {
 	prc._execNext = "PARK"
 	prc._genMsg = genMsg
-	return YIELD_VAL
+	return YIELD
 }
 
 function* finishNormalDone(prc: Prc) {
+
 	prc._state = "DONE"
 
 	const { done, _$childS } = prc
 
 	// No need to put a deadline on auto canceling any active children because,
-	// at instantiation, they have a shorter/equal deadline than this prc
+	// at instantiation, they have a shorter/equal deadline than this prc.
+	// So just need for them to finish cancelling themselves
 	if (_$childS && _$childS.size > 0) {
-		yield cancelChildS(prc).rec
+		yield cancelChildS(prc)
 	}
 
 	prc._parentPrc = undefined
@@ -248,7 +255,7 @@ function cancelChildS(prc: Prc, done = ch()) {
 		for (const prc of $childS) {
 			cancelChs.push(prc.cancel())
 		}
-		yield all(...cancelChs).rec
+		yield all(...cancelChs)
 		prc._$childS = undefined
 		yield done.put()
 	})
@@ -266,9 +273,9 @@ function $onCancel(prc: Prc) {
 	const done = ch()
 
 	const $onCancel = go(function* $onCancel() {
-		yield go(prc.onCancel as GenFn).done.rec
+		yield go(prc.onCancel as GenFn).done
 		// need to cancel $deadline because I won the race
-		yield $deadline.cancel().rec
+		yield $deadline.cancel()
 		nilParentRefAndMarkDONE(prc)
 		yield done.put()
 	})
@@ -294,7 +301,7 @@ function cancelChildSAndFinish(prc: Prc) {
 	const { done } = prc
 
 	go(function* cancelChildSAndFinish() {
-		yield cancelChildS(prc, prc.done).rec
+		yield cancelChildS(prc, prc.done)
 		yield done.put()
 	})
 
@@ -314,7 +321,7 @@ function runChildSCancelAndOnCancel(prc: Prc) {
 	go(function* _handleChildSAndOnCancel() {
 		const childSCancelDone = cancelChildS(prc)
 		const onCancelDone = $onCancel(prc)
-		yield all(childSCancelDone, onCancelDone).rec
+		yield all(childSCancelDone, onCancelDone)
 		yield prc.done.put()
 	})
 
@@ -323,7 +330,7 @@ function runChildSCancelAndOnCancel(prc: Prc) {
 
 
 
-/* === Prc constructors ====================================================== */
+/* === Process (P) constructors ====================================================== */
 
 // type Opt<TKs extends string> = {
 //    [K in TKs]:
@@ -353,7 +360,7 @@ type GenFnThis<opt> = Prc & opt
 type Proc = Prc & Ports
 
 // problem is that opt can be any type
-	// so need to constraint it
+// so need to constraint it
 export function Go<ChV, Chk, V, Args>(
 	opt: {
 		[k: string]: Ch<ChV>  // ChV is undefined | number
@@ -364,11 +371,12 @@ export function Go<ChV, Chk, V, Args>(
 
 	const deadline = opt && ("deadline" in opt) ? (opt.deadline) as number : undefined
 
-	let prc = new Prc(true, deadline)    as (Prc & typeof opt)  // eslint-disable-line prefer-const
+	let prc = new Prc(true, deadline) as (Prc & typeof opt)  // eslint-disable-line prefer-const
 	prc._genName = genFn.name
 
 	if (opt) {
 		for (const k in opt) {
+			if (k === "deadline") continue
 			const optsVal = opt[k]
 			prc[k] = optsVal
 		}
@@ -410,7 +418,7 @@ export function Cancellable(onCancel: OnCancel) {
 }
 
 
-/** Internally used in Prc.cancel(). */
+/** Used internally in Prc.cancel(). @todo: actually not used. Pending remove */
 export function _go<TGenFnArgs>(genFn: GenFn<TGenFnArgs>, ...genFnArgs: TGenFnArgs[]): Proc {
 	const prc = new Prc(false)
 	prc._genName = genFn.name
@@ -422,10 +430,25 @@ export function _go<TGenFnArgs>(genFn: GenFn<TGenFnArgs>, ...genFnArgs: TGenFnAr
 
 
 
-/* === Waiting for result of processes to finish ============================ */
+/* === Helpers ====================================================== */
 
-export const waitAll = "RIBU_WAIT_ALL"
+/**
+ * Sleep
+ */
+export function sleep(ms: number): YIELDABLE {
+	const runningPrc = csp.runningPrc
+	const timeoutID = setTimeout(function _sleepTimeOut() {
+		setResume(runningPrc)
+		run(runningPrc)
+	}, ms)
+	runningPrc._timeoutID = timeoutID
+	return setPark(runningPrc)
+}
 
+
+/**
+ * wait
+ */
 export function wait(...prcS: Prc[]): Ch {
 
 	const allDone = ch()
@@ -451,9 +474,8 @@ export function wait(...prcS: Prc[]): Ch {
 		doneChs = prcS.map(proc => proc.done)
 	}
 
-
 	go(function* _donePrc() {
-		yield all(...doneChs).rec
+		yield all(...doneChs)
 		yield allDone.put()
 	})
 
@@ -461,15 +483,60 @@ export function wait(...prcS: Prc[]): Ch {
 }
 
 
+/**
+ * Cancel several processes in parallel
+ */
+export function cancel(...prcS: Prc[]): Ch {
+	const procCancelChanS = prcS.map(p => p.cancel())
+	return all(...procCancelChanS)
+}
 
-/* === Sleep ====================================================== */
 
-export function sleep(ms: number): YIELD_V {
-	const runningPrc = csp.runningPrc
-	const timeoutID = setTimeout(function _sleepTO() {
-		setResume(runningPrc)
-		run(runningPrc)
-	}, ms)
-	runningPrc._timeoutID = timeoutID
-	return setPark(runningPrc)
+/**
+ * Convert a sync function to async
+ */
+export function doAsync(fn: () => void, done = ch()): Ch {
+	go(function* _doAsync() {
+		fn()
+		yield done.put()
+	})
+	return done
+}
+
+
+/**
+ * Race several processes.
+ * @todo: implemented when first returns error.
+ * Returns the first process that finishes succesfully, ie,
+ * if the race winner finishes with errors, it is ignored.
+ * The rest (unfinished) are cancelled.
+ */
+export function race(...prcS: Prc[]): Ch {
+
+	const done = ch<unknown>()
+
+	let prcSDone: Array<Ch> = []   // eslint-disable-line prefer-const
+	for (const prc of prcS) {
+		prcSDone.push(prc.done)
+	}
+
+	for (const chan of prcSDone) {
+
+		go(function* _race() {
+
+			const prcResult: unknown = yield chan
+
+			// remove the winner prc from prcS so that the remainning can be cancelled
+			prcS.splice(prcS.findIndex(prc => prc.done == chan), 1)
+
+			go(function* () {
+				yield cancel(...prcS)
+			})
+
+			yield done.put(prcResult)
+		})
+
+	}
+
+	return done
 }

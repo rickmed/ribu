@@ -1,4 +1,4 @@
-import { pullOutMsg, run, setPark, setResume, type YIELD_V, type Prc } from "./process.mjs"
+import { go, pullOutMsg, run, setPark, setResume, type Prc, type YIELD_T, YIELD } from "./process.mjs"
 import csp from "./initCsp.mjs"
 
 
@@ -9,14 +9,14 @@ export function ch<V = undefined>(capacity = 0):Ch<V> {
 
 
 export type Ch<V = undefined> = {
-	put(msg: V): YIELD_V,
-   put(...msg: V extends undefined ? [] : [V]): YIELD_V,
-   get rec(): YIELD_V,
+	put(msg: V): YIELD_T,
+   put(...msg: V extends undefined ? [] : [V]): YIELD_T,
+   get rec(): YIELD_T,
    dispatch(msg: V): void,
 }
 
 
-class BaseChan<V> {
+export class BaseChan<V> {
 
 	protected _waitingSenders = new Queue<Prc>()
 	protected _waitingReceivers = new Queue<Prc>()
@@ -27,12 +27,17 @@ class BaseChan<V> {
 		setResume(waitingReceiver, msg)
 		run(waitingReceiver)
 	}
+
+	/* Subclasses below overwrite it.
+	 * Placed for "value instanceof BaseChan" in run(prc)
+	*/
+	get rec() { return YIELD }
 }
 
 
 class Chan<V> extends BaseChan<V> {
 
-   put(msg?: V): YIELD_V {
+   put(msg?: V): YIELD_T {
 
 		const runningPrc = csp.runningPrc
 
@@ -50,7 +55,7 @@ class Chan<V> extends BaseChan<V> {
 		return setResume(runningPrc, undefined)
 	}
 
-	get rec(): YIELD_V {
+	get rec(): YIELD_T {
 
 		const runningPrc = csp.runningPrc
 
@@ -83,7 +88,7 @@ class BufferedChan<V> extends BaseChan<V> {
 		this.isFull = buffer.isFull
 	}
 
-	put(msg?: V): YIELD_V {
+	put(msg?: V): YIELD_T {
 
 		const runningPrc = csp.runningPrc
 
@@ -107,7 +112,7 @@ class BufferedChan<V> extends BaseChan<V> {
 		return setResume(runningPrc, undefined)
 	}
 
-	get rec(): YIELD_V {
+	get rec(): YIELD_T {
 
 		const runningPrc = csp.runningPrc
 
@@ -190,7 +195,7 @@ class Queue<V> {
 // 			this.#listeners.push(listenerCh)
 // 		}
 
-// 		return listenerCh.rec
+// 		return listenerCh
 // 	}
 
 // 	/** @type {() => _Ribu.YIELD_VAL} */
@@ -201,14 +206,14 @@ class Queue<V> {
 
 // 		go(function* _emit() {
 // 			if (listeners === undefined) {
-// 				yield notifyDone.rec
+// 				yield notifyDone
 // 				return
 // 			}
 // 			if (Array.isArray(listeners)) {
 // 				for (const ch of listeners) {
 // 					yield ch.put()
 // 				}
-// 				yield notifyDone.rec
+// 				yield notifyDone
 // 				return
 // 			}
 // 			yield listeners.put()
@@ -223,3 +228,32 @@ class Queue<V> {
 
 // 	}
 // }
+
+
+
+export function all(...chanS: Ch[]): Ch {
+
+	const allDone = ch()
+	const chansL = chanS.length
+	const notifyDone = ch(chansL)
+
+	for (const chan of chanS) {
+		go(function* _all() {
+			yield chan
+			yield notifyDone.put()
+		})
+	}
+
+	go(function* _collectDones() {
+		let nDone = 0
+		while (nDone < chansL) {
+			yield notifyDone
+			nDone++
+		}
+		yield allDone.put()
+	})
+
+	return allDone
+}
+
+

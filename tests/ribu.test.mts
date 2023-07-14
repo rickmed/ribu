@@ -1,63 +1,59 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
-import { go, Go, ch, sleep, Gen, wait, waitAll } from "../source/index.mjs"
+import { go, Go, ch, sleep, Gen, wait, race } from "../source/index.mjs"
 import { promSleep } from "./utils.mjs"
+
+
+// @todo: put assertions inside all main*()
+   // and remove all respective sleepProm()
+// now is not possible bc sophi does not fail on tests without ran assertions
 
 
 topic("process basics", () => {
 
-   it("it sleep without blocking", async () => {
+   it("can sleep without blocking", async () => {
 
       let mutated = undefined
 
       go(function* proc1() {
-         yield sleep(0)
+         yield sleep(1)
          mutated = true
       })
 
-      await promSleep(1)
+      await promSleep(2)
       mutated = false  // this statement should execute last
 
       check(mutated).with(false)
    })
 
 
-   it("can send/receive on channels", async () => {
+   it("can yield promises which are resolved", async () => {
 
-      // @todo: put assertion inside main()
-      // now is not possible bc sophi does not fail on tests without ran assertions
-
-      let mutated
-
-      const ch1 = ch<boolean>()
-
-      function* child() {
-         yield ch1.put(false)
-      }
-
-      // if you inline the GenFn in go(), the GenFn's args are inferred
-      go(function* main(): Gen<boolean> {
-         go(child)
-         const _false = yield ch1.rec
-         mutated = _false
+      go(function* proc1(): Gen<number> {
+         const res = yield Promise.resolve(1)
+         check(res).with(1)
       })
 
-      check(mutated).with(false)
+      await promSleep(1)
    })
 
 
-   it("can yield promises", async () => {
+   it.skip("can return values", async () => {
 
-      function* proc1() {
-         const res: number = yield Promise.resolve(1)
-         check(res).with(1)
-      }
+      go(function* () {
 
-      go(proc1)
-      await promSleep(0)
+         go(function* (): Gen<never, boolean> {
+            yield sleep(1)
+            return true
+         })
+
+         const res = yield wait()
+         check(res).with(true)
+      })
+
+      await promSleep(2)
    })
-
 })
 
 
@@ -69,12 +65,52 @@ topic(`process can access "this" inside them`, () => {
 
       Go({ port1: ch<boolean>(2) }, function* main(): Gen<boolean> {
          yield this.port1.put(true)
-         mutated = yield this.port1.rec
+         mutated = yield this.port1
       })
 
       await promSleep(0)
 
       check(mutated).with(true)
+   })
+})
+
+
+topic("channels", () => {
+
+   it("can send/receive on channels", async () => {
+
+      let mutated
+
+      const ch1 = ch<boolean>()
+
+      function* child() {
+         yield ch1.put(false)
+      }
+
+      go(function* main(): Gen<boolean> {
+         go(child)
+         mutated = yield ch1.rec
+      })
+
+      check(mutated).with(false)
+   })
+
+   it("can receive implicitly on a channel without using .rec", async () => {
+
+      let mutated
+
+      const ch1 = ch<boolean>()
+
+      function* child() {
+         yield ch1.put(false)
+      }
+
+      go(function* main(): Gen<boolean> {
+         go(child)
+         mutated = yield ch1
+      })
+
+      check(mutated).with(false)
    })
 })
 
@@ -113,7 +149,7 @@ topic("process can wait for children processes", () => {
             mutated = true
          })
 
-         yield wait(child).rec
+         yield wait(child)
       })
 
       await promSleep(2)
@@ -122,7 +158,7 @@ topic("process can wait for children processes", () => {
    })
 
 
-   it("implicit waiting with waitAll. No return values", async () => {
+   it("implicit waiting with wait(). No return values", async () => {
 
       let mutated = false
 
@@ -133,11 +169,64 @@ topic("process can wait for children processes", () => {
             mutated = true
          })
 
-         yield waitAll
+         yield wait()
       })
 
       await promSleep(2)
 
       check(mutated).with(true)
+   })
+})
+
+
+topic("race()", () => {
+
+   it("when all processes finish succesfully", async () => {
+
+      let won = ""
+
+      go(function* main() {
+
+         function* one() {
+            yield sleep(2)
+            won = "one"
+         }
+
+         function* two() {
+            yield sleep(1)
+            won = "two"
+         }
+
+         yield race(go(one), go(two))
+      })
+
+      await promSleep(3)
+
+      check(won).with("two")
+   })
+
+
+   it("when all processes finish succesfully using the return value", async () => {
+
+      let won = ""
+
+      go(function* main() {
+
+         const one = go(function* one() {
+            yield sleep(2)
+            yield this.done.put("one")
+         })
+
+         const two = go(function* two() {
+            yield sleep(1)
+            yield this.done.put("two")
+         })
+
+         won = (yield race(one, two))   as string
+      })
+
+      await promSleep(3)
+
+      check(won).with("two")
    })
 })
