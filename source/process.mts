@@ -330,48 +330,31 @@ function runChildSCancelAndOnCancel(prc: Prc) {
 
 
 
-/* === Process (P) constructors ====================================================== */
+/* === Process (Prc) constructors ====================================================== */
 
-// type Opt<TKs extends string> = {
-//    [K in TKs]:
-//       K extends keyof Prc ? never :
-//       K extends "deadline" ? number :
-//       Ch<any>
+// type Opt<TKs extends string, ChV = unknown> = {
+// 	[K in TKs]:
+// 		K extends keyof Prc ? never :
+// 		K extends "deadline" ? number :
+// 		Ch<ChV>
 // }
 
-// type Ports<OptKs extends string> =
-//    Omit<Opt<OptKs>, "deadline">
-
-// export type Proc<OptKs extends string> = Prc & Ports<OptKs>
-
-// export function Go<GenFnArgs, OptKs extends string>(
-// 	opt: Opt<OptKs>,
-// 	genFn: GenFn<GenFnArgs, Opt<OptKs>>,
-// 	...genFnArgs: GenFnArgs[]
-// ): Proc<OptKs> {
-
-
-type Ports<ChV> = {
-	[k: string]: Ch<ChV>
+type Opt<OptKs extends string> = {
+	[k in OptKs]:
+		// K extends keyof Prc ? never :
+		// typeof k extends "deadline" ? number :
+		Ch<unknown>
 }
 
-
-type GenFnThis<opt> = Prc & opt
-type Proc = Prc & Ports
-
-// problem is that opt can be any type
-// so need to constraint it
-export function Go<ChV, Chk, V, Args>(
-	opt: {
-		[k: string]: Ch<ChV>  // ChV is undefined | number
-	},
-	genFn: GenFn<Args, typeof opt>,
-	...genFnArgs: Args[]
-): Prc & typeof opt {
+export function Go<GenArgs, OptKs extends string, _Opt extends Opt<OptKs>>(
+	opt: _Opt,
+	genFn: GenFn<GenArgs, _Opt>,
+	...genFnArgs: GenArgs[]
+): Prc & Ports {
 
 	const deadline = opt && ("deadline" in opt) ? (opt.deadline) as number : undefined
 
-	let prc = new Prc(true, deadline) as (Prc & typeof opt)  // eslint-disable-line prefer-const
+	let prc = new Prc(true, deadline) as    (Prc & _Opt)  // eslint-disable-line prefer-const
 	prc._genName = genFn.name
 
 	if (opt) {
@@ -382,7 +365,6 @@ export function Go<ChV, Chk, V, Args>(
 		}
 	}
 
-	// need to cast bc prc does not contain & Ports
 	const gen = genFn.call(prc, ...genFnArgs)
 	prc._gen = gen
 
@@ -390,11 +372,13 @@ export function Go<ChV, Chk, V, Args>(
 	return prc
 }
 
-// Go({port1: ch(), portNum: ch<number>()}, function*(str) {
-// 	this.onCancel = function* () {}
-// 	yield this.port1.put()
-// 	yield this.portNum.put(5)
-// }, "f")
+const ports = {port: ch(), portStr: ch<string>()}
+Go(ports, function*(str) {
+	this.onCancel = function* () {}
+	yield this.port.put()
+	yield this.portStr.put(str)
+}, "f")
+
 
 
 export function go<Args>(genFn: GenFn<Args>, ...genFnArgs: Args[]): Proc {
