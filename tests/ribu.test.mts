@@ -30,8 +30,8 @@ topic("process basics", () => {
 
    it("can yield promises which are resolved", async () => {
 
-      go(function* proc1(): Gen<number> {
-         const res = yield Promise.resolve(1)
+      go(function* proc1() {
+         const res: number = yield Promise.resolve(1)
          check(res).with(1)
       })
 
@@ -43,12 +43,11 @@ topic("process basics", () => {
 
       go(function* () {
 
-         go(function* (): Gen<never, boolean> {
+         const res = go(function* (): Gen<never, boolean> {
             yield sleep(1)
-            return true
-         })
+            return true   // instead of yield this.done.put(x)
+         }).done
 
-         const res = yield wait()
          check(res).with(true)
       })
 

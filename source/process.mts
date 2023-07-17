@@ -10,17 +10,27 @@ export type YIELD_T = typeof YIELD
 
 export type YIELDABLE = YIELD_T | Ch<unknown> | Promise<unknown>
 
-export type Gen<Rec = unknown> =
-	Generator<YIELDABLE, void, Rec>
+export type Gen<Rec = unknown, Ret = void> =
+	Generator<YIELDABLE, Ret, Rec>
 
-type GenFn<Args = unknown, Ports = unknown> =
-	(this: Prc & Ports, ...args: Args[]) => Gen
+type GenFn< _Ports extends Ports = Ports, Args extends unknown[] = unknown[]> =
+	(this: Prc & _Ports, ...args: Args) => Gen
 
 type PrcState = "RUNNING" | "CANCELLING" | "DONE"
 type ExecNext = "RESUME" | "PARK"
 
 type onCancelFn = (...args: unknown[]) => unknown
 type OnCancel = onCancelFn | GenFn
+
+type PrcWithPorts<_Ports> = _Ports & {
+	cancel: Prc["cancel"]
+}
+
+
+type Ports = {
+	[K: string]: Ch<unknown>
+}
+
 
 /**
  * The generator manager
@@ -47,42 +57,43 @@ export class Prc<ChV = unknown> {
 	_$childS?: Set<Prc> = undefined
 
 	onCancel?: OnCancel = undefined
-	_deadline: number
+	_deadline: number = csp.defaultDeadline
 
 	/** Setup by sleep(). Used by .cancel() to clearTimeout(_timeoutID) */
 	_timeoutID?: NodeJS.Timeout = undefined
 
 	done = ch<ChV>()
 
-	/**
-	 * @param {boolean} isUserPrc
-		* Used to launch "special"/internal PrcS with _go(), which are used in
-		* Prc.cancel(). These PrcS don't have children to auto cancel that
-		* would create infinite loops of cancelling.
-	 */
-	constructor(isUserPrc: boolean, deadline = csp.defaultDeadline) {
+	constructor() {
 
-		const parentPrc = csp.runningPrc
+		const { runningPrc } = csp
 
-		if (parentPrc) {
+		if (runningPrc) {
 
-			const parentDL = parentPrc._deadline
-			deadline = deadline > parentDL ? parentDL : deadline
+			this._parentPrc = runningPrc
 
-			this._parentPrc = parentPrc
-
-			if (isUserPrc) {
-				if (parentPrc._$childS === undefined) {
-					parentPrc._$childS = new Set()
-				}
-				parentPrc._$childS.add(this)
+			if (runningPrc._$childS === undefined) {
+				runningPrc._$childS = new Set()
 			}
-		}
 
-		this._deadline = deadline
+			runningPrc._$childS.add(this)
+		}
 	}
 
-	cancel(): Ch {
+	deadline(ms: number) {
+
+		const { _parentPrc } = this
+
+		if (_parentPrc) {
+			const parentMS = _parentPrc._deadline
+			ms = ms > parentMS ? parentMS : ms
+		}
+
+		this._deadline = ms
+		return this
+	}
+
+	cancel(): Ch<ChV> {
 
 		const state = this._state
 		const { done } = this
@@ -138,12 +149,38 @@ export class Prc<ChV = unknown> {
 			return runChildSCancelAndOnCancel(this)
 		}
 	}
+
+	ports<T extends Ports>(ports: T): T {
+
+		// ports.cancel = this.cancel.bind(this)
+
+		return ports
+	}
+}
+
+export function pullOutMsg(prc: Prc): unknown {
+	const outMsg = prc._genMsg
+	prc._genMsg = undefined
+	return outMsg
+}
+
+export function setResume(prc: Prc, genMsg?: unknown): YIELD_T {
+	prc._execNext = "RESUME"
+	prc._genMsg = genMsg
+	return YIELD
+}
+
+export function setPark(prc: Prc, genMsg?: unknown): YIELD_T {
+	prc._execNext = "PARK"
+	prc._genMsg = genMsg
+	return YIELD
 }
 
 export function run(prc: Prc): void {
 
 	csp.prcStack.push(prc)
 
+	let genFnReturnedVal: unknown = undefined
 	let genDone = false
 	while (genDone === false) {
 
@@ -162,6 +199,7 @@ export function run(prc: Prc): void {
 
 			if (done === true) {
 				genDone = true
+				genFnReturnedVal = value
 				break
 			}
 
@@ -204,32 +242,14 @@ export function run(prc: Prc): void {
 	csp.prcStack.pop()
 
 	if (genDone) {
-		go(finishNormalDone, prc)
+		go(finishNormalDone, prc, genFnReturnedVal)
 		return
 	}
 
 	csp.runScheduledPrcS()
 }
 
-export function pullOutMsg(prc: Prc): unknown {
-	const outMsg = prc._genMsg
-	prc._genMsg = undefined
-	return outMsg
-}
-
-export function setResume(prc: Prc, genMsg?: unknown): YIELD_T {
-	prc._execNext = "RESUME"
-	prc._genMsg = genMsg
-	return YIELD
-}
-
-export function setPark(prc: Prc, genMsg?: unknown): YIELD_T {
-	prc._execNext = "PARK"
-	prc._genMsg = genMsg
-	return YIELD
-}
-
-function* finishNormalDone(prc: Prc) {
+function* finishNormalDone(prc: Prc, genFnReturnedVal: unknown) {
 
 	prc._state = "DONE"
 
@@ -239,28 +259,22 @@ function* finishNormalDone(prc: Prc) {
 	// at instantiation, they have a shorter/equal deadline than this prc.
 	// So just need for them to finish cancelling themselves
 	if (_$childS && _$childS.size > 0) {
-		yield cancelChildS(prc)
+		yield go(cancelChildS, prc).done
 	}
 
 	prc._parentPrc = undefined
-	yield done.put()
+	yield done.put(genFnReturnedVal)
 }
 
-function cancelChildS(prc: Prc, done = ch()) {
-
+function* cancelChildS(prc: Prc) {
 	const $childS = prc._$childS as Set<Prc>
 
-	go(function* _cancelChildS() {
-		let cancelChs = []  // eslint-disable-line prefer-const
-		for (const prc of $childS) {
-			cancelChs.push(prc.cancel())
-		}
-		yield all(...cancelChs)
-		prc._$childS = undefined
-		yield done.put()
-	})
-
-	return done
+	let cancelChs = []  // eslint-disable-line prefer-const
+	for (const prc of $childS) {
+		cancelChs.push(prc.cancel())
+	}
+	yield all(...cancelChs)
+	prc._$childS = undefined
 }
 
 function nilParentRefAndMarkDONE(prc: Prc) {
@@ -301,7 +315,7 @@ function cancelChildSAndFinish(prc: Prc) {
 	const { done } = prc
 
 	go(function* cancelChildSAndFinish() {
-		yield cancelChildS(prc, prc.done)
+		yield cancelChildS(prc)
 		yield done.put()
 	})
 
@@ -332,38 +346,13 @@ function runChildSCancelAndOnCancel(prc: Prc) {
 
 /* === Process (Prc) constructors ====================================================== */
 
-// type Opt<TKs extends string, ChV = unknown> = {
-// 	[K in TKs]:
-// 		K extends keyof Prc ? never :
-// 		K extends "deadline" ? number :
-// 		Ch<ChV>
-// }
+export function go<Args extends unknown[], _Ports extends Ports>(
+	genFn: GenFn<_Ports, Args>,
+	...genFnArgs: Args
+): Prc & _Ports {
 
-type Opt<OptKs extends string> = {
-	[k in OptKs]:
-		// K extends keyof Prc ? never :
-		// typeof k extends "deadline" ? number :
-		Ch<unknown>
-}
-
-export function Go<GenArgs, OptKs extends string, _Opt extends Opt<OptKs>>(
-	opt: _Opt,
-	genFn: GenFn<GenArgs, _Opt>,
-	...genFnArgs: GenArgs[]
-): Prc & Ports {
-
-	const deadline = opt && ("deadline" in opt) ? (opt.deadline) as number : undefined
-
-	let prc = new Prc(true, deadline) as    (Prc & _Opt)  // eslint-disable-line prefer-const
+	const prc = new Prc()    as Prc & _Ports
 	prc._genName = genFn.name
-
-	if (opt) {
-		for (const k in opt) {
-			if (k === "deadline") continue
-			const optsVal = opt[k]
-			prc[k] = optsVal
-		}
-	}
 
 	const gen = genFn.call(prc, ...genFnArgs)
 	prc._gen = gen
@@ -372,23 +361,24 @@ export function Go<GenArgs, OptKs extends string, _Opt extends Opt<OptKs>>(
 	return prc
 }
 
-const ports = {port: ch(), portStr: ch<string>()}
-Go(ports, function*(str) {
-	this.onCancel = function* () {}
-	yield this.port.put()
-	yield this.portStr.put(str)
-}, "f")
 
+function service(str: string) {
+	const port = ch()
+	const portStr = ch<string>()
 
+	return go(function* genfn() {
+		// onCancel(function* () { })
 
-export function go<Args>(genFn: GenFn<Args>, ...genFnArgs: Args[]): Proc {
-	const prc = new Prc(true)
-	prc._genName = genFn.name
-	const gen = genFn.call(prc, ...genFnArgs)
-	prc._gen = gen
-	run(prc)
-	return prc
+		yield port.put()
+		yield portStr.put(str)
+	})
+	.ports({port, portStr})
 }
+
+
+service("c")
+
+
 
 
 /**
@@ -396,19 +386,8 @@ export function go<Args>(genFn: GenFn<Args>, ...genFnArgs: Args[]): Proc {
  * so the parent can child.cancel() and thus onCancel is ran.
  */
 export function Cancellable(onCancel: OnCancel) {
-	const prc = new Prc(true)
+	const prc = new Prc()
 	prc.onCancel = onCancel
-	return prc
-}
-
-
-/** Used internally in Prc.cancel(). @todo: actually not used. Pending remove */
-export function _go<TGenFnArgs>(genFn: GenFn<TGenFnArgs>, ...genFnArgs: TGenFnArgs[]): Proc {
-	const prc = new Prc(false)
-	prc._genName = genFn.name
-	const gen = genFn.call(prc, ...genFnArgs)
-	prc._gen = gen
-	run(prc)
 	return prc
 }
 
