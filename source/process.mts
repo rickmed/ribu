@@ -5,33 +5,6 @@ import { ch, BaseChan, type Ch } from "./channel.mjs"
 
 /* === Prc class ====================================================== */
 
-export const YIELD = "RIBU_YIELD_VAL"
-export type YIELD_T = typeof YIELD
-
-export type YIELDABLE = YIELD_T | Ch<unknown> | Promise<unknown>
-
-export type Gen<Rec = unknown, Ret = void> =
-	Generator<YIELDABLE, Ret, Rec>
-
-type GenFn< _Ports extends Ports = Ports, Args extends unknown[] = unknown[]> =
-	(this: Prc & _Ports, ...args: Args) => Gen
-
-type PrcState = "RUNNING" | "CANCELLING" | "DONE"
-type ExecNext = "RESUME" | "PARK"
-
-type onCancelFn = (...args: unknown[]) => unknown
-type OnCancel = onCancelFn | GenFn
-
-type PrcWithPorts<_Ports> = _Ports & {
-	cancel: Prc["cancel"]
-}
-
-
-type Ports = {
-	[K: string]: Ch<unknown>
-}
-
-
 /**
  * The generator manager
  */
@@ -56,7 +29,7 @@ export class Prc<ChV = unknown> {
 	/** For auto cancel child Procs */
 	_$childS?: Set<Prc> = undefined
 
-	onCancel?: OnCancel = undefined
+	_onCancel?: OnCancel = undefined
 	_deadline: number = csp.defaultDeadline
 
 	/** Setup by sleep(). Used by .cancel() to clearTimeout(_timeoutID) */
@@ -93,7 +66,7 @@ export class Prc<ChV = unknown> {
 		return this
 	}
 
-	cancel(): Ch<ChV> {
+	cancel() {
 
 		const state = this._state
 		const { done } = this
@@ -118,7 +91,7 @@ export class Prc<ChV = unknown> {
 		csp.scheduledPrcS.delete(this)
 		ifSleepTimeoutClear(this)
 
-		const { _$childS, onCancel } = this
+		const { _$childS, _onCancel: onCancel } = this
 
 		if (_$childS === undefined) {
 
@@ -150,11 +123,10 @@ export class Prc<ChV = unknown> {
 		}
 	}
 
-	ports<T extends Ports>(ports: T): T {
-
-		// ports.cancel = this.cancel.bind(this)
-
-		return ports
+	ports<_P extends Ports>(ports: _P): WithCancel<_P> {
+		const _ports = ports   as WithCancel<_P>
+		_ports.cancel = this.cancel.bind(this)
+		return _ports
 	}
 }
 
@@ -287,7 +259,7 @@ function $onCancel(prc: Prc) {
 	const done = ch()
 
 	const $onCancel = go(function* $onCancel() {
-		yield go(prc.onCancel as GenFn).done
+		yield go(prc._onCancel as GenFn).done
 		// need to cancel $deadline because I won the race
 		yield $deadline.cancel()
 		nilParentRefAndMarkDONE(prc)
@@ -344,7 +316,7 @@ function runChildSCancelAndOnCancel(prc: Prc) {
 
 
 
-/* === Process (Prc) constructors ====================================================== */
+/* === Prc constructor ====================================================== */
 
 export function go<Args extends unknown[], _Ports extends Ports>(
 	genFn: GenFn<_Ports, Args>,
@@ -362,33 +334,20 @@ export function go<Args extends unknown[], _Ports extends Ports>(
 }
 
 
-function service(str: string) {
-	const port = ch()
-	const portStr = ch<string>()
-
-	return go(function* genfn() {
-		// onCancel(function* () { })
-
-		yield port.put()
-		yield portStr.put(str)
-	})
-	.ports({port, portStr})
-}
-
-
-service("c")
-
-
-
-
 /**
  * A way to create a new Prc which sets it up as a child of last called go()
  * so the parent can child.cancel() and thus onCancel is ran.
  */
 export function Cancellable(onCancel: OnCancel) {
 	const prc = new Prc()
-	prc.onCancel = onCancel
+	prc._onCancel = onCancel
 	return prc
+}
+
+
+export function onCancel(onCancel: OnCancel): void {
+	const runningPrc = csp.runningPrc
+	runningPrc._onCancel = onCancel
 }
 
 
@@ -503,3 +462,30 @@ export function race(...prcS: Prc[]): Ch {
 
 	return done
 }
+
+
+
+/* === Types ====================================================== */
+
+export const YIELD = "RIBU_YIELD_VAL"
+export type YIELD_T = typeof YIELD
+
+export type YIELDABLE = YIELD_T | Ch<unknown> | Promise<unknown>
+
+export type Gen<Rec = unknown, Ret = void> =
+	Generator<YIELDABLE, Ret, Rec>
+
+type GenFn< _Ports extends Ports = Ports, Args extends unknown[] = unknown[]> =
+	(this: Prc & _Ports, ...args: Args) => Gen
+
+type PrcState = "RUNNING" | "CANCELLING" | "DONE"
+type ExecNext = "RESUME" | "PARK"
+
+type onCancelFn = (...args: unknown[]) => unknown
+type OnCancel = onCancelFn | GenFn
+
+type Ports = {
+	[K: string]: Ch<unknown>
+}
+
+type WithCancel<Ports> = Ports & Pick<Prc, "cancel">
