@@ -1,7 +1,7 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
-import { go, Go, ch, sleep, Gen, wait, race } from "../source/index.mjs"
+import { go, ch, sleep, Gen, wait, race } from "../source/index.mjs"
 import { promSleep } from "./utils.mjs"
 
 
@@ -31,45 +31,11 @@ topic("process basics", () => {
    it("can yield promises which are resolved", async () => {
 
       go(function* proc1() {
-         const res: number = yield Promise.resolve(1)
+         const res = yield Promise.resolve(1)
          check(res).with(1)
       })
 
       await promSleep(1)
-   })
-
-
-   it.skip("can return values", async () => {
-
-      go(function* () {
-
-         const res = go(function* (): Gen<never, boolean> {
-            yield sleep(1)
-            return true   // instead of yield this.done.put(x)
-         }).done
-
-         check(res).with(true)
-      })
-
-      await promSleep(2)
-   })
-})
-
-
-topic(`process can access "this" inside them`, () => {
-
-   it("with configured channels", async () => {
-
-      let mutated = false
-
-      Go({ port1: ch<boolean>(2) }, function* main(): Gen<boolean> {
-         yield this.port1.put(true)
-         mutated = yield this.port1
-      })
-
-      await promSleep(0)
-
-      check(mutated).with(true)
    })
 })
 
@@ -205,27 +171,27 @@ topic("race()", () => {
    })
 
 
-   it("when all processes finish succesfully using the return value", async () => {
+   // it("when all processes finish succesfully using the return value", async () => {
 
-      let won = ""
+   //    let won = ""
 
-      go(function* main() {
+   //    go(function* main() {
 
-         const one = go(function* one() {
-            yield sleep(2)
-            yield this.done.put("one")
-         })
+   //       const one = go(function* one() {
+   //          yield sleep(2)
+   //          yield this.done.put("one")
+   //       })
 
-         const two = go(function* two() {
-            yield sleep(1)
-            yield this.done.put("two")
-         })
+   //       const two = go(function* two() {
+   //          yield sleep(1)
+   //          yield this.done.put("two")
+   //       })
 
-         won = (yield race(one, two))   as string
-      })
+   //       won = (yield race(one, two))   as string
+   //    })
 
-      await promSleep(3)
+   //    await promSleep(3)
 
-      check(won).with("two")
-   })
+   //    check(won).with("two")
+   // })
 })

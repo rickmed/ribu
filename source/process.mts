@@ -8,7 +8,7 @@ import { ch, BaseChan, type Ch } from "./channel.mjs"
 /**
  * The generator manager
  */
-export class Prc<ChV = unknown> {
+export class Prc {
 
 	/** undefined when instantiated in Cancellable  */
 	_gen?: Gen = undefined
@@ -35,7 +35,7 @@ export class Prc<ChV = unknown> {
 	/** Setup by sleep(). Used by .cancel() to clearTimeout(_timeoutID) */
 	_timeoutID?: NodeJS.Timeout = undefined
 
-	done = ch<ChV>()
+	done = ch()
 
 	constructor() {
 
@@ -123,7 +123,7 @@ export class Prc<ChV = unknown> {
 		}
 	}
 
-	ports<_P extends Ports>(ports: _P): WithCancel<_P> {
+	ports<_P extends Ports>(ports: _P) {
 		const _ports = ports   as WithCancel<_P>
 		_ports.cancel = this.cancel.bind(this)
 		return _ports
@@ -152,7 +152,6 @@ export function run(prc: Prc): void {
 
 	csp.prcStack.push(prc)
 
-	let genFnReturnedVal: unknown = undefined
 	let genDone = false
 	while (genDone === false) {
 
@@ -171,7 +170,6 @@ export function run(prc: Prc): void {
 
 			if (done === true) {
 				genDone = true
-				genFnReturnedVal = value
 				break
 			}
 
@@ -214,14 +212,14 @@ export function run(prc: Prc): void {
 	csp.prcStack.pop()
 
 	if (genDone) {
-		go(finishNormalDone, prc, genFnReturnedVal)
+		go(finishNormalDone, prc)
 		return
 	}
 
 	csp.runScheduledPrcS()
 }
 
-function* finishNormalDone(prc: Prc, genFnReturnedVal: unknown) {
+function* finishNormalDone(prc: Prc) {
 
 	prc._state = "DONE"
 
@@ -235,11 +233,11 @@ function* finishNormalDone(prc: Prc, genFnReturnedVal: unknown) {
 	}
 
 	prc._parentPrc = undefined
-	yield done.put(genFnReturnedVal)
+	yield done.put()
 }
 
 function* cancelChildS(prc: Prc) {
-	const $childS = prc._$childS as Set<Prc>
+	const $childS = prc._$childS    as Set<Prc>
 
 	let cancelChs = []  // eslint-disable-line prefer-const
 	for (const prc of $childS) {
@@ -287,7 +285,7 @@ function cancelChildSAndFinish(prc: Prc) {
 	const { done } = prc
 
 	go(function* cancelChildSAndFinish() {
-		yield cancelChildS(prc)
+		yield go(cancelChildS, prc).done
 		yield done.put()
 	})
 
@@ -305,9 +303,7 @@ function ifSleepTimeoutClear(prc: Prc) {
 function runChildSCancelAndOnCancel(prc: Prc) {
 
 	go(function* _handleChildSAndOnCancel() {
-		const childSCancelDone = cancelChildS(prc)
-		const onCancelDone = $onCancel(prc)
-		yield all(childSCancelDone, onCancelDone)
+		yield all(go(cancelChildS, prc).done, $onCancel(prc))
 		yield prc.done.put()
 	})
 
