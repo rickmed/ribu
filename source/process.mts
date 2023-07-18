@@ -1,55 +1,47 @@
 import { all } from "./index.mjs"
 import csp from "./initCsp.mjs"
-import { ch, BaseChan, type Ch } from "./channel.mjs"
+import { ch, type Ch } from "./channel.mjs"
+
+
+/* Promises:
+	go(): just a way to track asyncFns for cancellation/bubble-error
+
+*/
+
 
 
 /* === Prc class ====================================================== */
 
-/**
- * The generator manager
- */
 export class Prc {
 
 	/** undefined when instantiated in Cancellable  */
-	_gen?: Gen = undefined
-	_genName: string = ""
+	_fn?: AsyncFn = undefined
+	_fnName: string = ""
 
-	/* defaults are RUNNING/RESUME because gen is ran immediately */
 	_state: PrcState = "RUNNING"
-	_execNext: ExecNext = "RESUME"
-
-	/**
-	 * Whatever is yield/.next() to/from the generator.
-	 * Default is undefined because first .next(genMsg) is ignored anyways
-	 */
-	_genMsg: unknown = undefined
+	_promResolve?: <ChV>(msg: ChV) => void
+	_chanPutMsg: unknown = -11  // special init value to be easily identifiable
+	_onCancel?: OnCancel = undefined
+	_deadline: number = csp.defaultDeadline
 
 	/** For bubbling errors up (undefined for root prcS) */
 	_parentPrc?: Prc = undefined
 	/** For auto cancel child Procs */
 	_$childS?: Set<Prc> = undefined
 
-	_onCancel?: OnCancel = undefined
-	_deadline: number = csp.defaultDeadline
+	_done = ch()
 
-	/** Setup by sleep(). Used by .cancel() to clearTimeout(_timeoutID) */
-	_timeoutID?: NodeJS.Timeout = undefined
+	constructor(parentPrc: Prc | undefined) {
 
-	done = ch()
+		if (parentPrc) {
 
-	constructor() {
+			this._parentPrc = parentPrc
 
-		const { runningPrc } = csp
-
-		if (runningPrc) {
-
-			this._parentPrc = runningPrc
-
-			if (runningPrc._$childS === undefined) {
-				runningPrc._$childS = new Set()
+			if (parentPrc._$childS === undefined) {
+				parentPrc._$childS = new Set()
 			}
 
-			runningPrc._$childS.add(this)
+			parentPrc._$childS.add(this)
 		}
 	}
 
@@ -69,7 +61,7 @@ export class Prc {
 	cancel() {
 
 		const state = this._state
-		const { done } = this
+		const { _done: done } = this
 
 		if (state === "DONE") {
 			/* @todo: when state === DONE (late .cancel() callers)
@@ -101,7 +93,7 @@ export class Prc {
 			}
 
 			if (onCancel.constructor === Function) {
-				(onCancel as onCancelFn)()
+				(onCancel as PrcResume)()
 				nilParentRefAndMarkDONE(this)
 				return done
 			}
@@ -115,7 +107,7 @@ export class Prc {
 			}
 
 			if (onCancel.constructor === Function) {
-				(onCancel as onCancelFn)()
+				(onCancel as PrcResume)()
 				return cancelChildSAndFinish(this)
 			}
 
@@ -128,108 +120,23 @@ export class Prc {
 		_ports.cancel = this.cancel.bind(this)
 		return _ports
 	}
-}
 
-export function pullOutMsg(prc: Prc): unknown {
-	const outMsg = prc._genMsg
-	prc._genMsg = undefined
-	return outMsg
-}
-
-export function setResume(prc: Prc, genMsg?: unknown): YIELD_T {
-	prc._execNext = "RESUME"
-	prc._genMsg = genMsg
-	return YIELD
-}
-
-export function setPark(prc: Prc, genMsg?: unknown): YIELD_T {
-	prc._execNext = "PARK"
-	prc._genMsg = genMsg
-	return YIELD
-}
-
-export function run(prc: Prc): void {
-
-	csp.prcStack.push(prc)
-
-	let genDone = false
-	while (genDone === false) {
-
-		const exec = prc._execNext
-
-		if (exec === "PARK") {
-			break
-		}
-
-		if (exec === "RESUME") {
-
-			// ok to cast since _gen can only be undefined with Cancellable()
-			// which never calls .run()
-			const gen = prc._gen as Gen
-			const { done, value } = gen.next(prc._genMsg)
-
-			if (done === true) {
-				genDone = true
-				break
-			}
-
-			if (value instanceof BaseChan) {
-				value.rec
-			}
-
-			if (value === YIELD) {
-				// ch.put()/rec and sleep() set the appropiate conditions to be
-				// checked in the next while loop
-				continue
-			}
-
-			if (value instanceof Promise) {
-				const prom = value
-
-				prom.then(
-					function onVal(val: unknown) {
-						if (prc._state !== "RUNNING") {
-							return
-						}
-						setResume(prc, val)
-						run(prc)
-					},
-					function onErr(err: unknown) {
-						if (prc._state !== "RUNNING") {
-							return
-						}
-						// @todo implement errors
-						throw err
-					}
-				)
-
-				setPark(prc)
-				break
-			}
-		}
+	get done() {
+		return this._done.rec
 	}
-
-	csp.prcStack.pop()
-
-	if (genDone) {
-		go(finishNormalDone, prc)
-		return
-	}
-
-	csp.runScheduledPrcS()
 }
 
 function* finishNormalDone(prc: Prc) {
 
 	prc._state = "DONE"
 
-	const { done, _$childS } = prc
+	const { _done: done, _$childS } = prc
 
 	// No need to put a deadline on auto canceling any active children because,
 	// at instantiation, they have a shorter/equal deadline than this prc.
 	// So just need for them to finish cancelling themselves
 	if (_$childS && _$childS.size > 0) {
-		yield go(cancelChildS, prc).done
+		yield go(cancelChildS, prc)._done
 	}
 
 	prc._parentPrc = undefined
@@ -257,7 +164,7 @@ function $onCancel(prc: Prc) {
 	const done = ch()
 
 	const $onCancel = go(function* $onCancel() {
-		yield go(prc._onCancel as GenFn).done
+		yield go(prc._onCancel as GenFn)._done
 		// need to cancel $deadline because I won the race
 		yield $deadline.cancel()
 		nilParentRefAndMarkDONE(prc)
@@ -282,51 +189,60 @@ function hardCancel(prc: Prc) {
 }
 
 function cancelChildSAndFinish(prc: Prc) {
-	const { done } = prc
+	const { _done: done } = prc
 
 	go(function* cancelChildSAndFinish() {
-		yield go(cancelChildS, prc).done
+		yield go(cancelChildS, prc)._done
 		yield done.put()
 	})
 
 	return done
 }
 
-function ifSleepTimeoutClear(prc: Prc) {
-	const timeoutID = prc._timeoutID
-	if (timeoutID !== undefined) {
-		clearTimeout(timeoutID)
-		prc._timeoutID = undefined
-	}
-}
-
 function runChildSCancelAndOnCancel(prc: Prc) {
 
 	go(function* _handleChildSAndOnCancel() {
-		yield all(go(cancelChildS, prc).done, $onCancel(prc))
-		yield prc.done.put()
+		yield all(go(cancelChildS, prc)._done, $onCancel(prc))
+		yield prc._done.put()
 	})
 
-	return prc.done
+	return prc._done
 }
 
 
 
 /* === Prc constructor ====================================================== */
 
-export function go<Args extends unknown[], _Ports extends Ports>(
-	genFn: GenFn<_Ports, Args>,
+export function go<Args extends unknown[]>(
+	asyncFn: AsyncFn<Args>,
 	...genFnArgs: Args
-): Prc & _Ports {
+): Prc {
 
-	const prc = new Prc()    as Prc & _Ports
-	prc._genName = genFn.name
+	const {stackHead, stackTail} = csp
 
-	const gen = genFn.call(prc, ...genFnArgs)
-	prc._gen = gen
+	const newPrc = new Prc(stackHead)
+	newPrc._fnName = asyncFn.name
 
-	run(prc)
-	return prc
+	if (stackHead) {
+		stackTail.push(stackHead)
+	}
+
+	csp.stackHead = newPrc
+
+	const prom = asyncFn(...genFnArgs)    as ReturnType<typeof asyncFn>
+
+	prom.then(
+		res => {
+
+		},
+		rej => {
+
+		}
+	)
+
+	csp.stackHead = stackTail.pop()
+
+	return newPrc
 }
 
 
@@ -342,7 +258,10 @@ export function Cancellable(onCancel: OnCancel) {
 
 
 export function onCancel(onCancel: OnCancel): void {
-	const runningPrc = csp.runningPrc
+	const runningPrc = csp.stackHead
+	if (!runningPrc) {
+		throw new Error(`ribu: can't call onCancel outside a process`)
+	}
 	runningPrc._onCancel = onCancel
 }
 
@@ -350,22 +269,28 @@ export function onCancel(onCancel: OnCancel): void {
 
 /* === Helpers ====================================================== */
 
-/**
- * Sleep
- */
-export function sleep(ms: number): YIELDABLE {
-	const runningPrc = csp.runningPrc
-	const timeoutID = setTimeout(function _sleepTimeOut() {
-		setResume(runningPrc)
-		run(runningPrc)
-	}, ms)
-	runningPrc._timeoutID = timeoutID
-	return setPark(runningPrc)
+export function sleep(ms: number): Promise<void> {
+
+	const runningPrc = csp.stackHead   as Prc
+
+	return new Promise(resolve => {
+
+		const timeoutID = setTimeout(function _sleepTimeOut() {
+
+			if (runningPrc._state !== "RUNNING") {
+				clearTimeout(timeoutID)
+				return
+			}
+
+			csp.stackHead = runningPrc
+			resolve()
+		}, ms)
+	})
 }
 
 
 /**
- * wait
+ * Wait for children procecesss to finish
  */
 export function wait(...prcS: Prc[]): Ch {
 
@@ -375,7 +300,7 @@ export function wait(...prcS: Prc[]): Ch {
 
 	if (prcS.length === 0) {
 
-		const { runningPrc } = csp
+		const { stackHead: runningPrc } = csp
 		const { _$childS } = runningPrc
 
 		if (_$childS === undefined) {
@@ -389,7 +314,7 @@ export function wait(...prcS: Prc[]): Ch {
 		doneChs = prcDoneChs
 	}
 	else {
-		doneChs = prcS.map(proc => proc.done)
+		doneChs = prcS.map(proc => proc._done)
 	}
 
 	go(function* _donePrc() {
@@ -435,7 +360,7 @@ export function race(...prcS: Prc[]): Ch {
 
 	let prcSDone: Array<Ch> = []   // eslint-disable-line prefer-const
 	for (const prc of prcS) {
-		prcSDone.push(prc.done)
+		prcSDone.push(prc._done)
 	}
 
 	for (const chan of prcSDone) {
@@ -445,7 +370,7 @@ export function race(...prcS: Prc[]): Ch {
 			const prcResult: unknown = yield chan
 
 			// remove the winner prc from prcS so that the remainning can be cancelled
-			prcS.splice(prcS.findIndex(prc => prc.done == chan), 1)
+			prcS.splice(prcS.findIndex(prc => prc._done == chan), 1)
 
 			go(function* () {
 				yield cancel(...prcS)
@@ -463,22 +388,12 @@ export function race(...prcS: Prc[]): Ch {
 
 /* === Types ====================================================== */
 
-export const YIELD = "RIBU_YIELD_VAL"
-export type YIELD_T = typeof YIELD
-
-export type YIELDABLE = YIELD_T | Ch<unknown> | Promise<unknown>
-
-export type Gen<Rec = unknown, Ret = void> =
-	Generator<YIELDABLE, Ret, Rec>
-
-type GenFn< _Ports extends Ports = Ports, Args extends unknown[] = unknown[]> =
-	(this: Prc & _Ports, ...args: Args) => Gen
-
 type PrcState = "RUNNING" | "CANCELLING" | "DONE"
-type ExecNext = "RESUME" | "PARK"
 
-type onCancelFn = (...args: unknown[]) => unknown
-type OnCancel = onCancelFn | GenFn
+type AsyncFn<Args extends unknown[] = unknown[]> =
+	(...args: Args) => Promise<unknown>
+
+type OnCancel = () => void | AsyncFn
 
 type Ports = {
 	[K: string]: Ch<unknown>
