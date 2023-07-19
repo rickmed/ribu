@@ -201,7 +201,7 @@ function onCancelWithDeadline(onCancelProm: Prom, deadline: number) {
 
 async function runChildSCancelAndOnCancel(childsCancelProm: Prom<unknown>, deadline: number, onCancelProm: Prom) {
 	const _onCancelProm = onCancelWithDeadline(onCancelProm, deadline)
-	await Promise.allSettled([_onCancelProm, childsCancelProm])
+	return Promise.allSettled([_onCancelProm, childsCancelProm])
 }
 
 
