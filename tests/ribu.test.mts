@@ -7,7 +7,7 @@ import { promSleep } from "./utils.mjs"
 
 topic("channels", () => {
 
-   it("can send/receive on channels", async () => {
+   it.only("can send/receive on channels", async () => {
 
       let rec = ""
 
@@ -30,7 +30,7 @@ topic("channels", () => {
 
 topic("process cancellation", () => {
 
-   it.only("ribu automatically cancels child if parent does not wait to be done", async () => {
+   it("ribu automatically cancels child if parent does not wait to be done", async () => {
 
       let mutated = false
 
