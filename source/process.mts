@@ -31,6 +31,8 @@ export class Prc {
 
 	_done = ch()
 
+	_concurrentCancelPromResolvers?: Array<(x: void) => void> = undefined
+
 	constructor(parentPrc: Prc | undefined) {
 
 		if (parentPrc) {
@@ -58,60 +60,58 @@ export class Prc {
 		return this
 	}
 
-	cancel() {
+	async cancel(): Promise<void> {
 
 		const state = this._state
-		const { _done: done } = this
 
 		if (state === "DONE") {
-			/* @todo: when state === DONE (late .cancel() callers)
-				when I implement done -> results/errs, the results/errs must be kept inside cache
-				and be returned here for late proc.done callers
-			*/
-			return done
+			return
 		}
 
 		if (state === "CANCELLING") {
-			/* @todo: concurrent .cancel() calls:
-				need to return some ch to caller that when cancel protocol is done it will notify
-			*/
-			return done
+			let resolve
+			const prom = new Promise<void>(res => resolve = res)
+
+			const {_concurrentCancelPromResolvers} = this
+			if (_concurrentCancelPromResolvers === undefined) {
+				this._concurrentCancelPromResolvers = []
+			}
+
+			this._concurrentCancelPromResolvers   !.push(resolve   !)
+			return prom
 		}
 
 		this._state = "CANCELLING"
-		this._gen?.return()
-		csp.scheduledPrcS.delete(this)
-		ifSleepTimeoutClear(this)
 
-		const { _$childS, _onCancel: onCancel } = this
+		const { _$childS, _onCancel } = this
 
 		if (_$childS === undefined) {
 
-			if (onCancel === undefined) {
-				nilParentRefAndMarkDONE(this)
-				return done
-			}
 
-			if (onCancel.constructor === Function) {
-				(onCancel as PrcResume)()
-				nilParentRefAndMarkDONE(this)
-				return done
+			if (_onCancel) {
+				const res = _onCancel()
+				if (isProm(res)) {
+					await onCancelWithDeadline(res  as Prom, this._deadline)
+				}
 			}
-
-			return $onCancel(this)
+			finalCleanup(this)
 		}
 		else { /* has _$childS */
 
-			if (onCancel === undefined) {
-				return cancelChildSAndFinish(this)
+			if (_onCancel === undefined) {
+				await cancelChildS(_$childS)
+				return
 			}
 
-			if (onCancel.constructor === Function) {
-				(onCancel as PrcResume)()
-				return cancelChildSAndFinish(this)
-			}
+			const res = _onCancel()
 
-			return runChildSCancelAndOnCancel(this)
+			if (isProm(res)) {
+				await runChildSCancelAndOnCancel(cancelChildS(_$childS), this._deadline, res   as Prom)
+			}
+			else {
+				await cancelChildS(_$childS)
+			}
+			finalCleanup(this)
 		}
 	}
 
@@ -126,87 +126,82 @@ export class Prc {
 	}
 }
 
-function* finishNormalDone(prc: Prc) {
+async function finishNormalDone(prc: Prc) {
 
-	prc._state = "DONE"
+	const { _$childS } = prc
 
-	const { _done: done, _$childS } = prc
-
-	// No need to put a deadline on auto canceling any active children because,
-	// at instantiation, they have a shorter/equal deadline than this prc.
-	// So just need for them to finish cancelling themselves
-	if (_$childS && _$childS.size > 0) {
-		yield go(cancelChildS, prc)._done
+	/**
+	 * No need to put a deadline on auto canceling any active children because,
+	 * at instantiation, they have a shorter/equal deadline than this prc.
+	 * So just need for them to finish cancelling themselves
+	 */
+	if (_$childS) {
+		await cancelChildS(_$childS)
+		prc._$childS = undefined
 	}
 
-	prc._parentPrc = undefined
-	yield done.put()
+	finalCleanup(prc)
+	resolveConcuCallers(prc)
 }
 
-function* cancelChildS(prc: Prc) {
-	const $childS = prc._$childS    as Set<Prc>
+function resolveConcuCallers(prc: Prc) {
+	const {_concurrentCancelPromResolvers} = prc
+	if (_concurrentCancelPromResolvers) {
+		for (const resolve of _concurrentCancelPromResolvers) {
+			resolve()
+		}
+	}
+}
 
-	let cancelChs = []  // eslint-disable-line prefer-const
+function cancelChildS($childS: Set<Prc>) {
+	let cancelProms = []  // eslint-disable-line prefer-const
 	for (const prc of $childS) {
-		cancelChs.push(prc.cancel())
+		cancelProms.push(prc.cancel())
 	}
-	yield all(...cancelChs)
-	prc._$childS = undefined
+	return Promise.allSettled(cancelProms)
 }
 
-function nilParentRefAndMarkDONE(prc: Prc) {
+function finalCleanup(prc: Prc) {
 	prc._state = "DONE"
-	prc._parentPrc = undefined
+	if (prc._parentPrc) {
+		prc._parentPrc._$childS?.delete(prc)
+		prc._parentPrc = undefined
+	}
 }
 
-function $onCancel(prc: Prc) {
+// @todo: this function needs to be re-implemented when throw based cancellation
+// is implemented. Right now, program will not end if there are pending
+// callbacks inside promises inside onCancel()
+function onCancelWithDeadline(onCancelProm: Prom, deadline: number) {
 
-	const done = ch()
+	let resolve
+	const doneProm = new Promise<void>(res => resolve = res)
+	let timeout
+	let deadlineWon = false
 
-	const $onCancel = go(function* $onCancel() {
-		yield go(prc._onCancel as GenFn)._done
-		// need to cancel $deadline because I won the race
-		yield $deadline.cancel()
-		nilParentRefAndMarkDONE(prc)
-		yield done.put()
-	})
+	;(async function $onCancel() {
+		await onCancelProm
+		if (deadlineWon) return
+		clearTimeout(timeout)
+		resolve!()
+	})()
 
-	const $deadline = go(function* _deadline() {
-		yield sleep(prc._deadline)
-		hardCancel($onCancel)
-		yield done.put()
-	})
+	;(async function _deadline() {
+		await new Promise<void>(res => {
+			timeout = setTimeout(() => {
+				res()
+			}, deadline)
+		})
+		deadlineWon = true
+		resolve!()
+	})()
 
-	return done
+	return doneProm
 }
 
-function hardCancel(prc: Prc) {
-	prc._state = "DONE"
-	ifSleepTimeoutClear(prc)
-	prc._gen?.return()
-	prc._parentPrc = undefined
-	prc._$childS = undefined
-}
-
-function cancelChildSAndFinish(prc: Prc) {
-	const { _done: done } = prc
-
-	go(function* cancelChildSAndFinish() {
-		yield go(cancelChildS, prc)._done
-		yield done.put()
-	})
-
-	return done
-}
-
-function runChildSCancelAndOnCancel(prc: Prc) {
-
-	go(function* _handleChildSAndOnCancel() {
-		yield all(go(cancelChildS, prc)._done, $onCancel(prc))
-		yield prc._done.put()
-	})
-
-	return prc._done
+async function runChildSCancelAndOnCancel(childsCancelProm: Prom<unknown>, deadline: number, onCancelProm: Prom) {
+	const _onCancelProm = onCancelWithDeadline(onCancelProm, deadline)
+	await Promise.allSettled([_onCancelProm, childsCancelProm])
 }
 
 
@@ -220,29 +215,27 @@ export function go<Args extends unknown[]>(
 
 	const {stackHead, stackTail} = csp
 
-	const newPrc = new Prc(stackHead)
-	newPrc._fnName = asyncFn.name
+	const pcr = new Prc(stackHead)
+	pcr._fnName = asyncFn.name
 
 	if (stackHead) {
 		stackTail.push(stackHead)
 	}
 
-	csp.stackHead = newPrc
+	csp.stackHead = pcr
 
 	const prom = asyncFn(...genFnArgs)    as ReturnType<typeof asyncFn>
 
 	prom.then(
-		res => {
-
+		() => {
+			finishNormalDone(pcr)
 		},
-		rej => {
-
-		}
+		//@todo: implement errors
 	)
 
 	csp.stackHead = stackTail.pop()
 
-	return newPrc
+	return pcr
 }
 
 
@@ -250,11 +243,11 @@ export function go<Args extends unknown[]>(
  * A way to create a new Prc which sets it up as a child of last called go()
  * so the parent can child.cancel() and thus onCancel is ran.
  */
-export function Cancellable(onCancel: OnCancel) {
-	const prc = new Prc()
-	prc._onCancel = onCancel
-	return prc
-}
+// export function Cancellable(onCancel: OnCancel) {
+// 	const prc = new Prc()
+// 	prc._onCancel = onCancel
+// 	return prc
+// }
 
 
 export function onCancel(onCancel: OnCancel): void {
@@ -329,21 +322,9 @@ export function wait(...prcS: Prc[]): Ch {
 /**
  * Cancel several processes in parallel
  */
-export function cancel(...prcS: Prc[]): Ch {
+export function cancel(...prcS: Prc[]): Prom<unknown> {
 	const procCancelChanS = prcS.map(p => p.cancel())
-	return all(...procCancelChanS)
-}
-
-
-/**
- * Convert a sync function to async
- */
-export function doAsync(fn: () => void, done = ch()): Ch {
-	go(function* _doAsync() {
-		fn()
-		yield done.put()
-	})
-	return done
+	return Promise.allSettled(procCancelChanS)
 }
 
 
@@ -391,12 +372,27 @@ export function race(...prcS: Prc[]): Ch {
 type PrcState = "RUNNING" | "CANCELLING" | "DONE"
 
 type AsyncFn<Args extends unknown[] = unknown[]> =
-	(...args: Args) => Promise<unknown>
+	(...args: Args) => Prom<unknown>
 
-type OnCancel = () => void | AsyncFn
+type OnCancel =
+	(() => unknown) | (() => Prom<unknown>)
+
+type Prom<T = void> = Promise<T>
+
 
 type Ports = {
 	[K: string]: Ch<unknown>
 }
 
 type WithCancel<Ports> = Ports & Pick<Prc, "cancel">
+
+
+
+/* === Helpers ====================================================== */
+
+function isProm(x: unknown): boolean {
+	if (x && typeof x === "object" && "then" in x && typeof x.then === "function") {
+		return true
+	}
+	return false
+}

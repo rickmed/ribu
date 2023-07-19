@@ -5,7 +5,6 @@ import { go, ch, sleep, wait, race } from "../source/index.mjs"
 import { promSleep } from "./utils.mjs"
 
 
-
 topic("channels", () => {
 
    it("can send/receive on channels", async () => {
@@ -25,6 +24,29 @@ topic("channels", () => {
 
       await promSleep(0)
       check(rec).with("hi")
+   })
+})
+
+
+topic("process cancellation", () => {
+
+   it.only("ribu automatically cancels child if parent does not wait to be done", async () => {
+
+      let mutated = false
+
+      go(async function main() {
+
+         go(async function sleeper() {
+            await sleep(2)
+            mutated = true
+         })
+
+         await sleep(0)
+      })
+
+      await promSleep(0)
+
+      check(mutated).with(false)
    })
 })
 
@@ -79,29 +101,7 @@ topic.skip("test prc stack", () => {
 })
 
 
-topic.skip("process cancellation", () => {
 
-   it("ribu automatically cancels child if parent does not wait to be done", async () => {
-
-      let mutated = false
-
-      go(async function main() {
-
-         go(async function sleeper() {
-            await sleep(3)
-            //  if main terminates, sleep's sleep must be cancelled
-            //  so need to wrap main() so that I know when it's finished/cancelled
-            mutated = true
-         })
-
-         await sleep(1)
-      })
-
-      await promSleep(2)
-
-      check(mutated).with(false)
-   })
-})
 
 
 
