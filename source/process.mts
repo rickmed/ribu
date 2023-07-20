@@ -49,6 +49,13 @@ export class Prc {
 		}
 	}
 
+	resumeAsyncFromChan<V = void>(msg?: V) {
+		queueMicrotask(() => {
+			csp.runningPrc = this
+			this._promResolve!(msg)
+		})
+	}
+
 	deadline(ms: number) {
 
 		const { _parentPrc } = this

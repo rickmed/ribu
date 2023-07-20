@@ -81,12 +81,13 @@ topic("unbuffered channels", () => {
    })
 })
 
+
 topic("buffered channels", () => {
 
    it("works when putter arrives first and implicit receive", async () => {
 
-      let rec: number[] = []
-      let runs: string[] = []
+      let rec: number[] = []  // eslint-disable-line prefer-const
+      let procsOpsOrder: string[] = []  // eslint-disable-line prefer-const
 
       go(async function main() {
 
@@ -94,25 +95,25 @@ topic("buffered channels", () => {
 
          go(async function child() {
             await ch1.put(1)
-            runs.push("child")
+            procsOpsOrder.push("child")
             await ch1.put(1)
-            runs.push("child")
+            procsOpsOrder.push("child")
             await ch1.put(1)  // blocked here
-            runs.push("child")
+            procsOpsOrder.push("child")
          })
 
          rec.push(await ch1)
-         runs.push("main")
+         procsOpsOrder.push("main")
          await sleep(1)
          rec.push(await ch1)
-         runs.push("main")
+         procsOpsOrder.push("main")
          rec.push(await ch1)
-         runs.push("main")
+         procsOpsOrder.push("main")
       })
 
       await promSleep(5)
       check(rec).with([1, 1, 1])
-      check(runs).with(["child", "child", "main", "child", "main", "main"])
+      check(procsOpsOrder).with(["child", "child", "main", "child", "main", "main"])
    })
 })
 
