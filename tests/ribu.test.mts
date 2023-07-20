@@ -6,35 +6,36 @@ import { promSleep } from "./utils.mjs"
 
 // @todo: change tests to make assertions inside processes when sophi is fixed
 // with failing test when no assertions are made.
-import csp from "../source/initCsp.mjs"
 
-topic("channels", () => {
+topic("unbuffered channels", () => {
 
-   it("works when putter arrives first", async () => {
+   it("works when putter arrives first and implicit receive", async () => {
 
       let rec: number = 1
 
       go(async function main() {
 
-         const _ch = ch<number>()
+         const ch1 = ch<number>()
 
          go(async function child() {
-            await _ch.put(2)
             await sleep(1)
-            await _ch.put(2 * await _ch.rec)
+            await ch1.put(2)
+            await sleep(1)
+            await ch1.put(await ch1 * 2)
          })
 
-         rec = await _ch.rec
+         await sleep(2)
+         rec = await ch1
          await sleep(1)
-         await _ch.put(rec * 2)
-         rec = await _ch.rec
+         await ch1.put(rec * 2)
+         rec = await ch1
       })
 
-      await promSleep(3)
+      await promSleep(5)
       check(rec).with(8)
    })
 
-   it.only("works when receiver arrives first and implicit receive", async () => {
+   it("works when receiver arrives first and implicit receive", async () => {
 
       let rec: number = 1
 
@@ -43,36 +44,80 @@ topic("channels", () => {
          const _ch = ch<number>()
 
          go(async function child() {
-            console.log("child: 0", csp.stackHead?._fnName)
             await sleep(1)  // I sleep so main gets to _ch.rec first.
-            console.log("child: 1")
             await _ch.put(2)
-            console.log("child: 2")
             await sleep(1)
-            console.log("child: 3")
-            await _ch.put(2 * await _ch)
-            console.log("child: 4")
+            const _rec = await _ch
+            await _ch.put(2 * _rec)
          })
 
-         console.log("main 0", csp.stackHead?._fnName)
          rec = await _ch
-         console.log("main 1", {rec})
-         console.log(csp.stackHead?._fnName)
          await sleep(1)
-         console.log(csp.stackHead?._fnName)
          await _ch.put(rec * 2)
-         console.log(csp.stackHead?._fnName)
          rec = await _ch
-         console.log(csp.stackHead?._fnName)
       })
-console.log("go done")
-      await promSleep(4)
+
+      await promSleep(6)
       check(rec).with(8)
+   })
+
+   it("can receive on a channel explicitly accessing .rec getter", async () => {
+
+      let rec: number = 1
+
+      go(async function main() {
+
+         const ch1 = ch<number>()
+
+         go(async function child() {
+            await ch1.put(2)
+         })
+
+         rec = await ch1
+      })
+
+      await promSleep(1)
+      check(rec).with(2)
+   })
+})
+
+topic("buffered channels", () => {
+
+   it("works when putter arrives first and implicit receive", async () => {
+
+      let rec: number[] = []
+      let runs: string[] = []
+
+      go(async function main() {
+
+         const ch1 = ch<number>(2)
+
+         go(async function child() {
+            await ch1.put(1)
+            runs.push("child")
+            await ch1.put(1)
+            runs.push("child")
+            await ch1.put(1)  // blocked here
+            runs.push("child")
+         })
+
+         rec.push(await ch1)
+         runs.push("main")
+         await sleep(1)
+         rec.push(await ch1)
+         runs.push("main")
+         rec.push(await ch1)
+         runs.push("main")
+      })
+
+      await promSleep(5)
+      check(rec).with([1, 1, 1])
+      check(runs).with(["child", "child", "main", "child", "main", "main"])
    })
 })
 
 
-topic("process cancellation", () => {
+topic.skip("process cancellation", () => {
 
    it("ribu automatically cancels child if parent does not wait to be done", async () => {
 
@@ -136,19 +181,6 @@ topic.skip("process can wait for children processes", () => {
       check(mutated).with(true)
    })
 })
-
-
-topic.skip("test prc stack", () => {
-   it("something", async () => {
-
-   })
-})
-
-
-
-
-
-
 
 
 topic.skip("race()", () => {

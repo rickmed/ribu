@@ -1,5 +1,6 @@
 import { go, type Prc } from "./process.mjs"
 import csp from "./initCsp.mjs"
+import { type Csp } from "./Csp.mjs"
 
 
 export function ch<V = undefined>(capacity = 0): Ch<V> {
@@ -17,26 +18,26 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 	get rec(): Promise<V> {
 
-		const runningPrc = csp.stackHead
+		const { runningPrc } = csp
 
 		if (!runningPrc) {
 			throw new Error(`ribu: can't receive outside a process`)
 		}
 
-		let resolveReceiver: (v: V) => void
+		let resolveReceiver: PromResolve<V>
 		const prom = new Promise<V>(res => resolveReceiver = res)
-		prom.then
 
-		const { _waitingPutters } = this
+		if (runningPrc._state !== "RUNNING") {
+			return prom
+		}
 
-		if (_waitingPutters.isEmpty) {
+		const putterPrc = this._waitingPutters.pull()
+
+		if (!putterPrc) {
 			runningPrc._promResolve<V> = resolveReceiver!
 			this._waitingReceivers.push(runningPrc)
 			return prom
 		}
-
-		/* _waitingPutter is NOT Empty - so cast ok */
-		const putterPrc = _waitingPutters.pull()!
 
 		/*	How the thing below works:
 			prom.then(continuation) is called by means of await at the receiver
@@ -47,16 +48,10 @@ class Chan<V> extends BaseChan implements Ch<V> {
 		*/
 		queueMicrotask(() => {
 
-			csp.stackHead = runningPrc
+			csp.runningPrc = runningPrc
 			resolveReceiver(putterPrc._chanPutMsg as V)
 
-			const {_state: putterState, _promResolve: resolvePutter} = putterPrc
-			if (putterState === "RUNNING") {
-				queueMicrotask(() => {
-					csp.stackHead = putterPrc
-					resolvePutter!(undefined)
-				})
-			}
+			resolvePrc(csp, putterPrc)
 		})
 
 		return prom
@@ -64,13 +59,13 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 	put(msg?: V): Promise<void> {
 
-		const runningPrc = csp.stackHead
+		const { runningPrc } = csp
 
 		if (!runningPrc) {
 			throw new Error(`ribu: can't put outside a process`)
 		}
 
-		let resolvePutter: () => void
+		let resolvePutter: PromResolve
 		const prom = new Promise<void>(res => resolvePutter = res)
 
 		const { _waitingReceivers } = this
@@ -86,45 +81,18 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 		queueMicrotask(() => {
 
-			csp.stackHead = runningPrc
+			csp.runningPrc = runningPrc
 			resolvePutter()
 
-			const {_state: receiverState, _promResolve: resolveReceiver} = receiverPrc
-			if (receiverState === "RUNNING") {
-				queueMicrotask(() => {
-					csp.stackHead = receiverPrc
-					resolveReceiver!(msg)
-				})
-			}
+			resolvePrc(csp, receiverPrc, msg)
 		})
 
 		return prom
 	}
 
-	then(onRes: (v: V) => void) {
-		console.log("thenn", csp.stackHead?._fnName)
-		const vallll = this.rec
-		console.log({vallll})
-		return onRes(vallll)
-		// return val
-		// return this.rec.then(x => onRes(x))
-
-		/*
-			await will immediately call Ch.then(continuation)
-				continuation is saved internally, but not scheduled since prom isn't resolved
-				how can i resolve it???
-
-			take(ch) returns a prom
-
-		*/
-
-
+	then(onRes: (v: V) => V) {
+		return this.rec.then(onRes)
 	}
-
-	// then(onRes, onRej) {
-	// 	// await will immediately then() and save onRes and onRej to be called later
-	// 		// supposedly when the promise is resolved. how?
-	// }
 }
 
 
@@ -140,95 +108,108 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 		this.isFull = buffer.isFull
 	}
 
-	put(msg?: V): Promise<void> {
-
-		const runningPrc = csp.stackHead
-
-		if (!runningPrc) {
-			throw new Error(`ribu: can't put outside a process`)
-		}
-
-		return new Promise<void>(resolvePutter => {
-
-			const buffer = this.#buffer
-
-			if (buffer.isFull) {
-				runningPrc._promResolve<void> = resolvePutter
-				runningPrc._chanPutMsg = msg
-				this._waitingPutters.push(runningPrc)
-				return
-			}
-
-			const { _waitingReceivers } = this
-
-			buffer.push(msg)
-			csp.stackHead = runningPrc
-			resolvePutter(undefined)
-
-			if (_waitingReceivers.isEmpty) {
-				return
-			}
-
-			/* _waitingReceivers is NOT Empty - so cast ok */
-			const receiverPrc = _waitingReceivers.pull()!
-
-			if (receiverPrc._state === "RUNNING") {
-				const resolveReceiver = receiverPrc._promResolve!
-				csp.stackHead = receiverPrc
-				resolveReceiver(msg)
-			}
-		})
-	}
-
 	get rec(): Promise<V> {
 
-		const runningPrc = csp.stackHead
+		const { runningPrc } = csp
 
 		if (!runningPrc) {
 			throw new Error(`ribu: can't receive outside a process`)
 		}
 
-		return new Promise<V>(resolveReceiver => {
+		let resolveReceiver: PromResolve<V>
+		const prom = new Promise<V>(res => resolveReceiver = res)
 
-			const buffer = this.#buffer
+		const msg = this.#buffer.pull()
 
-			if (buffer.isEmpty) {
-				runningPrc._promResolve<V> = resolveReceiver
-				this._waitingReceivers.push(runningPrc)
-				return
-			}
+		if (!msg) {
+			runningPrc._promResolve<V> = resolveReceiver!
+			this._waitingReceivers.push(runningPrc)
+			return prom
+		}
 
-			const { _waitingPutters } = this
+		queueMicrotask(() => {
 
-			/* buffer is NOT Empty - so cast ok */
-			const msg = buffer.pull()!
-			csp.stackHead = runningPrc
+			csp.runningPrc = runningPrc
 			resolveReceiver(msg)
 
-			if (_waitingPutters.isEmpty) {
+			const putterPrc = this._waitingPutters.pull()
+			if (!putterPrc) {
 				return
 			}
+			resolvePrc(csp, putterPrc)
+		})
 
-			/* _waitingPutters is NOT Empty - so cast ok */
-			const putterPrc = _waitingPutters.pull()!
+		return prom
+	}
 
-			if (putterPrc._state === "RUNNING") {
-				const resolvePutter = putterPrc._promResolve!
-				csp.stackHead = putterPrc
-				resolvePutter(undefined)
+	put(msg?: V): Promise<void> {
+
+		const { runningPrc } = csp
+
+		if (!runningPrc) {
+			throw new Error(`ribu: can't put outside a process`)
+		}
+
+		let resolvePutter: PromResolve
+		const prom = new Promise<void>(res => resolvePutter = res)
+
+		const buffer = this.#buffer
+		if (buffer.isFull) {
+			runningPrc._promResolve<void> = resolvePutter!
+			this._waitingPutters.push(runningPrc)
+			return prom
+		}
+
+		buffer.push(msg)
+
+		queueMicrotask(() => {
+
+			csp.runningPrc = runningPrc
+			resolvePutter()
+
+			const receiverPrc = this._waitingReceivers.pull()
+			if (!receiverPrc) {
+				return
 			}
+			resolvePrc(csp, receiverPrc, msg)
+		})
+
+		return prom
+	}
+
+	then(onRes: (v: V) => V) {
+		return this.rec.then(onRes)
+	}
+}
+
+
+// Chan helpers
+
+function resolvePrc(csp: Csp, prc: Prc, msg?: unknown): void {
+	const { _state: putterState, _promResolve: resolvePutter } = prc
+	if (putterState === "RUNNING") {
+		queueMicrotask(() => {
+			csp.runningPrc = prc
+			resolvePutter!(msg)
 		})
 	}
 }
 
 
+// Chan Types
+
 export type Ch<V = undefined> = {
 	get rec(): Promise<V>,
 	put(msg: V): Promise<void>,
 	put(...msg: V extends undefined ? [] : [V]): Promise<void>,
-	then(onRes: (v: V) => void): Promise<V>
+	then(onRes: (v: V) => V): Promise<V>
 }
 
+type PromResolve<V = void> = (value: V) => void
+
+
+
+/* === Queue class ====================================================== */
 
 /**
  * @todo rewrite to specialized data structure (ring buffer, LL...)
@@ -259,6 +240,9 @@ class Queue<V> {
 }
 
 
+
+
+/* === Public helpers ====================================================== */
 
 export function all(...chanS: Ch[]): Ch {
 

@@ -3,13 +3,6 @@ import csp from "./initCsp.mjs"
 import { ch, type Ch } from "./channel.mjs"
 
 
-/* Promises:
-	go(): just a way to track asyncFns for cancellation/bubble-error
-
-*/
-
-
-
 /* === Prc class ====================================================== */
 
 export class Prc {
@@ -18,7 +11,7 @@ export class Prc {
 	_state: PrcState = "RUNNING"
 
 	/** The two below are used by channel operations */
-	_promResolve?: <ChV>(msg: ChV) => void
+	_promResolve?: PromResolve
 	_chanPutMsg: unknown = -11  // special init value to be easily identifiable
 
 	/** Set by user with pubic api onCancel()  */
@@ -36,12 +29,8 @@ export class Prc {
 	/** Where the result value of the prc is put */
 	_done = ch()
 
-	/**
-	 * Set by sleep(), ch.put(), ch.rec to clean their internally set timeouts
-	 * or promise resolvers.
-	 * Called in this.cancel()
-	 */
-	_onAbort?: () => unknown
+	/** Set by sleep(). Disposed if/at this.cancel() */
+	_timeoutID?: NodeJS.Timeout
 
 	/** Used if/when concurrent this.cancel() calls are made */
 	_cancelPromResolvers?: Array<(x: void) => void> = undefined
@@ -96,10 +85,10 @@ export class Prc {
 
 		this._state = "CANCELLING"
 
-		const { _$childS, _onCancel, _onAbort } = this
+		const { _$childS, _onCancel, _timeoutID } = this
 
-		if (_onAbort) {
-			_onAbort()
+		if (_timeoutID) {
+			clearTimeout(_timeoutID)
 		}
 
 		if (_$childS === undefined) {
@@ -226,18 +215,32 @@ async function runChildSCancelAndOnCancel(childsCancelProm: Prom<unknown>, deadl
 
 export function go<Args extends unknown[]>(fn: AsyncFn<Args>, ...fnArgs: Args): Prc {
 
-	const { stackHead, stackTail } = csp
+	const { runningPrc, stackTail } = csp
 
-	const pcr = new Prc(stackHead)
+	const pcr = new Prc(runningPrc)
 	pcr._fnName = fn.name
 
-	if (stackHead) {
-		stackTail.push(stackHead)
+	if (runningPrc) {
+		stackTail.push(runningPrc)
 	}
 
-	csp.stackHead = pcr
+	csp.runningPrc = pcr
 
 	const prom = fn(...fnArgs) as ReturnType<typeof fn>
+
+	/**
+	 * To solve the problem of implicit chan receive as first asyncFn operation:
+	 * .then() on the ch object is called asynchronously by means of await, so
+	 * chan rec getter has no chance to get a reference to a runningPrc.
+	 * So go() sets this microTask so that in case that an implicit receive is
+	 * the first asyncFn operation, ch.then() and ch.rec inside it
+	 * can get the reference.
+	 * The other ribu async operations get their runningPrc references
+	 * synchronously, so this has no effect on them.
+	 */
+	queueMicrotask(() => {
+		csp.runningPrc = pcr
+	})
 
 	prom.then(
 		() => {
@@ -246,7 +249,7 @@ export function go<Args extends unknown[]>(fn: AsyncFn<Args>, ...fnArgs: Args): 
 		//@todo: implement errors
 	)
 
-	csp.stackHead = stackTail.pop()
+	csp.runningPrc = stackTail.pop()
 
 	return pcr
 }
@@ -264,7 +267,7 @@ export function go<Args extends unknown[]>(fn: AsyncFn<Args>, ...fnArgs: Args): 
 
 
 export function onCancel(onCancel: OnCancel): void {
-	const runningPrc = csp.stackHead
+	const runningPrc = csp.runningPrc
 	if (!runningPrc) {
 		throw new Error(`ribu: can't call onCancel outside a process`)
 	}
@@ -277,19 +280,19 @@ export function onCancel(onCancel: OnCancel): void {
 
 export function sleep(ms: number): Promise<void> {
 
-	const runningPrc = csp.stackHead as Prc
+	const runningPrc = csp.runningPrc as Prc
 
 	let resolveSleep: (v: void) => void
 	const prom = new Promise<void>(res => resolveSleep = res)
 
 	const timeoutID = setTimeout(function _sleepTimeOut() {
 		queueMicrotask(() => {
-			csp.stackHead = runningPrc
+			csp.runningPrc = runningPrc
 			resolveSleep()
 		})
 	}, ms)
 
-	runningPrc._onAbort = () => clearTimeout(timeoutID)
+	runningPrc._timeoutID = timeoutID
 
 	return prom
 }
@@ -306,7 +309,7 @@ export function wait(...prcS: Prc[]): Ch {
 
 	if (prcS.length === 0) {
 
-		const { stackHead: runningPrc } = csp
+		const { runningPrc: runningPrc } = csp
 		const { _$childS } = runningPrc
 
 		if (_$childS === undefined) {
@@ -390,7 +393,9 @@ type AsyncFn<Args extends unknown[] = unknown[]> =
 type OnCancel =
 	(() => unknown) | (() => Prom<unknown>)
 
-type Prom<T = void> = Promise<T>
+type Prom<V = void> = Promise<V>
+
+type PromResolve = <V = void>(value: V) => void
 
 
 type Ports = {
