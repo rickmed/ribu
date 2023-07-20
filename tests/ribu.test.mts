@@ -4,26 +4,70 @@ import { topic, it, check } from "sophi"
 import { go, ch, sleep, wait, race } from "../source/index.mjs"
 import { promSleep } from "./utils.mjs"
 
+// @todo: change tests to make assertions inside processes when sophi is fixed
+// with failing test when no assertions are made.
+import csp from "../source/initCsp.mjs"
 
 topic("channels", () => {
 
-   it("can send/receive on channels", async () => {
+   it("works when putter arrives first", async () => {
 
-      let rec = ""
+      let rec: number = 1
 
       go(async function main() {
 
-         const ch1 = ch<string>()
+         const _ch = ch<number>()
 
          go(async function child() {
-            await ch1.put("hi")
+            await _ch.put(2)
+            await sleep(1)
+            await _ch.put(2 * await _ch.rec)
          })
 
-         rec = await ch1.rec
-         check(rec).with("hi")
+         rec = await _ch.rec
+         await sleep(1)
+         await _ch.put(rec * 2)
+         rec = await _ch.rec
       })
 
-      await promSleep(0)
+      await promSleep(3)
+      check(rec).with(8)
+   })
+
+   it.only("works when receiver arrives first and implicit receive", async () => {
+
+      let rec: number = 1
+
+      go(async function main() {
+
+         const _ch = ch<number>()
+
+         go(async function child() {
+            console.log("child: 0", csp.stackHead?._fnName)
+            await sleep(1)  // I sleep so main gets to _ch.rec first.
+            console.log("child: 1")
+            await _ch.put(2)
+            console.log("child: 2")
+            await sleep(1)
+            console.log("child: 3")
+            await _ch.put(2 * await _ch)
+            console.log("child: 4")
+         })
+
+         console.log("main 0", csp.stackHead?._fnName)
+         rec = await _ch
+         console.log("main 1", {rec})
+         console.log(csp.stackHead?._fnName)
+         await sleep(1)
+         console.log(csp.stackHead?._fnName)
+         await _ch.put(rec * 2)
+         console.log(csp.stackHead?._fnName)
+         rec = await _ch
+         console.log(csp.stackHead?._fnName)
+      })
+console.log("go done")
+      await promSleep(4)
+      check(rec).with(8)
    })
 })
 

@@ -25,6 +25,7 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 		let resolveReceiver: (v: V) => void
 		const prom = new Promise<V>(res => resolveReceiver = res)
+		prom.then
 
 		const { _waitingPutters } = this
 
@@ -38,10 +39,10 @@ class Chan<V> extends BaseChan implements Ch<V> {
 		const putterPrc = _waitingPutters.pull()!
 
 		/*	How the thing below works:
-			prom.then() is called by means of await at the receiver asyncFn but no
-			continuation is scheduled bc promise the is not resolved(). So it
-			gives me a chance to setup csp.stackHead before the continuation is
-			scheduled (and ran immediately async).
+			prom.then(continuation) is called by means of await at the receiver
+			asyncFn but no continuation is scheduled bc the promise is not
+			resolved() yet. So it gives me a chance to setup csp.stackHead before
+			the continuation is scheduled with resolve() (and ran immediately async).
 			The same thing is done next for the putter asyncFn part, in order.
 		*/
 		queueMicrotask(() => {
@@ -81,7 +82,6 @@ class Chan<V> extends BaseChan implements Ch<V> {
 			return prom
 		}
 
-		/* _waitingReceivers is NOT Empty - so cast ok */
 		const receiverPrc = _waitingReceivers.pull()!
 
 		queueMicrotask(() => {
@@ -93,20 +93,38 @@ class Chan<V> extends BaseChan implements Ch<V> {
 			if (receiverState === "RUNNING") {
 				queueMicrotask(() => {
 					csp.stackHead = receiverPrc
-					resolveReceiver!(undefined)
+					resolveReceiver!(msg)
 				})
 			}
 		})
 
 		return prom
 	}
-}
+
+	then(onRes: (v: V) => void) {
+		console.log("thenn", csp.stackHead?._fnName)
+		const vallll = this.rec
+		console.log({vallll})
+		return onRes(vallll)
+		// return val
+		// return this.rec.then(x => onRes(x))
+
+		/*
+			await will immediately call Ch.then(continuation)
+				continuation is saved internally, but not scheduled since prom isn't resolved
+				how can i resolve it???
+
+			take(ch) returns a prom
+
+		*/
 
 
-export type Ch<V = undefined> = {
-	put(msg: V): Promise<void>,
-	put(...msg: V extends undefined ? [] : [V]): Promise<void>,
-	get rec(): Promise<V>,
+	}
+
+	// then(onRes, onRej) {
+	// 	// await will immediately then() and save onRes and onRej to be called later
+	// 		// supposedly when the promise is resolved. how?
+	// }
 }
 
 
@@ -201,6 +219,14 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 			}
 		})
 	}
+}
+
+
+export type Ch<V = undefined> = {
+	get rec(): Promise<V>,
+	put(msg: V): Promise<void>,
+	put(...msg: V extends undefined ? [] : [V]): Promise<void>,
+	then(onRes: (v: V) => void): Promise<V>
 }
 
 
