@@ -14,24 +14,37 @@ import { ch, type Ch } from "./channel.mjs"
 
 export class Prc {
 
-	/** undefined when instantiated in Cancellable  */
-	_fn?: AsyncFn = undefined
 	_fnName: string = ""
-
 	_state: PrcState = "RUNNING"
+
+	/** The two below are used by channel operations */
 	_promResolve?: <ChV>(msg: ChV) => void
 	_chanPutMsg: unknown = -11  // special init value to be easily identifiable
+
+	/** Set by user with pubic api onCancel()  */
 	_onCancel?: OnCancel = undefined
+
+	/** Set in this.deadline() */
 	_deadline: number = csp.defaultDeadline
 
 	/** For bubbling errors up (undefined for root prcS) */
 	_parentPrc?: Prc = undefined
+
 	/** For auto cancel child Procs */
 	_$childS?: Set<Prc> = undefined
 
+	/** Where the result value of the prc is put */
 	_done = ch()
 
-	_concurrentCancelPromResolvers?: Array<(x: void) => void> = undefined
+	/**
+	 * Set by sleep(), ch.put(), ch.rec to clean their internally set timeouts
+	 * or promise resolvers.
+	 * Called in this.cancel()
+	 */
+	_onAbort?: () => unknown
+
+	/** Used if/when concurrent this.cancel() calls are made */
+	_cancelPromResolvers?: Array<(x: void) => void> = undefined
 
 	constructor(parentPrc: Prc | undefined) {
 
@@ -72,26 +85,29 @@ export class Prc {
 			let resolve
 			const prom = new Promise<void>(res => resolve = res)
 
-			const {_concurrentCancelPromResolvers} = this
+			const { _cancelPromResolvers: _concurrentCancelPromResolvers } = this
 			if (_concurrentCancelPromResolvers === undefined) {
-				this._concurrentCancelPromResolvers = []
+				this._cancelPromResolvers = []
 			}
 
-			this._concurrentCancelPromResolvers   !.push(resolve   !)
+			this._cancelPromResolvers!.push(resolve!)
 			return prom
 		}
 
 		this._state = "CANCELLING"
 
-		const { _$childS, _onCancel } = this
+		const { _$childS, _onCancel, _onAbort } = this
+
+		if (_onAbort) {
+			_onAbort()
+		}
 
 		if (_$childS === undefined) {
-
 
 			if (_onCancel) {
 				const res = _onCancel()
 				if (isProm(res)) {
-					await onCancelWithDeadline(res  as Prom, this._deadline)
+					await onCancelWithDeadline(res as Prom, this._deadline)
 				}
 			}
 			finalCleanup(this)
@@ -106,7 +122,7 @@ export class Prc {
 			const res = _onCancel()
 
 			if (isProm(res)) {
-				await runChildSCancelAndOnCancel(cancelChildS(_$childS), this._deadline, res   as Prom)
+				await runChildSCancelAndOnCancel(cancelChildS(_$childS), this._deadline, res as Prom)
 			}
 			else {
 				await cancelChildS(_$childS)
@@ -116,7 +132,7 @@ export class Prc {
 	}
 
 	ports<_P extends Ports>(ports: _P) {
-		const _ports = ports   as WithCancel<_P>
+		const _ports = ports as WithCancel<_P>
 		_ports.cancel = this.cancel.bind(this)
 		return _ports
 	}
@@ -145,7 +161,7 @@ async function finishNormalDone(prc: Prc) {
 }
 
 function resolveConcuCallers(prc: Prc) {
-	const {_concurrentCancelPromResolvers} = prc
+	const { _cancelPromResolvers: _concurrentCancelPromResolvers } = prc
 	if (_concurrentCancelPromResolvers) {
 		for (const resolve of _concurrentCancelPromResolvers) {
 			resolve()
@@ -169,8 +185,8 @@ function finalCleanup(prc: Prc) {
 	}
 }
 
-// @todo: this function needs to be re-implemented when throw based cancellation
-// is implemented. Right now, program will not end if there are pending
+// @todo: this function needs to be re-implemented when cancellation
+// is implemented correctly. Right now, program will not end if there are pending
 // callbacks inside promises inside onCancel()
 function onCancelWithDeadline(onCancelProm: Prom, deadline: number) {
 
@@ -179,22 +195,22 @@ function onCancelWithDeadline(onCancelProm: Prom, deadline: number) {
 	let timeout
 	let deadlineWon = false
 
-	;(async function $onCancel() {
-		await onCancelProm
-		if (deadlineWon) return
-		clearTimeout(timeout)
-		resolve!()
-	})()
+		; (async function $onCancel() {
+			await onCancelProm
+			if (deadlineWon) return
+			clearTimeout(timeout)
+			resolve!()
+		})()
 
-	;(async function _deadline() {
-		await new Promise<void>(res => {
-			timeout = setTimeout(() => {
-				res()
-			}, deadline)
-		})
-		deadlineWon = true
-		resolve!()
-	})()
+		; (async function _deadline() {
+			await new Promise<void>(res => {
+				timeout = setTimeout(() => {
+					res()
+				}, deadline)
+			})
+			deadlineWon = true
+			resolve!()
+		})()
 
 	return doneProm
 }
@@ -208,15 +224,12 @@ async function runChildSCancelAndOnCancel(childsCancelProm: Prom<unknown>, deadl
 
 /* === Prc constructor ====================================================== */
 
-export function go<Args extends unknown[]>(
-	asyncFn: AsyncFn<Args>,
-	...genFnArgs: Args
-): Prc {
+export function go<Args extends unknown[]>(fn: AsyncFn<Args>, ...fnArgs: Args): Prc {
 
-	const {stackHead, stackTail} = csp
+	const { stackHead, stackTail } = csp
 
 	const pcr = new Prc(stackHead)
-	pcr._fnName = asyncFn.name
+	pcr._fnName = fn.name
 
 	if (stackHead) {
 		stackTail.push(stackHead)
@@ -224,7 +237,7 @@ export function go<Args extends unknown[]>(
 
 	csp.stackHead = pcr
 
-	const prom = asyncFn(...genFnArgs)    as ReturnType<typeof asyncFn>
+	const prom = fn(...fnArgs) as ReturnType<typeof fn>
 
 	prom.then(
 		() => {
@@ -264,21 +277,21 @@ export function onCancel(onCancel: OnCancel): void {
 
 export function sleep(ms: number): Promise<void> {
 
-	const runningPrc = csp.stackHead   as Prc
+	const runningPrc = csp.stackHead as Prc
 
-	return new Promise(resolve => {
+	let resolveSleep: (v: void) => void
+	const prom = new Promise<void>(res => resolveSleep = res)
 
-		const timeoutID = setTimeout(function _sleepTimeOut() {
-
-			if (runningPrc._state !== "RUNNING") {
-				clearTimeout(timeoutID)
-				return
-			}
-
+	const timeoutID = setTimeout(function _sleepTimeOut() {
+		queueMicrotask(() => {
 			csp.stackHead = runningPrc
-			resolve()
-		}, ms)
-	})
+			resolveSleep()
+		})
+	}, ms)
+
+	runningPrc._onAbort = () => clearTimeout(timeoutID)
+
+	return prom
 }
 
 

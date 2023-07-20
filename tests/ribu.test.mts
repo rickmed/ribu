@@ -7,7 +7,7 @@ import { promSleep } from "./utils.mjs"
 
 topic("channels", () => {
 
-   it.only("can send/receive on channels", async () => {
+   it("can send/receive on channels", async () => {
 
       let rec = ""
 
@@ -20,10 +20,10 @@ topic("channels", () => {
          })
 
          rec = await ch1.rec
+         check(rec).with("hi")
       })
 
       await promSleep(0)
-      check(rec).with("hi")
    })
 })
 

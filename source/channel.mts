@@ -9,44 +9,11 @@ export function ch<V = undefined>(capacity = 0): Ch<V> {
 
 
 class BaseChan {
-	protected _waitingSenders = new Queue<Prc>()
+	protected _waitingPutters = new Queue<Prc>()
 	protected _waitingReceivers = new Queue<Prc>()
 }
 
 class Chan<V> extends BaseChan implements Ch<V> {
-
-	put(msg?: V): Promise<void> {
-
-		const runningPrc = csp.stackHead
-
-		if (!runningPrc) {
-			throw new Error(`ribu: can't put outside a process`)
-		}
-
-		return new Promise<void>(resolveSender => {
-
-			const { _waitingReceivers } = this
-
-			if (_waitingReceivers.isEmpty) {
-				runningPrc._promResolve<void> = resolveSender
-				runningPrc._chanPutMsg = msg
-				this._waitingSenders.push(runningPrc)
-				return
-			}
-
-			/* _waitingReceivers is NOT Empty - so cast ok */
-			const receiverPrc = _waitingReceivers.pull()    !
-
-			if (receiverPrc._state === "RUNNING") {
-				const resolveReceiver = receiverPrc._promResolve    !
-				csp.stackHead = receiverPrc
-				resolveReceiver(msg)
-			}
-
-			csp.stackHead = runningPrc
-			resolveSender(undefined)
-		})
-	}
 
 	get rec(): Promise<V> {
 
@@ -56,29 +23,82 @@ class Chan<V> extends BaseChan implements Ch<V> {
 			throw new Error(`ribu: can't receive outside a process`)
 		}
 
-		return new Promise<V>(resolveReceiver => {
+		let resolveReceiver: (v: V) => void
+		const prom = new Promise<V>(res => resolveReceiver = res)
 
-			const { _waitingSenders } = this
+		const { _waitingPutters } = this
 
-			if (_waitingSenders.isEmpty) {
-				runningPrc._promResolve<V> = resolveReceiver
-				this._waitingReceivers.push(runningPrc)
-				return
-			}
+		if (_waitingPutters.isEmpty) {
+			runningPrc._promResolve<V> = resolveReceiver!
+			this._waitingReceivers.push(runningPrc)
+			return prom
+		}
 
-			/* _waitingSenders is NOT Empty - so cast ok */
-			const senderPrc = _waitingSenders.pull()    !
+		/* _waitingPutter is NOT Empty - so cast ok */
+		const putterPrc = _waitingPutters.pull()!
 
-			if (senderPrc._state === "RUNNING") {
-				const resolveSender = senderPrc._promResolve    !
-				csp.stackHead = senderPrc
-				resolveSender(undefined)
-			}
+		/*	How the thing below works:
+			prom.then() is called by means of await at the receiver asyncFn but no
+			continuation is scheduled bc promise the is not resolved(). So it
+			gives me a chance to setup csp.stackHead before the continuation is
+			scheduled (and ran immediately async).
+			The same thing is done next for the putter asyncFn part, in order.
+		*/
+		queueMicrotask(() => {
 
 			csp.stackHead = runningPrc
-			const msg = senderPrc._chanPutMsg    as V
-			resolveReceiver(msg)
+			resolveReceiver(putterPrc._chanPutMsg as V)
+
+			const {_state: putterState, _promResolve: resolvePutter} = putterPrc
+			if (putterState === "RUNNING") {
+				queueMicrotask(() => {
+					csp.stackHead = putterPrc
+					resolvePutter!(undefined)
+				})
+			}
 		})
+
+		return prom
+	}
+
+	put(msg?: V): Promise<void> {
+
+		const runningPrc = csp.stackHead
+
+		if (!runningPrc) {
+			throw new Error(`ribu: can't put outside a process`)
+		}
+
+		let resolvePutter: () => void
+		const prom = new Promise<void>(res => resolvePutter = res)
+
+		const { _waitingReceivers } = this
+
+		if (_waitingReceivers.isEmpty) {
+			runningPrc._promResolve<void> = resolvePutter!
+			runningPrc._chanPutMsg = msg
+			this._waitingPutters.push(runningPrc)
+			return prom
+		}
+
+		/* _waitingReceivers is NOT Empty - so cast ok */
+		const receiverPrc = _waitingReceivers.pull()!
+
+		queueMicrotask(() => {
+
+			csp.stackHead = runningPrc
+			resolvePutter()
+
+			const {_state: receiverState, _promResolve: resolveReceiver} = receiverPrc
+			if (receiverState === "RUNNING") {
+				queueMicrotask(() => {
+					csp.stackHead = receiverPrc
+					resolveReceiver!(undefined)
+				})
+			}
+		})
+
+		return prom
 	}
 }
 
@@ -90,7 +110,7 @@ export type Ch<V = undefined> = {
 }
 
 
-class BufferedChan<V> extends BaseChan  implements Ch<V> {
+class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 	#buffer: Queue<V>
 	isFull: boolean
@@ -110,14 +130,14 @@ class BufferedChan<V> extends BaseChan  implements Ch<V> {
 			throw new Error(`ribu: can't put outside a process`)
 		}
 
-		return new Promise<void>(resolveSender => {
+		return new Promise<void>(resolvePutter => {
 
 			const buffer = this.#buffer
 
 			if (buffer.isFull) {
-				runningPrc._promResolve<void> = resolveSender
+				runningPrc._promResolve<void> = resolvePutter
 				runningPrc._chanPutMsg = msg
-				this._waitingSenders.push(runningPrc)
+				this._waitingPutters.push(runningPrc)
 				return
 			}
 
@@ -125,17 +145,17 @@ class BufferedChan<V> extends BaseChan  implements Ch<V> {
 
 			buffer.push(msg)
 			csp.stackHead = runningPrc
-			resolveSender(undefined)
+			resolvePutter(undefined)
 
 			if (_waitingReceivers.isEmpty) {
 				return
 			}
 
 			/* _waitingReceivers is NOT Empty - so cast ok */
-			const receiverPrc = _waitingReceivers.pull()    !
+			const receiverPrc = _waitingReceivers.pull()!
 
 			if (receiverPrc._state === "RUNNING") {
-				const resolveReceiver = receiverPrc._promResolve    !
+				const resolveReceiver = receiverPrc._promResolve!
 				csp.stackHead = receiverPrc
 				resolveReceiver(msg)
 			}
@@ -160,24 +180,24 @@ class BufferedChan<V> extends BaseChan  implements Ch<V> {
 				return
 			}
 
-			const { _waitingSenders } = this
+			const { _waitingPutters } = this
 
 			/* buffer is NOT Empty - so cast ok */
-			const msg = buffer.pull()    !
+			const msg = buffer.pull()!
 			csp.stackHead = runningPrc
 			resolveReceiver(msg)
 
-			if (_waitingSenders.isEmpty) {
+			if (_waitingPutters.isEmpty) {
 				return
 			}
 
-			/* _waitingSenders is NOT Empty - so cast ok */
-			const senderPrc = _waitingSenders.pull()    !
+			/* _waitingPutters is NOT Empty - so cast ok */
+			const putterPrc = _waitingPutters.pull()!
 
-			if (senderPrc._state === "RUNNING") {
-				const resolveSender = senderPrc._promResolve    !
-				csp.stackHead = senderPrc
-				resolveSender(undefined)
+			if (putterPrc._state === "RUNNING") {
+				const resolvePutter = putterPrc._promResolve!
+				csp.stackHead = putterPrc
+				resolvePutter(undefined)
 			}
 		})
 	}
