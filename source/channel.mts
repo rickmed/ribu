@@ -46,7 +46,7 @@ class Chan<V> extends BaseChan implements Ch<V> {
 			queueMicrotask(() => {
 				csp.runningPrc = receiverPrc
 				resolveReceiver(putterPrc._chanPutMsg as V)
-				putterPrc.resumeAsyncFromChan()
+				resolveAsync(putterPrc)
 			})
 
 		})
@@ -54,29 +54,29 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 	put(msg?: V): Promise<void> {
 
-		const { runningPrc } = csp
+		const putterPrc = csp.runningPrc
 
-		assertPrc(runningPrc)
+		assertPrc(putterPrc)
 
-		if (runningPrc._state !== "RUNNING") {
+		if (putterPrc._state !== "RUNNING") {
 			return neverProm()
 		}
 
 		return new Promise(resolvePutter => {
 
-			const { _waitingReceivers } = this
+			const receiverPrc = this._waitingReceivers.pull()
 
-			if (_waitingReceivers.isEmpty) {
-				runningPrc._promResolve<void> = resolvePutter
-				runningPrc._chanPutMsg = msg
-				this._waitingPutters.push(runningPrc)
+			if (!receiverPrc) {
+				putterPrc._promResolve<void> = resolvePutter
+				putterPrc._chanPutMsg = msg
+				this._waitingPutters.push(putterPrc)
 				return
 			}
 
 			queueMicrotask(() => {
-				csp.runningPrc = runningPrc
+				csp.runningPrc = putterPrc
 				resolvePutter()
-				_waitingReceivers.pull()!.resumeAsyncFromChan<V>(msg)
+				resolveAsync<V>(receiverPrc, msg)
 			})
 		})
 	}
@@ -101,11 +101,11 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 	get rec(): Promise<V> {
 
-		const { runningPrc } = csp
+		const receiverPrc = csp.runningPrc
 
-		assertPrc(runningPrc)
+		assertPrc(receiverPrc)
 
-		if (runningPrc._state !== "RUNNING") {
+		if (receiverPrc._state !== "RUNNING") {
 			return neverProm<V>()
 		}
 
@@ -113,16 +113,19 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 			const msg = this.#buffer.pull()
 
-			if (!msg) {
-				runningPrc._promResolve<V> = resolveReceiver
-				this._waitingReceivers.push(runningPrc)
+			if (!msg) {  // buffer is empty
+				receiverPrc._promResolve<V> = resolveReceiver
+				this._waitingReceivers.push(receiverPrc)
 				return
 			}
 
 			queueMicrotask(() => {
-				csp.runningPrc = runningPrc
+				csp.runningPrc = receiverPrc
 				resolveReceiver(msg)
-				this._waitingPutters.pull()?.resumeAsyncFromChan<V>()
+				const putterPrc = this._waitingPutters.pull()
+				if (putterPrc) {
+					resolveAsync<V>(putterPrc)
+				}
 			})
 
 		})
@@ -130,11 +133,11 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 	put(msg?: V): Promise<void> {
 
-		const { runningPrc } = csp
+		const putterPrc = csp.runningPrc
 
-		assertPrc(runningPrc)
+		assertPrc(putterPrc)
 
-		if (runningPrc._state !== "RUNNING") {
+		if (putterPrc._state !== "RUNNING") {
 			return neverProm()
 		}
 
@@ -142,17 +145,22 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 			const buffer = this.#buffer
 			if (buffer.isFull) {
-				runningPrc._promResolve<void> = resolvePutter
-				this._waitingPutters.push(runningPrc)
+				putterPrc._promResolve<void> = resolvePutter
+				this._waitingPutters.push(putterPrc)
 				return
 			}
 
-			buffer.push(msg)
-
 			queueMicrotask(() => {
-				csp.runningPrc = runningPrc
+				csp.runningPrc = putterPrc
 				resolvePutter()
-				this._waitingReceivers.pull()?.resumeAsyncFromChan<V>(msg)
+				
+				const receiverPrc = this._waitingReceivers.pull()
+				if (receiverPrc) {
+					resolveAsync<V>(receiverPrc, msg)
+				}
+				else {
+					buffer.push(msg)
+				}
 			})
 
 		})
@@ -163,19 +171,23 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 	}
 }
 
-
-/** a Promise that never resolves */
-function neverProm<V = void>() {
-	return new Promise<V>(() => {})
-}
-
 function assertPrc(runningPrc: Prc | undefined): asserts runningPrc {
 	if (!runningPrc) {
 		throw new Error(`ribu: can't receive outside a process`)
 	}
 }
 
+/** a Promise that never resolves */
+function neverProm<V = void>() {
+	return new Promise<V>(() => {})
+}
 
+function resolveAsync<V = void>(prc: Prc, msg?: V) {
+	queueMicrotask(() => {
+		csp.runningPrc = prc
+		prc._promResolve!(msg)
+	})
+}
 
 /* === Types ====================================================== */
 

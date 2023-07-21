@@ -3,6 +3,12 @@ import csp from "./initCsp.mjs"
 import { ch, type Ch } from "./channel.mjs"
 
 
+/**
+ * No need to put a deadline on auto canceling any active children because,
+ * at instantiation, they have a shorter/equal deadline than this prc.
+ * So just need for them to finish cancelling themselves
+ */
+
 /* === Prc class ====================================================== */
 
 export class Prc {
@@ -49,14 +55,17 @@ export class Prc {
 		}
 	}
 
-	resumeAsyncFromChan<V = void>(msg?: V) {
-		queueMicrotask(() => {
-			csp.runningPrc = this
-			this._promResolve!(msg)
-		})
+	get done(): Ch {
+		return this._done
 	}
 
-	deadline(ms: number) {
+	ports<_P extends Ports>(ports: _P) {
+		const _ports = ports as WithCancel<_P>
+		_ports.cancel = this.cancel.bind(this)
+		return _ports
+	}
+
+	setCancelDeadline(ms: number): this {
 
 		const { _parentPrc } = this
 
@@ -78,91 +87,83 @@ export class Prc {
 		}
 
 		if (state === "CANCELLING") {
-			let resolve
-			const prom = new Promise<void>(res => resolve = res)
 
-			const { _cancelPromResolvers: _concurrentCancelPromResolvers } = this
-			if (_concurrentCancelPromResolvers === undefined) {
-				this._cancelPromResolvers = []
-			}
+			return new Promise<void>(resolve => {
 
-			this._cancelPromResolvers!.push(resolve!)
-			return prom
+				if (this._cancelPromResolvers === undefined) {
+					this._cancelPromResolvers = []
+				}
+
+				this._cancelPromResolvers.push(resolve)
+			})
+
 		}
 
 		this._state = "CANCELLING"
 
-		const { _$childS, _onCancel, _timeoutID } = this
+		const { _timeoutID, _$childS, _onCancel } = this
 
 		if (_timeoutID) {
 			clearTimeout(_timeoutID)
 		}
 
-		if (_$childS === undefined) {
-
-			if (_onCancel) {
-				const res = _onCancel()
-				if (isProm(res)) {
-					await onCancelWithDeadline(res as Prom, this._deadline)
-				}
-			}
-			finalCleanup(this)
+		if (!_$childS && !_onCancel) {
+			// goes to this.#finalCleanup() below
 		}
-		else { /* has _$childS */
 
-			if (_onCancel === undefined) {
-				await cancelChildS(_$childS)
-				return
-			}
-
-			const res = _onCancel()
-
-			if (isProm(res)) {
-				await runChildSCancelAndOnCancel(cancelChildS(_$childS), this._deadline, res as Prom)
-			}
-			else {
-				await cancelChildS(_$childS)
-			}
-			finalCleanup(this)
+		else if (!_$childS && isRegFn(_onCancel)) {
+			_onCancel()
 		}
+
+		else if (!_$childS && isAsyncFn(_onCancel)) {
+			await this.#onCancel()
+		}
+
+		else if (_$childS && !_onCancel) {
+			await cancelChildS(_$childS)
+		}
+
+		else if (_$childS && isRegFn(_onCancel)) {
+			_onCancel(); await cancelChildS(_$childS)
+		}
+
+		else {  /* _$child && isAsyncFn(_onCancel) */
+			await Promise.allSettled([this.#onCancel(), cancelChildS(_$childS!)])
+		}
+
+		finalCleanup(this)
+		resolveConcuCallers(this)
 	}
 
-	ports<_P extends Ports>(ports: _P) {
-		const _ports = ports as WithCancel<_P>
-		_ports.cancel = this.cancel.bind(this)
-		return _ports
-	}
+	#onCancel(): Ch {
 
-	get done() {
-		return this._done.rec
+		const done = ch()
+
+		const $onCancel = go(async () => {
+			await go(this._onCancel as AsyncFn).done
+			hardCancel($deadline)
+			await done.put()
+		})
+
+		const $deadline = go(async () => {
+			await sleep(this._deadline)
+			hardCancel($onCancel)
+			await done.put()
+		})
+
+		return done
 	}
 }
 
-async function finishNormalDone(prc: Prc) {
+async function finishNormalDone(prc: Prc): Promise<void> {
 
 	const { _$childS } = prc
 
-	/**
-	 * No need to put a deadline on auto canceling any active children because,
-	 * at instantiation, they have a shorter/equal deadline than this prc.
-	 * So just need for them to finish cancelling themselves
-	 */
 	if (_$childS) {
 		await cancelChildS(_$childS)
-		prc._$childS = undefined
 	}
 
 	finalCleanup(prc)
-	resolveConcuCallers(prc)
-}
-
-function resolveConcuCallers(prc: Prc) {
-	const { _cancelPromResolvers: _concurrentCancelPromResolvers } = prc
-	if (_concurrentCancelPromResolvers) {
-		for (const resolve of _concurrentCancelPromResolvers) {
-			resolve()
-		}
-	}
 }
 
 function cancelChildS($childS: Set<Prc>) {
@@ -175,52 +176,42 @@ function cancelChildS($childS: Set<Prc>) {
 
 function finalCleanup(prc: Prc) {
 	prc._state = "DONE"
-	if (prc._parentPrc) {
-		prc._parentPrc._$childS?.delete(prc)
+	prc._$childS = undefined
+	const { _parentPrc } = prc
+	if (_parentPrc) {
+		_parentPrc._$childS?.delete(prc)
 		prc._parentPrc = undefined
 	}
 }
 
-// @todo: this function needs to be re-implemented when cancellation
-// is implemented correctly. Right now, program will not end if there are pending
-// callbacks inside promises inside onCancel()
-function onCancelWithDeadline(onCancelProm: Prom, deadline: number) {
-
-	let resolve
-	const doneProm = new Promise<void>(res => resolve = res)
-	let timeout
-	let deadlineWon = false
-
-		; (async function $onCancel() {
-			await onCancelProm
-			if (deadlineWon) return
-			clearTimeout(timeout)
-			resolve!()
-		})()
-
-		; (async function _deadline() {
-			await new Promise<void>(res => {
-				timeout = setTimeout(() => {
-					res()
-				}, deadline)
-			})
-			deadlineWon = true
-			resolve!()
-		})()
-
-	return doneProm
+function hardCancel(prc: Prc): void {
+	const { _timeoutID } = prc
+	if (_timeoutID) {
+		clearTimeout(_timeoutID)
+	}
+	finalCleanup(prc)
 }
 
-async function runChildSCancelAndOnCancel(childsCancelProm: Prom<unknown>, deadline: number, onCancelProm: Prom) {
-	const _onCancelProm = onCancelWithDeadline(onCancelProm, deadline)
-	return Promise.allSettled([_onCancelProm, childsCancelProm])
+function resolveConcuCallers(prc: Prc): void {
+	const { _cancelPromResolvers: _concurrentCancelPromResolvers } = prc
+	if (_concurrentCancelPromResolvers) {
+		for (const resolve of _concurrentCancelPromResolvers) {
+			resolve()
+		}
+	}
 }
 
+function isRegFn(fn?: OnCancel): fn is RegFn {
+	return fn?.constructor.name === "Function"
+}
 
+function isAsyncFn(fn?: OnCancel): fn is AsyncFn {
+	return fn?.constructor.name === "AsyncFunction"
+}
 
-/* === Prc constructor ====================================================== */
+/* === Prc constructors ====================================================== */
 
-export function go<Args extends unknown[]>(fn: AsyncFn<Args>, ...fnArgs: Args): Prc {
+export const go: Go = (fn, ...fnArgs) => {
 
 	const { runningPrc, stackTail } = csp
 
@@ -260,6 +251,7 @@ export function go<Args extends unknown[]>(fn: AsyncFn<Args>, ...fnArgs: Args): 
 
 	return pcr
 }
+
 
 
 /**
@@ -394,11 +386,15 @@ export function race(...prcS: Prc[]): Ch {
 
 type PrcState = "RUNNING" | "CANCELLING" | "DONE"
 
+type Go<Args extends unknown[] = unknown[]> = (fn: AsyncFn<Args>, ...fnArgs: Args) => Prc
+
 type AsyncFn<Args extends unknown[] = unknown[]> =
 	(...args: Args) => Prom<unknown>
 
-type OnCancel =
-	(() => unknown) | (() => Prom<unknown>)
+type RegFn<Args extends unknown[] = unknown[]> =
+	(...args: Args) => unknown
+
+type OnCancel = AsyncFn | RegFn
 
 type Prom<V = void> = Promise<V>
 
@@ -410,14 +406,3 @@ type Ports = {
 }
 
 type WithCancel<Ports> = Ports & Pick<Prc, "cancel">
-
-
-
-/* === Helpers ====================================================== */
-
-function isProm(x: unknown): boolean {
-	if (x && typeof x === "object" && "then" in x && typeof x.then === "function") {
-		return true
-	}
-	return false
-}

@@ -118,7 +118,7 @@ topic("buffered channels", () => {
 })
 
 
-topic.skip("process cancellation", () => {
+topic("process cancellation", () => {
 
    it("ribu automatically cancels child if parent does not wait to be done", async () => {
 
