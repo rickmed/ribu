@@ -18,9 +18,7 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 	get rec(): Promise<V> {
 
-		const receiverPrc = csp.runningPrc
-
-		assertPrc(receiverPrc)
+		const receiverPrc = getRunningPrc(`ribu: can't receive outside a process.`)
 
 		if (receiverPrc._state !== "RUNNING") {
 			return neverProm<V>()
@@ -54,9 +52,7 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 	put(msg?: V): Promise<void> {
 
-		const putterPrc = csp.runningPrc
-
-		assertPrc(putterPrc)
+		const putterPrc = getRunningPrc(`ribu: can't put outside a process.`)
 
 		if (putterPrc._state !== "RUNNING") {
 			return neverProm()
@@ -101,9 +97,7 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 	get rec(): Promise<V> {
 
-		const receiverPrc = csp.runningPrc
-
-		assertPrc(receiverPrc)
+		const receiverPrc = getRunningPrc(`ribu: can't receive outside a process.`)
 
 		if (receiverPrc._state !== "RUNNING") {
 			return neverProm<V>()
@@ -133,9 +127,7 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 	put(msg?: V): Promise<void> {
 
-		const putterPrc = csp.runningPrc
-
-		assertPrc(putterPrc)
+		const putterPrc = getRunningPrc(`ribu: can't put outside a process.`)
 
 		if (putterPrc._state !== "RUNNING") {
 			return neverProm()
@@ -153,7 +145,7 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 			queueMicrotask(() => {
 				csp.runningPrc = putterPrc
 				resolvePutter()
-				
+
 				const receiverPrc = this._waitingReceivers.pull()
 				if (receiverPrc) {
 					resolveAsync<V>(receiverPrc, msg)
@@ -171,10 +163,13 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 	}
 }
 
-function assertPrc(runningPrc: Prc | undefined): asserts runningPrc {
+
+export function getRunningPrc(onErrMsg: string): Prc {
+	const { runningPrc } = csp
 	if (!runningPrc) {
-		throw new Error(`ribu: can't receive outside a process`)
+		throw new Error(`${onErrMsg} Did you forget to wrap a native Promise?`)
 	}
+	return runningPrc
 }
 
 /** a Promise that never resolves */
@@ -188,6 +183,8 @@ function resolveAsync<V = void>(prc: Prc, msg?: V) {
 		prc._promResolve!(msg)
 	})
 }
+
+
 
 /* === Types ====================================================== */
 
@@ -223,11 +220,11 @@ class Queue<V> {
 
 	pull() {
 		// @todo: check if empty when using other data structures
-		return this.#array.pop()
+		return this.#array.pop()  // eslint-disable-line functional/immutable-data
 	}
 
 	push(x?: V) {
-		this.#array.unshift(x as V)
+		this.#array.unshift(x as V)  // eslint-disable-line functional/immutable-data
 	}
 }
 
@@ -243,19 +240,19 @@ export function all(...chanS: Ch[]): Ch {
 	const notifyDone = ch(chansL)
 
 	for (const chan of chanS) {
-		go(function* _all() {
-			yield chan
-			yield notifyDone.put()
+		go(async function _all() {
+			await chan
+			await notifyDone.put()
 		})
 	}
 
-	go(function* _collectDones() {
+	go(async function _collectDones() {
 		let nDone = 0
 		while (nDone < chansL) {
-			yield notifyDone
+			await notifyDone
 			nDone++
 		}
-		yield allDone.put()
+		await allDone.put()
 	})
 
 	return allDone

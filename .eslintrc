@@ -1,21 +1,30 @@
 {
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "sourceType": "module",
+    "project": "./tsconfig.json"
+  },
+  "plugins": [
+    "@typescript-eslint",
+    "functional"
+  ],
   "extends": [
     "eslint:recommended",
     "plugin:@typescript-eslint/recommended"
   ],
-  "parser": "@typescript-eslint/parser",
-  "plugins": ["@typescript-eslint"],
-  "env": {
-    "es2022": true,
-    "node": true
-  },
-  "parserOptions": {
-    "sourceType": "module"
-  },
   "rules": {
     "semi": ["error", "never"],
     "quotes": ["error", "double", { "allowTemplateLiterals": true }],
     "no-inner-declarations" : "off",
-		"no-console": ["error", { "allow": ["warn", "error"] }]
+		"no-console": "error",
+    "functional/immutable-data": ["error", {
+      "ignoreClasses": "fieldsOnly",
+      "ignoreNonConstDeclarations": true
+      }],
+    "prefer-const": "off"
+  },
+  "env": {
+    "es2022": true,
+    "node": true
   }
 }

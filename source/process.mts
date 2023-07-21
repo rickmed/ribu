@@ -1,6 +1,6 @@
 import { all } from "./index.mjs"
 import csp from "./initCsp.mjs"
-import { ch, type Ch } from "./channel.mjs"
+import { ch, getRunningPrc, type Ch } from "./channel.mjs"
 
 
 /**
@@ -18,7 +18,7 @@ export class Prc {
 
 	/** The two below are used by channel operations */
 	_promResolve?: PromResolve
-	_chanPutMsg: unknown = -11  // special init value to be easily identifiable
+	_chanPutMsg: unknown = 3  /** default val */
 
 	/** Set by user with pubic api onCancel()  */
 	_onCancel?: OnCancel = undefined
@@ -33,15 +33,17 @@ export class Prc {
 	_$childS?: Set<Prc> = undefined
 
 	/** Where the result value of the prc is put */
-	_done = ch()
+	readonly _done = ch()
 
 	/** Set by sleep(). Disposed if/at this.cancel() */
 	_timeoutID?: NodeJS.Timeout
 
 	/** Used if/when concurrent this.cancel() calls are made */
-	_cancelPromResolvers?: Array<(x: void) => void> = undefined
+	cancelPromResolvers?: Array<(x: void) => void> = undefined
 
-	constructor(parentPrc: Prc | undefined) {
+	constructor(parentPrc: Prc | undefined, fnName: string) {
+
+		this._fnName = fnName
 
 		if (parentPrc) {
 
@@ -60,7 +62,7 @@ export class Prc {
 	}
 
 	ports<_P extends Ports>(ports: _P) {
-		const _ports = ports as WithCancel<_P>
+		let _ports = ports as WithCancel<_P>
 		_ports.cancel = this.cancel.bind(this)
 		return _ports
 	}
@@ -90,11 +92,11 @@ export class Prc {
 
 			return new Promise<void>(resolve => {
 
-				if (this._cancelPromResolvers === undefined) {
-					this._cancelPromResolvers = []
+				if (this.cancelPromResolvers === undefined) {
+					this.cancelPromResolvers = []
 				}
 
-				this._cancelPromResolvers.push(resolve)
+				this.cancelPromResolvers.push(resolve)  // eslint-disable-line functional/immutable-data
 			})
 
 		}
@@ -167,9 +169,9 @@ async function finishNormalDone(prc: Prc): Promise<void> {
 }
 
 function cancelChildS($childS: Set<Prc>) {
-	let cancelProms = []  // eslint-disable-line prefer-const
+	let cancelProms = []
 	for (const prc of $childS) {
-		cancelProms.push(prc.cancel())
+		cancelProms.push(prc.cancel())  // eslint-disable-line functional/immutable-data
 	}
 	return Promise.allSettled(cancelProms)
 }
@@ -193,9 +195,9 @@ function hardCancel(prc: Prc): void {
 }
 
 function resolveConcuCallers(prc: Prc): void {
-	const { _cancelPromResolvers: _concurrentCancelPromResolvers } = prc
-	if (_concurrentCancelPromResolvers) {
-		for (const resolve of _concurrentCancelPromResolvers) {
+	const { cancelPromResolvers } = prc
+	if (cancelPromResolvers) {
+		for (const resolve of cancelPromResolvers) {
 			resolve()
 		}
 	}
@@ -215,8 +217,7 @@ export const go: Go = (fn, ...fnArgs) => {
 
 	const { runningPrc, stackTail } = csp
 
-	const pcr = new Prc(runningPrc)
-	pcr._fnName = fn.name
+	const pcr = new Prc(runningPrc, fn.name)
 
 	if (runningPrc) {
 		stackTail.push(runningPrc)
@@ -266,10 +267,7 @@ export const go: Go = (fn, ...fnArgs) => {
 
 
 export function onCancel(onCancel: OnCancel): void {
-	const runningPrc = csp.runningPrc
-	if (!runningPrc) {
-		throw new Error(`ribu: can't call onCancel outside a process`)
-	}
+	let runningPrc = getRunningPrc(`ribu: can't call onCancel outside a process`)
 	runningPrc._onCancel = onCancel
 }
 
@@ -279,22 +277,22 @@ export function onCancel(onCancel: OnCancel): void {
 
 export function sleep(ms: number): Promise<void> {
 
-	const runningPrc = csp.runningPrc as Prc
+	let runningPrc = getRunningPrc(`ribu: can't use sleep() outside a process`)
 
-	let resolveSleep: (v: void) => void
-	const prom = new Promise<void>(res => resolveSleep = res)
+	return new Promise<void>(resolveSleep => {
 
-	const timeoutID = setTimeout(function _sleepTimeOut() {
-		queueMicrotask(() => {
-			csp.runningPrc = runningPrc
-			resolveSleep()
-		})
-	}, ms)
+		const timeoutID = setTimeout(function _sleepTimeOut() {
+			queueMicrotask(() => {
+				csp.runningPrc = runningPrc
+				resolveSleep()
+			})
+		}, ms)
 
-	runningPrc._timeoutID = timeoutID
+		runningPrc._timeoutID = timeoutID  // eslint-disable-line functional/immutable-data
 
-	return prom
+	})
 }
+
 
 
 /**
@@ -308,16 +306,16 @@ export function wait(...prcS: Prc[]): Ch {
 
 	if (prcS.length === 0) {
 
-		const { runningPrc: runningPrc } = csp
+		const runningPrc = getRunningPrc(`ribu: can't use sleep() outside a process`)
 		const { _$childS } = runningPrc
 
 		if (_$childS === undefined) {
 			return allDone
 		}
 
-		const prcDoneChs = []
+		let prcDoneChs: Array<Ch> = []
 		for (const prc of _$childS) {
-			prcDoneChs.push(prc.done)
+			prcDoneChs.push(prc.done)  // eslint-disable-line functional/immutable-data
 		}
 		doneChs = prcDoneChs
 	}
@@ -325,9 +323,9 @@ export function wait(...prcS: Prc[]): Ch {
 		doneChs = prcS.map(proc => proc._done)
 	}
 
-	go(function* _donePrc() {
-		yield all(...doneChs)
-		yield allDone.put()
+	go(async function _donePrc() {
+		await all(...doneChs)
+		await allDone.put()
 	})
 
 	return allDone
@@ -350,29 +348,22 @@ export function cancel(...prcS: Prc[]): Prom<unknown> {
  * if the race winner finishes with errors, it is ignored.
  * The rest (unfinished) are cancelled.
  */
-export function race(...prcS: Prc[]): Ch {
+export function race(...prcS: Prc[]): Ch<unknown> {
 
 	const done = ch<unknown>()
 
 	let prcSDone: Array<Ch> = []   // eslint-disable-line prefer-const
 	for (const prc of prcS) {
-		prcSDone.push(prc._done)
+		prcSDone.push(prc._done)  // eslint-disable-line functional/immutable-data
 	}
 
 	for (const chan of prcSDone) {
 
-		go(function* _race() {
-
-			const prcResult: unknown = yield chan
-
-			// remove the winner prc from prcS so that the remainning can be cancelled
-			prcS.splice(prcS.findIndex(prc => prc._done == chan), 1)
-
-			go(function* () {
-				yield cancel(...prcS)
-			})
-
-			yield done.put(prcResult)
+		go(async function _race() {
+			const winnerPrcRes: unknown = await chan
+			// the winnerPrc cancel the rest.
+			await cancel(...prcS.filter(prc => prc._done != chan))
+			await done.put(winnerPrcRes)
 		})
 
 	}

@@ -86,8 +86,8 @@ topic("buffered channels", () => {
 
    it("works when putter arrives first and implicit receive", async () => {
 
-      let rec: number[] = []  // eslint-disable-line prefer-const
-      let procsOpsOrder: string[] = []  // eslint-disable-line prefer-const
+      let rec: Array<number> = []  // eslint-disable-line prefer-const
+      let procsOpsOrder: Array<string> = []  // eslint-disable-line prefer-const
 
       go(async function main() {
 
@@ -147,14 +147,14 @@ topic.skip("process can wait for children processes", () => {
 
       let mutated = false
 
-      go(function* main() {
+      go(async function main() {
 
-         const child = go(function* sleeper() {
-            yield sleep(1)
+         const child = go(async function sleeper() {
+            await sleep(1)
             mutated = true
          })
 
-         yield wait(child)
+         await wait(child)
       })
 
       await promSleep(2)
@@ -167,14 +167,14 @@ topic.skip("process can wait for children processes", () => {
 
       let mutated = false
 
-      go(function* main() {
+      go(async function main() {
 
-         go(function* sleeper() {
-            yield sleep(1)
+         go(async function sleeper() {
+            await sleep(1)
             mutated = true
          })
 
-         yield wait()
+         await wait()
       })
 
       await promSleep(2)
@@ -190,23 +190,22 @@ topic.skip("race()", () => {
 
       let won = ""
 
-      go(function* main() {
+      go(async () => {
 
-         function* one() {
-            yield sleep(2)
+         async function one() {
+            await sleep(2)
             won = "one"
          }
 
-         function* two() {
-            yield sleep(1)
+         async function two() {
+            await sleep(1)
             won = "two"
          }
 
-         yield race(go(one), go(two))
+         await race(go(one), go(two))
       })
 
       await promSleep(3)
-
       check(won).with("two")
    })
 
