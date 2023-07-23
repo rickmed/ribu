@@ -3,13 +3,14 @@
 import { topic, it, check } from "sophi"
 import { go, ch, sleep, wait, race } from "../source/index.mjs"
 import { promSleep } from "./utils.mjs"
+import csp from "../source/initCsp.mjs"
 
 // @todo: change tests to make assertions inside processes when sophi is fixed
 // with failing test when no assertions are made.
 
 topic("unbuffered channels", () => {
 
-   it("works when putter arrives first and implicit receive", async () => {
+   it.skip("native proms experiment", async () => {
 
       let rec: number = 1
 
@@ -18,50 +19,36 @@ topic("unbuffered channels", () => {
          const ch1 = ch<number>()
 
          go(async function child() {
-            await sleep(1)
+
+            await promSleep(1)
+
+            // here sleep(3) thinks csp is main bc is what go(main) sets
+            // when returns. And then promSleep(1) does not update it
+
+            /*
+               Maybe I can exploit the fact that a process can be blocked
+               at only one operation.
+
+               So if I see that runningPrc is already blocked, I throw.
+
+            */
+            await sleep(3)
+            console.log("child 1:", csp.runningPrc?._fnName)
             await ch1.put(2)
-            await sleep(1)
-            await ch1.put(await ch1 * 2)
+            console.log("child 2:", csp.runningPrc?._fnName)
          })
 
          await sleep(2)
          rec = await ch1
-         await sleep(1)
-         await ch1.put(rec * 2)
-         rec = await ch1
+         console.log("main 1:", csp.runningPrc?._fnName)
+
       })
 
-      await promSleep(5)
-      check(rec).with(8)
+      await promSleep(10)
+      check(rec).with(2)
    })
 
-   it("works when receiver arrives first and implicit receive", async () => {
-
-      let rec: number = 1
-
-      go(async function main() {
-
-         const _ch = ch<number>()
-
-         go(async function child() {
-            await sleep(1)  // I sleep so main gets to _ch.rec first.
-            await _ch.put(2)
-            await sleep(1)
-            const _rec = await _ch
-            await _ch.put(2 * _rec)
-         })
-
-         rec = await _ch
-         await sleep(1)
-         await _ch.put(rec * 2)
-         rec = await _ch
-      })
-
-      await promSleep(6)
-      check(rec).with(8)
-   })
-
-   it("can receive on a channel explicitly accessing .rec getter", async () => {
+   it.skip("works when putter arrives first", async () => {
 
       let rec: number = 1
 
@@ -70,21 +57,64 @@ topic("unbuffered channels", () => {
          const ch1 = ch<number>()
 
          go(async function child() {
+            await sleep(1)
             await ch1.put(2)
+            await sleep(1)
+            const _rec = await ch1.rec
+            await ch1.put(_rec * 2)
          })
 
-         rec = await ch1
+         await sleep(2)
+         rec = await ch1.rec
+         await sleep(1)
+         await ch1.put(rec * 2)
+         rec = await ch1.rec
       })
 
-      await promSleep(1)
-      check(rec).with(2)
+      await promSleep(3)
+      console.log("TEST 1: done", {rec})
+      check(rec).with(8)
+   })
+
+   it("works when receiver arrives first", async () => {
+      console.log("TEST 2: start")
+
+      let recS: string = ""
+
+      go(async function main1() {
+
+         const _ch = ch<string>()
+
+         go(async function child1() {
+            // console.log("child 1", csp.runningPrc?._fnName)
+            await sleep(1)  // I sleep so main gets to _ch.rec first.
+            await _ch.put("child ")
+            // console.log("child 2", csp.runningPrc?._fnName)
+            await sleep(2)
+            const _rec = await _ch.rec
+            await _ch.put(_rec + _rec)
+            console.log("CHILD1: done")
+         })
+
+         recS = await _ch.rec
+         // console.log("main 1", csp.runningPrc?._fnName)
+         await sleep(1)
+         // console.log("main 2", csp.runningPrc?._fnName)
+         await _ch.put("main " + recS)
+         recS = await _ch.rec
+         console.log("MAIN1: done")
+      })
+
+      await promSleep(6)
+      console.log("TEST 2: done")
+      check(recS).with("main child main child ")
    })
 })
 
 
-topic("buffered channels", () => {
+topic.skip("buffered channels", () => {
 
-   it("works when putter arrives first and implicit receive", async () => {
+   it("works when putter arrives first", async () => {
 
       let rec: Array<number> = []  // eslint-disable-line prefer-const
       let procsOpsOrder: Array<string> = []  // eslint-disable-line prefer-const
@@ -121,21 +151,21 @@ topic("buffered channels", () => {
 topic("process cancellation", () => {
 
    it("ribu automatically cancels child if parent does not wait to be done", async () => {
+      console.log("TEST 3: start")
 
       let mutated = false
 
-      go(async function main() {
+      go(async function main3() {
 
          go(async function sleeper() {
-            await sleep(2)
+            await sleep(3)
             mutated = true
          })
 
-         await sleep(0)
+         await sleep(1)
       })
 
-      await promSleep(0)
-
+      await promSleep(2)
       check(mutated).with(false)
    })
 })

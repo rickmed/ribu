@@ -18,11 +18,15 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 	get rec(): Promise<V> {
 
+
 		const receiverPrc = getRunningPrc(`ribu: can't receive outside a process.`)
+		console.log("REC(): called", receiverPrc._fnName)
 
 		if (receiverPrc._state !== "RUNNING") {
 			return neverProm<V>()
 		}
+
+		csp.runningPrc = undefined
 
 		return new Promise<V>(resolveReceiver => {
 
@@ -34,6 +38,33 @@ class Chan<V> extends BaseChan implements Ch<V> {
 				return
 			}
 
+
+/*
+need to check cancellation things on channel ops
+
+1) Think better resolve counterpart first to let it finish naturally
+
+
+2) when cancel is done, there must be a guarantee that the prc will not put more msgs
+
+- what happens to in transit messages? (not the one in bufferedChans)
+
+	=> If am blocked at rec and I'm cancelled in the meantime that the putter arrives??
+			- putter should pull the next waitingReceiver and resolve that one (delete resolve fn from cancelled prc)
+				this way, the cancelled prc will be removed from chan [], be never resolved and be GCed eventually
+
+	=> If am blocked at put and I'm cancelled in the meantime that the receiver arrives???
+			- idem
+
+	=> is is possible to be cancelled while the rec/put transaction is taking place?
+			- MAAYYBE, but best to complete the transaction and the next put/rec will block forever
+			- Will there msgs be lost between the application stages of all this?
+				how to flush them?
+					- is general cancellation a bad idea?
+
+*/
+
+
 			/*	How the thing below works:
 				prom.then(continuation) is called by means of await at the receiver
 				asyncFn but no continuation is scheduled bc the promise is not
@@ -43,8 +74,13 @@ class Chan<V> extends BaseChan implements Ch<V> {
 			*/
 			queueMicrotask(() => {
 				csp.runningPrc = receiverPrc
+				console.log("REC(): RESOLVING RECEIVER", receiverPrc._fnName, {msg: putterPrc._chanPutMsg})
 				resolveReceiver(putterPrc._chanPutMsg as V)
-				resolveAsync(putterPrc)
+				queueMicrotask(() => {
+					csp.runningPrc = putterPrc
+					console.log("REC(): RESOLVING PUTTER", putterPrc._fnName)
+					putterPrc._promResolve!(undefined)
+				})
 			})
 
 		})
@@ -54,9 +90,13 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 		const putterPrc = getRunningPrc(`ribu: can't put outside a process.`)
 
+		console.log("PUT(): called", putterPrc._fnName)
+
 		if (putterPrc._state !== "RUNNING") {
 			return neverProm()
 		}
+
+		csp.runningPrc = undefined
 
 		return new Promise(resolvePutter => {
 
@@ -71,15 +111,20 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 			queueMicrotask(() => {
 				csp.runningPrc = putterPrc
+				console.log("PUT(): RESOLVING PUTTER", putterPrc._fnName, {msg})
 				resolvePutter()
-				resolveAsync<V>(receiverPrc, msg)
+				queueMicrotask(() => {
+					csp.runningPrc = receiverPrc
+					console.log("PUT(): RESOLVING RECEIVER", receiverPrc._fnName, {msg})
+					receiverPrc._promResolve!(msg)
+				})
 			})
 		})
 	}
 
-	then(onRes: (v: V) => V) {
-		return this.rec.then(onRes)
-	}
+	// then(onRes: (v: V) => V) {
+	// 	return this.rec.then(onRes)
+	// }
 }
 
 
@@ -165,7 +210,7 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 
 export function getRunningPrc(onErrMsg: string): Prc {
-	const { runningPrc } = csp
+	const {runningPrc} = csp
 	if (!runningPrc) {
 		throw new Error(`${onErrMsg} Did you forget to wrap a native Promise?`)
 	}
@@ -192,7 +237,7 @@ export type Ch<V = undefined> = {
 	get rec(): Promise<V>,
 	put(msg: V): Promise<void>,
 	put(...msg: V extends undefined ? [] : [V]): Promise<void>,
-	then(onRes: (v: V) => V): Promise<V>
+	// then(onRes: (v: V) => V): Promise<V>
 }
 
 

@@ -81,7 +81,11 @@ export class Prc {
 	}
 
 	async cancel(): Promise<void> {
-
+		console.log("CANCELLING:", this._fnName)
+		if (this._fnName === "main1") {
+			console.log("main1 parent:", this._parentPrc?._fnName)
+			console.log("main1 childS:", [...this._$childS].map(c => c._fnName))
+		}
 		const state = this._state
 
 		if (state === "DONE") {
@@ -110,34 +114,35 @@ export class Prc {
 		}
 
 		if (!_$childS && !_onCancel) {
-			// goes to this.#finalCleanup() below
+			// void and goes to this.#finalCleanup() below
 		}
 
-		else if (!_$childS && isRegFn(_onCancel)) {
+		else if (!_$childS && isSyncFn(_onCancel)) {
 			_onCancel()
 		}
 
 		else if (!_$childS && isAsyncFn(_onCancel)) {
-			await this.#onCancel()
+			await this.#$onCancel().rec
 		}
 
 		else if (_$childS && !_onCancel) {
 			await cancelChildS(_$childS)
 		}
 
-		else if (_$childS && isRegFn(_onCancel)) {
+		else if (_$childS && isSyncFn(_onCancel)) {
 			_onCancel(); await cancelChildS(_$childS)
 		}
 
 		else {  /* _$child && isAsyncFn(_onCancel) */
-			await Promise.allSettled([this.#onCancel(), cancelChildS(_$childS!)])
+			await Promise.allSettled([this.#$onCancel(), cancelChildS(_$childS!)])
 		}
 
+		this._state = "DONE"
 		finalCleanup(this)
 		resolveConcuCallers(this)
 	}
 
-	#onCancel(): Ch {
+	#$onCancel(): Ch {
 
 		const done = ch()
 
@@ -159,6 +164,19 @@ export class Prc {
 
 async function finishNormalDone(prc: Prc): Promise<void> {
 
+	if (prc._state !== "RUNNING") {   // ie, is cancelling
+		return
+	}
+
+	prc._state = "DONE"
+	/**
+	 * After asyncFn is done, the last ribu op sets csp.runningPrc, but there
+	 * will be no more ribu ops on this process. This will prevent bugs, for
+	 * example, if next ribu op is go() and process think this finishing process
+	 * is its parent.
+	 */
+	csp.runningPrc = undefined
+
 	const { _$childS } = prc
 
 	if (_$childS) {
@@ -177,7 +195,6 @@ function cancelChildS($childS: Set<Prc>) {
 }
 
 function finalCleanup(prc: Prc) {
-	prc._state = "DONE"
 	prc._$childS = undefined
 	const { _parentPrc } = prc
 	if (_parentPrc) {
@@ -203,7 +220,7 @@ function resolveConcuCallers(prc: Prc): void {
 	}
 }
 
-function isRegFn(fn?: OnCancel): fn is RegFn {
+function isSyncFn(fn?: OnCancel): fn is RegFn {
 	return fn?.constructor.name === "Function"
 }
 
@@ -215,44 +232,39 @@ function isAsyncFn(fn?: OnCancel): fn is AsyncFn {
 
 export const go: Go = (fn, ...fnArgs) => {
 
-	const { runningPrc, stackTail } = csp
+	const parentPrc = csp.runningPrc
 
-	const pcr = new Prc(runningPrc, fn.name)
+	console.log("LAUNCHING:", fn.name, ", with parent:", parentPrc?._fnName)
 
-	if (runningPrc) {
-		stackTail.push(runningPrc)
-	}
-
-	csp.runningPrc = pcr
-
+	const prc = new Prc(parentPrc, fn.name)
+	csp.runningPrc = prc  // eslint-disable-line functional/immutable-data
 	const prom = fn(...fnArgs) as ReturnType<typeof fn>
+
 
 	/**
 	 * To solve the problem of implicit chan receive as first asyncFn operation:
 	 * .then() on the ch object is called asynchronously by means of await, so
-	 * chan rec getter has no chance to get a reference to a runningPrc.
-	 * So go() sets this microTask so that in case that an implicit receive is
-	 * the first asyncFn operation, ch.then() and ch.rec inside it
+	 * ch.rec getter has no chance to get a reference to a runningPrc because
+	 * runningPrc has alrady popped of the stack.
+	 * To solve it, go() sets this microTask so that in case that an implicit
+	 * receive is the first asyncFn operation, ch.then() and ch.rec inside it
 	 * can get the reference.
 	 * The other ribu async operations get their runningPrc references
 	 * synchronously, so this has no effect on them.
 	 */
-	queueMicrotask(() => {
-		csp.runningPrc = pcr
-	})
+	// queueMicrotask(() => {
+	// 	csp.runningPrc = prc
+	// })
 
 	prom.then(
 		() => {
-			finishNormalDone(pcr)
+			finishNormalDone(prc)
 		},
-		//@todo: implement errors
 	)
 
-	csp.runningPrc = stackTail.pop()
-
-	return pcr
+	csp.runningPrc = parentPrc  // eslint-disable-line functional/immutable-data
+	return prc
 }
-
 
 
 /**
@@ -266,33 +278,37 @@ export const go: Go = (fn, ...fnArgs) => {
 // }
 
 
-export function onCancel(onCancel: OnCancel): void {
-	let runningPrc = getRunningPrc(`ribu: can't call onCancel outside a process`)
-	runningPrc._onCancel = onCancel
-}
-
-
 
 /* === Helpers ====================================================== */
 
 export function sleep(ms: number): Promise<void> {
 
 	let runningPrc = getRunningPrc(`ribu: can't use sleep() outside a process`)
+	console.log("SLEEPING:", runningPrc._fnName, {ms})
+
+	csp.runningPrc = undefined
 
 	return new Promise<void>(resolveSleep => {
 
 		const timeoutID = setTimeout(function _sleepTimeOut() {
-			queueMicrotask(() => {
-				csp.runningPrc = runningPrc
-				resolveSleep()
-			})
+			/** In case this callback fires while prc.cancel() */
+			if (runningPrc._state !== "RUNNING") {
+				return
+			}
+			csp.runningPrc = runningPrc
+			console.log("WAKING SLEEP:", runningPrc._fnName, {ms})
+			resolveSleep()
 		}, ms)
 
 		runningPrc._timeoutID = timeoutID  // eslint-disable-line functional/immutable-data
-
 	})
 }
 
+
+export function onCancel(onCancel: OnCancel): void {
+	let runningPrc = getRunningPrc(`ribu: can't call onCancel outside a process`)
+	runningPrc._onCancel = onCancel
+}
 
 
 /**
