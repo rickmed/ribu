@@ -48,10 +48,16 @@ need to check cancellation things on channel ops
 2) when cancel is done, there must be a guarantee that the prc will not put more msgs
 
 - what happens to in transit messages? (not the one in bufferedChans)
+	* All waitingPutters must be flushed.
+       - All those messages must be received by the receivers
+		 	if they choose to (ie, they aren't cancelled)
 
-	=> If am blocked at rec and I'm cancelled in the meantime that the putter arrives??
-			- putter should pull the next waitingReceiver and resolve that one (delete resolve fn from cancelled prc)
-				this way, the cancelled prc will be removed from chan [], be never resolved and be GCed eventually
+   * no additional
+
+
+	=> If prc is blocked at rec and cancelled in the meantime:
+		- when putter arrives it should pull the next waitingReceiver and resolve that one (delete resolve fn from cancelled prc)
+			this way, the cancelled prc will be removed from chan [], be never resolved and be GCed eventually
 
 	=> If am blocked at put and I'm cancelled in the meantime that the receiver arrives???
 			- idem
@@ -60,7 +66,10 @@ need to check cancellation things on channel ops
 			- MAAYYBE, but best to complete the transaction and the next put/rec will block forever
 			- Will there msgs be lost between the application stages of all this?
 				how to flush them?
-					- is general cancellation a bad idea?
+					- a downstream process should probably cancel the first upstream stage.
+					   - the top stage would stop sending msgs downtream.
+						but then the middle stages would need some cleanup chance
+
 
 */
 
