@@ -101,7 +101,7 @@ topic("unbuffered channels", () => {
 
 topic("buffered channels", () => {
 
-   it.only("works when receiver arrives first", async () => {
+   it("works when receiver arrives first", async () => {
 
       let recS: Array<number> = []
 
