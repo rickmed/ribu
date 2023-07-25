@@ -278,7 +278,7 @@ export const go: Go = (fn, ...fnArgs) => {
 
 export function sleep(ms: number): Promise<void> {
 
-	let runningPrc = getRunningPrc(`ribu: can't use sleep() outside a process`)
+	let runningPrc = getRunningPrc(`can't use sleep() outside a process`)
 
 	return new Promise<void>(resolveSleep => {
 
@@ -293,7 +293,7 @@ export function sleep(ms: number): Promise<void> {
 
 
 export function onCancel(onCancel: OnCancel): void {
-	let runningPrc = getRunningPrc(`ribu: can't call onCancel outside a process`)
+	let runningPrc = getRunningPrc(`can't call onCancel outside a process`)
 	runningPrc._onCancel = onCancel
 }
 
@@ -309,7 +309,7 @@ export function wait(...prcS: Prc[]): Ch {
 
 	if (prcS.length === 0) {
 
-		const runningPrc = getRunningPrc(`ribu: can't use sleep() outside a process`)
+		const runningPrc = getRunningPrc(`can't use sleep() outside a process`)
 		const { _$childS } = runningPrc
 
 		if (_$childS === undefined) {

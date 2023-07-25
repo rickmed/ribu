@@ -1,26 +1,25 @@
 import { go, type Prc } from "./process.mjs"
 import csp from "./initCsp.mjs"
 
+export const DONE = Symbol("ribu chan DONE")
 
+// export function ch<V = undefined>(): Chan<V>
 export function ch<V = undefined>(capacity = 0): Ch<V> {
 	const _ch = capacity === 0 ? new Chan<V>() : new BufferedChan<V>(capacity)
 	return _ch
 }
 
-
 class BaseChan {
+
 	protected _waitingPutters = new Queue<Prc>()
 	protected _waitingReceivers = new Queue<Prc>()
 }
 
 class Chan<V> extends BaseChan implements Ch<V> {
 
-	/**
-
-	 */
 	get rec(): Promise<V> {
 
-		const receiverPrc = getRunningPrc(`ribu: can't receive outside a process.`)
+		const receiverPrc = getRunningPrc(`can't receive outside a process.`)
 
 		return new Promise<V>(resolveReceiver => {
 
@@ -56,7 +55,7 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 	put(msg?: V): Promise<void> {
 
-		const putterPrc = getRunningPrc(`ribu: can't put outside a process.`)
+		const putterPrc = getRunningPrc(`can't put outside a process.`)
 		const { _waitingReceivers } = this
 
 		return new Promise(resolvePutter => {
@@ -105,7 +104,7 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 	get rec(): Promise<V> {
 
-		const receiverPrc = getRunningPrc(`ribu: can't receive outside a process.`)
+		const receiverPrc = getRunningPrc(`can't receive outside a process.`)
 
 		return new Promise<V>(resolveReceiver => {
 
@@ -136,7 +135,7 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 	put(msg?: V): Promise<void> {
 
-		const putterPrc = getRunningPrc(`ribu: can't put outside a process.`)
+		const putterPrc = getRunningPrc(`can't put outside a process.`)
 
 		return new Promise(resolvePutter => {
 
@@ -171,16 +170,16 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 		})
 	}
 
-	then(onRes: (v: V) => V) {
-		return this.rec.then(onRes)
-	}
+	// then(onRes: (v: V) => V) {
+	// 	return this.rec.then(onRes)
+	// }
 }
 
 
 export function getRunningPrc(onErrMsg: string): Prc {
 	const runningPrc = csp.runningPrcS_m.pop()
 	if (!runningPrc) {
-		throw new Error(`${onErrMsg}`)
+		throw new Error(`ribu: ${onErrMsg}`)
 	}
 	return runningPrc
 }

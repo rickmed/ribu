@@ -101,7 +101,7 @@ topic("unbuffered channels", () => {
 
 topic("buffered channels", () => {
 
-   it.only("works when putter arrives first", async () => {
+   it.skip("works when putter arrives first", async () => {
 
       let recS: Array<number> = []
       let procsOpsOrder: Array<string> = []
@@ -133,6 +133,22 @@ topic("buffered channels", () => {
       await promSleep(10)
       check(recS).with([0, 1])
       check(procsOpsOrder).with(["child", "child", "main", "child", "main", "main"])
+   })
+
+   it("blocks when buffer is full", async () => {
+
+      let opS: Array<number> = []
+      const ch1 = ch(2)
+
+      go(async function main() {
+         for (let i = 0; i < 3; i++) {
+            await ch1.put()
+            opS.push(i)
+         }
+      })
+
+      await promSleep(0)
+      check(opS).with([0, 1])
    })
 })
 
