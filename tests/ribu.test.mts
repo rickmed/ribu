@@ -2,7 +2,7 @@
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
 import { go, ch, sleep, wait, race } from "../source/index.mjs"
-import { promSleep } from "./utils.mjs"
+import { promSleep, range } from "./utils.mjs"
 // import csp from "../source/initCsp.mjs"
 
 // @todo: change tests to make assertions inside processes when sophi is fixed
@@ -101,38 +101,53 @@ topic("unbuffered channels", () => {
 
 topic("buffered channels", () => {
 
-   it.skip("works when putter arrives first", async () => {
+   it.only("works when receiver arrives first", async () => {
 
       let recS: Array<number> = []
-      let procsOpsOrder: Array<string> = []
 
       go(async function main() {
 
          const ch1 = ch<number>(1)
 
          go(async function child() {
-            for (let i = 0; i < 2; i++) {
-
-      // how to test that this blocks here?
-      // both, theoretically, resume *at the same time* when rec arrives
-      // so is really a race to procsOpsOrder.push()
-
+            for (const i of range(2)) {
                await ch1.put(i)
-               procsOpsOrder.push("child")
+            }
+         })
+
+         for (let i = 0; i < 2; i++) {
+            const rec = await ch1.rec
+            recS.push(rec)
+         }
+      })
+
+      await promSleep(1)
+      check(recS).with([0, 1])
+   })
+
+   it("works when putter arrives first", async () => {
+
+      let recS: Array<number> = []
+
+      go(async function main() {
+
+         const ch1 = ch<number>(1)
+
+         go(async function child() {
+            for (const i of range(2)) {
+               await ch1.put(i)
             }
          })
 
          await sleep(1)
          for (let i = 0; i < 2; i++) {
             const rec = await ch1.rec
-            procsOpsOrder.push("main")
             recS.push(rec)
          }
       })
 
-      await promSleep(10)
+      await promSleep(1)
       check(recS).with([0, 1])
-      check(procsOpsOrder).with(["child", "child", "main", "child", "main", "main"])
    })
 
    it("blocks when buffer is full", async () => {
@@ -147,7 +162,7 @@ topic("buffered channels", () => {
          }
       })
 
-      await promSleep(0)
+      await promSleep(2)
       check(opS).with([0, 1])
    })
 })
