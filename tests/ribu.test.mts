@@ -2,8 +2,8 @@
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
 import { go, ch, sleep, wait, race } from "../source/index.mjs"
-import { promSleep, range } from "./utils.mjs"
-import csp from "../source/initCsp.mjs"
+import { promSleep } from "./utils.mjs"
+// import csp from "../source/initCsp.mjs"
 
 // @todo: change tests to make assertions inside processes when sophi is fixed
 // with failing test when no assertions are made.
@@ -33,15 +33,11 @@ topic("unbuffered channels", () => {
 
             */
             await sleep(3)
-            console.log("child 1:", csp.runningPrcS_m?._fnName)
             await ch1.put(2)
-            console.log("child 2:", csp.runningPrcS_m?._fnName)
          })
 
          await sleep(2)
-         rec = await ch1
-         console.log("main 1:", csp.runningPrcS_m?._fnName)
-
+         rec = await ch1.rec
       })
 
       await promSleep(10)
@@ -176,7 +172,7 @@ topic.skip("process can wait for children processes", () => {
             mutated = true
          })
 
-         await wait(child)
+         await wait(child).rec
       })
 
       await promSleep(2)
@@ -196,7 +192,7 @@ topic.skip("process can wait for children processes", () => {
             mutated = true
          })
 
-         await wait()
+         await wait().rec
       })
 
       await promSleep(2)
@@ -224,7 +220,7 @@ topic.skip("race()", () => {
             won = "two"
          }
 
-         await race(go(one), go(two))
+         await race(go(one), go(two)).rec
       })
 
       await promSleep(3)

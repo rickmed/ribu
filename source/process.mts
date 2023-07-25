@@ -143,7 +143,7 @@ export class Prc {
 		const done = ch()
 
 		const $onCancel = go(async () => {
-			await go(this._onCancel as AsyncFn).done
+			await go(this._onCancel as AsyncFn).done.rec
 			hardCancel($deadline)
 			await done.put()
 		})
@@ -363,7 +363,7 @@ export function race(...prcS: Prc[]): Ch<unknown> {
 	for (const chan of prcSDone) {
 
 		go(async function _race() {
-			const winnerPrcRes: unknown = await chan
+			const winnerPrcRes: unknown = await chan.rec
 			// the winnerPrc cancel the rest.
 			await cancel(...prcS.filter(prc => prc._done != chan))
 			await done.put(winnerPrcRes)
