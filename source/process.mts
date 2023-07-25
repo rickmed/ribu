@@ -1,6 +1,6 @@
 import { all } from "./index.mjs"
-import csp from "./initCsp.mjs"
-import { ch, getRunningPrc, type Ch } from "./channel.mjs"
+import { csp, getRunningPrc } from "./initCsp.mjs"
+import { ch, type Ch } from "./channel.mjs"
 
 
 /**
@@ -230,27 +230,12 @@ export const go: Go = (fn, ...fnArgs) => {
 
 	/**
 	 * The new prc need to be set as first in the runningPrcS_m queue because it
-	 * will be the running prc in the newly launched asyncFn. The ribu
+	 * needs to be the runningPrc in the newly launched asyncFn. The ribu
 	 * operations inside it pull it as if set from a chan/sleep operation
 	 */
 	csp.runningPrcS_m.push(prc)
 
 	const prom = fn(...fnArgs) as ReturnType<typeof fn>
-
-	/**
-	 * To solve the problem of implicit chan receive as first asyncFn operation:
-	 * .then() on the ch object is called asynchronously by means of await, so
-	 * ch.rec getter has no chance to get a reference to a runningPrc because
-	 * runningPrc has already popped of the stack.
-	 * To solve it, go() sets this microTask so that in case that an implicit
-	 * receive is the first asyncFn operation, ch.then() and ch.rec inside it
-	 * can get the reference.
-	 * The other ribu async operations get their runningPrc references
-	 * synchronously, so this has no effect on them.
-	 */
-	// queueMicrotask(() => {
-	// 	csp.runningPrc = prc
-	// })
 
 	prom.then(
 		() => {

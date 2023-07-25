@@ -22,16 +22,16 @@ topic("unbuffered channels", () => {
 
             await promSleep(1)
 
-            // here sleep(3) thinks csp is main bc is what go(main) sets
-            // when returns. And then promSleep(1) does not update it
+            // down here, sleep(3) thinks csp is main bc is what go(main) sets
+            // . And then promSleep(1) does not update it
 
             /*
                Maybe I can exploit the fact that a process can be blocked
                at only one operation.
 
                So if I see that runningPrc is already blocked, I throw.
-
             */
+
             await sleep(3)
             await ch1.put(2)
          })
@@ -113,9 +113,10 @@ topic("buffered channels", () => {
             for (const i of range(2)) {
                await ch1.put(i)
             }
+            ch1.close()
          })
 
-         for (let i = 0; i < 2; i++) {
+         while (ch1.isNotDone) {
             const rec = await ch1.rec
             recS.push(rec)
          }
@@ -137,16 +138,17 @@ topic("buffered channels", () => {
             for (const i of range(2)) {
                await ch1.put(i)
             }
+            ch1.close()
          })
 
          await sleep(1)
-         for (let i = 0; i < 2; i++) {
+         while (ch1.isNotDone) {
             const rec = await ch1.rec
             recS.push(rec)
          }
       })
 
-      await promSleep(1)
+      await promSleep(2)
       check(recS).with([0, 1])
    })
 

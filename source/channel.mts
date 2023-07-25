@@ -1,5 +1,5 @@
 import { go, type Prc } from "./process.mjs"
-import csp from "./initCsp.mjs"
+import { csp, getRunningPrc } from "./initCsp.mjs"
 
 export const DONE = Symbol("ribu chan DONE")
 
@@ -13,6 +13,11 @@ class BaseChan {
 
 	protected _waitingPutters = new Queue<Prc>()
 	protected _waitingReceivers = new Queue<Prc>()
+	protected _closed = false
+
+	close() {
+		this._closed = true
+	}
 }
 
 class Chan<V> extends BaseChan implements Ch<V> {
@@ -55,6 +60,10 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 	put(msg?: V): Promise<void> {
 
+		if (this._closed) {
+			throw new Error(`ribu: can't put on a closed channel`)
+		}
+
 		const putterPrc = getRunningPrc(`can't put outside a process.`)
 		const { _waitingReceivers } = this
 
@@ -82,6 +91,10 @@ class Chan<V> extends BaseChan implements Ch<V> {
 				receiverPrc = _waitingReceivers.pull()
 			}
 		})
+	}
+
+	get isNotDone() {
+		return this._waitingPutters.isEmpty ? false : true
 	}
 
 	// then(onRes: (v: V) => V) {
@@ -135,6 +148,10 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 	put(msg?: V): Promise<void> {
 
+		if (this._closed) {
+			throw new Error(`ribu: can't put on a closed channel`)
+		}
+
 		const putterPrc = getRunningPrc(`can't put outside a process.`)
 
 		return new Promise(resolvePutter => {
@@ -170,19 +187,15 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 		})
 	}
 
+	get isNotDone() {
+		return this.#buffer.isEmpty && this._waitingPutters.isEmpty ? false : true
+	}
+
 	// then(onRes: (v: V) => V) {
 	// 	return this.rec.then(onRes)
 	// }
 }
 
-
-export function getRunningPrc(onErrMsg: string): Prc {
-	const runningPrc = csp.runningPrcS_m.pop()
-	if (!runningPrc) {
-		throw new Error(`ribu: ${onErrMsg}`)
-	}
-	return runningPrc
-}
 
 
 /* === Types ====================================================== */
@@ -191,6 +204,8 @@ export type Ch<V = undefined> = {
 	get rec(): Promise<V>,
 	put(msg: V): Promise<void>,
 	put(...msg: V extends undefined ? [] : [V]): Promise<void>,
+	get isNotDone(): boolean
+	close(): void
 	// then(onRes: (v: V) => V): Promise<V>
 }
 
@@ -212,6 +227,10 @@ class Queue<V> {
 
 	get isFull() {
 		return this.#array_m.length === this.#capacity
+	}
+
+	get isEmpty() {
+		return this.#array_m.length === 0 ? true : false
 	}
 
 	pull() {
