@@ -13,20 +13,14 @@ class BaseChan {
 	protected _waitingReceivers = new Queue<Prc>()
 }
 
-
 class Chan<V> extends BaseChan implements Ch<V> {
 
+	/**
+
+	 */
 	get rec(): Promise<V> {
 
-
 		const receiverPrc = getRunningPrc(`ribu: can't receive outside a process.`)
-		console.log("REC(): called", receiverPrc._fnName)
-
-		if (receiverPrc._state !== "RUNNING") {
-			return neverProm<V>()
-		}
-
-		csp.runningPrc = undefined
 
 		return new Promise<V>(resolveReceiver => {
 
@@ -38,96 +32,56 @@ class Chan<V> extends BaseChan implements Ch<V> {
 				return
 			}
 
+			/**
+			 * Exchange msg:
+			 * Since the await continuations are called async after these resolvers
+			 * are called, we need to set a queue of prcS so that the next ribu
+			 * operations in the respective asyncFn can runningPrcS_m.pull()
+			 * the correct running prc.
+			 * The waiting prc needs to be resolved first since that is the order
+			 * the javascript runtime does it (the important thing is
+			 * csp.runningPrcS_m push order)
+			 */
 
-/*
-need to check cancellation things on channel ops
+			/** If putterPrc was cancelled, it will never be resolved and be GCed eventually */
+			if (putterPrc._state === "RUNNING") {
+				putterPrc._promResolve!(undefined)
+				csp.runningPrcS_m.unshift(putterPrc)
+			}
 
-1) Think better resolve counterpart first to let it finish naturally
-
-
-2) when cancel is done, there must be a guarantee that the prc will not put more msgs
-
-- what happens to in transit messages? (not the one in bufferedChans)
-	* All waitingPutters must be flushed.
-       - All those messages must be received by the receivers
-		 	if they choose to (ie, they aren't cancelled)
-
-   * no additional
-
-
-	=> If prc is blocked at rec and cancelled in the meantime:
-		- when putter arrives it should pull the next waitingReceiver and resolve that one (delete resolve fn from cancelled prc)
-			this way, the cancelled prc will be removed from chan [], be never resolved and be GCed eventually
-
-	=> If am blocked at put and I'm cancelled in the meantime that the receiver arrives???
-			- idem
-
-	=> is is possible to be cancelled while the rec/put transaction is taking place?
-			- MAAYYBE, but best to complete the transaction and the next put/rec will block forever
-			- Will there msgs be lost between the application stages of all this?
-				how to flush them?
-					- a downstream process should probably cancel the first upstream stage.
-					   - the top stage would stop sending msgs downtream.
-						but then the middle stages would need some cleanup chance
-
-
-*/
-
-
-			/*	How the thing below works:
-				prom.then(continuation) is called by means of await at the receiver
-				asyncFn but no continuation is scheduled bc the promise is not
-				resolved() yet. So it gives me a chance to setup csp.stackHead before
-				the continuation is scheduled with resolve() (and ran immediately async).
-				The same thing is done next for the putter asyncFn part, in order.
-			*/
-			queueMicrotask(() => {
-				csp.runningPrc = receiverPrc
-				console.log("REC(): RESOLVING RECEIVER", receiverPrc._fnName, {msg: putterPrc._chanPutMsg})
-				resolveReceiver(putterPrc._chanPutMsg as V)
-				queueMicrotask(() => {
-					csp.runningPrc = putterPrc
-					console.log("REC(): RESOLVING PUTTER", putterPrc._fnName)
-					putterPrc._promResolve!(undefined)
-				})
-			})
-
+			csp.runningPrcS_m.unshift(receiverPrc)
+			resolveReceiver(putterPrc._chanPutMsg_m as V)
 		})
 	}
 
 	put(msg?: V): Promise<void> {
 
 		const putterPrc = getRunningPrc(`ribu: can't put outside a process.`)
-
-		console.log("PUT(): called", putterPrc._fnName)
-
-		if (putterPrc._state !== "RUNNING") {
-			return neverProm()
-		}
-
-		csp.runningPrc = undefined
+		const { _waitingReceivers } = this
 
 		return new Promise(resolvePutter => {
 
-			const receiverPrc = this._waitingReceivers.pull()
+			let receiverPrc = _waitingReceivers.pull()
 
 			if (!receiverPrc) {
 				putterPrc._promResolve<void> = resolvePutter
-				putterPrc._chanPutMsg = msg
+				putterPrc._chanPutMsg_m = msg
 				this._waitingPutters.push(putterPrc)
 				return
 			}
 
-			queueMicrotask(() => {
-				csp.runningPrc = putterPrc
-				console.log("PUT(): RESOLVING PUTTER", putterPrc._fnName, {msg})
-				resolvePutter()
-				queueMicrotask(() => {
-					csp.runningPrc = receiverPrc
-					console.log("PUT(): RESOLVING RECEIVER", receiverPrc._fnName, {msg})
+			/** If a receiverPrc is cancelled, discard and resolve the next in _waitingReceivers */
+			while (receiverPrc) {
+
+				if (receiverPrc._state === "RUNNING") {
+					csp.runningPrcS_m.unshift(putterPrc, receiverPrc)
 					receiverPrc._promResolve!(msg)
-				})
-			})
+					resolvePutter(undefined)
+					return
+				}
+
+				receiverPrc = _waitingReceivers.pull()
+			}
 		})
 	}
 
@@ -153,29 +107,30 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 		const receiverPrc = getRunningPrc(`ribu: can't receive outside a process.`)
 
-		if (receiverPrc._state !== "RUNNING") {
-			return neverProm<V>()
-		}
-
 		return new Promise<V>(resolveReceiver => {
 
 			const msg = this.#buffer.pull()
 
-			if (!msg) {  // buffer is empty
+			if (msg === undefined) {  // buffer is empty
 				receiverPrc._promResolve<V> = resolveReceiver
 				this._waitingReceivers.push(receiverPrc)
 				return
 			}
 
-			queueMicrotask(() => {
-				csp.runningPrc = receiverPrc
-				resolveReceiver(msg)
-				const putterPrc = this._waitingPutters.pull()
-				if (putterPrc) {
-					resolveAsync<V>(putterPrc)
-				}
-			})
+			const putterPrc = this._waitingPutters.pull()
 
+			if (putterPrc !== undefined) {
+
+				this.#buffer.push(putterPrc._chanPutMsg_m as V)
+
+				if (putterPrc._state === "RUNNING") {
+					csp.runningPrcS_m.unshift(putterPrc)
+					putterPrc._promResolve!(undefined)
+				}
+			}
+
+			csp.runningPrcS_m.unshift(receiverPrc)
+			resolveReceiver(msg)
 		})
 	}
 
@@ -183,32 +138,36 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 		const putterPrc = getRunningPrc(`ribu: can't put outside a process.`)
 
-		if (putterPrc._state !== "RUNNING") {
-			return neverProm()
-		}
-
 		return new Promise(resolvePutter => {
 
 			const buffer = this.#buffer
+
 			if (buffer.isFull) {
 				putterPrc._promResolve<void> = resolvePutter
+				putterPrc._chanPutMsg_m = msg
 				this._waitingPutters.push(putterPrc)
 				return
 			}
 
-			queueMicrotask(() => {
-				csp.runningPrc = putterPrc
-				resolvePutter()
+			const {_waitingReceivers} = this
+			let receiverPrc = _waitingReceivers.pull()
 
-				const receiverPrc = this._waitingReceivers.pull()
-				if (receiverPrc) {
-					resolveAsync<V>(receiverPrc, msg)
-				}
-				else {
-					buffer.push(msg)
-				}
-			})
+			if (!receiverPrc) {
+				buffer.push(msg)
+				csp.runningPrcS_m.unshift(putterPrc)
+				resolvePutter(undefined)
+				return
+			}
 
+			while (receiverPrc) {
+				if (receiverPrc._state === "RUNNING") {
+					csp.runningPrcS_m.unshift(putterPrc, receiverPrc)
+					receiverPrc._promResolve!(msg)
+					resolvePutter(undefined)
+					return
+				}
+				receiverPrc = _waitingReceivers.pull()
+			}
 		})
 	}
 
@@ -219,25 +178,12 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 
 export function getRunningPrc(onErrMsg: string): Prc {
-	const {runningPrc} = csp
+	const runningPrc = csp.runningPrcS_m.pop()
 	if (!runningPrc) {
-		throw new Error(`${onErrMsg} Did you forget to wrap a native Promise?`)
+		throw new Error(`${onErrMsg}`)
 	}
 	return runningPrc
 }
-
-/** a Promise that never resolves */
-function neverProm<V = void>() {
-	return new Promise<V>(() => {})
-}
-
-function resolveAsync<V = void>(prc: Prc, msg?: V) {
-	queueMicrotask(() => {
-		csp.runningPrc = prc
-		prc._promResolve!(msg)
-	})
-}
-
 
 
 /* === Types ====================================================== */
@@ -258,27 +204,24 @@ export type Ch<V = undefined> = {
  */
 class Queue<V> {
 
-	#array: Array<V> = []
+	#array_m: Array<V> = []
 	#capacity
 
 	constructor(capacity = Number.MAX_SAFE_INTEGER) {
 		this.#capacity = capacity
 	}
 
-	get isEmpty() {
-		return this.#array.length === 0
-	}
 	get isFull() {
-		return this.#array.length === this.#capacity
+		return this.#array_m.length === this.#capacity
 	}
 
 	pull() {
 		// @todo: check if empty when using other data structures
-		return this.#array.pop()  // eslint-disable-line functional/immutable-data
+		return this.#array_m.pop()
 	}
 
 	push(x?: V) {
-		this.#array.unshift(x as V)  // eslint-disable-line functional/immutable-data
+		this.#array_m.unshift(x as V)
 	}
 }
 
@@ -295,7 +238,7 @@ export function all(...chanS: Ch[]): Ch {
 
 	for (const chan of chanS) {
 		go(async function _all() {
-			await chan
+			await chan.rec
 			await notifyDone.put()
 		})
 	}
@@ -303,7 +246,7 @@ export function all(...chanS: Ch[]): Ch {
 	go(async function _collectDones() {
 		let nDone = 0
 		while (nDone < chansL) {
-			await notifyDone
+			await notifyDone.rec
 			nDone++
 		}
 		await allDone.put()

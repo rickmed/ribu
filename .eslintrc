@@ -19,9 +19,11 @@
 		"no-console": "error",
     "functional/immutable-data": ["error", {
       "ignoreClasses": "fieldsOnly",
-      "ignoreNonConstDeclarations": true
+      "ignoreNonConstDeclarations": true,
+      "ignoreAccessorPattern": "**.*_m*.**"
       }],
-    "prefer-const": "off"
+    "prefer-const": "off",
+    "@typescript-eslint/await-thenable": "error"
   },
   "env": {
     "es2022": true,

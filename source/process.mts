@@ -18,7 +18,7 @@ export class Prc {
 
 	/** The two below are used by channel operations */
 	_promResolve?: PromResolve
-	_chanPutMsg: unknown = 3  /** default val */
+	_chanPutMsg_m: unknown = 3  /** default val */
 
 	/** Set by user with pubic api onCancel()  */
 	_onCancel?: OnCancel = undefined
@@ -39,7 +39,7 @@ export class Prc {
 	_timeoutID?: NodeJS.Timeout
 
 	/** Used if/when concurrent this.cancel() calls are made */
-	cancelPromResolvers?: Array<(x: void) => void> = undefined
+	cancelPromResolvers_m?: Array<(x: void) => void> = undefined
 
 	constructor(parentPrc: Prc | undefined, fnName: string) {
 
@@ -81,11 +81,7 @@ export class Prc {
 	}
 
 	async cancel(): Promise<void> {
-		console.log("CANCELLING:", this._fnName)
-		if (this._fnName === "main1") {
-			console.log("main1 parent:", this._parentPrc?._fnName)
-			console.log("main1 childS:", [...this._$childS].map(c => c._fnName))
-		}
+
 		const state = this._state
 
 		if (state === "DONE") {
@@ -96,11 +92,11 @@ export class Prc {
 
 			return new Promise<void>(resolve => {
 
-				if (this.cancelPromResolvers === undefined) {
-					this.cancelPromResolvers = []
+				if (this.cancelPromResolvers_m === undefined) {
+					this.cancelPromResolvers_m = []
 				}
 
-				this.cancelPromResolvers.push(resolve)  // eslint-disable-line functional/immutable-data
+				this.cancelPromResolvers_m.push(resolve)
 			})
 
 		}
@@ -162,20 +158,16 @@ export class Prc {
 	}
 }
 
-async function finishNormalDone(prc: Prc): Promise<void> {
+async function normalFinish(prc: Prc): Promise<void> {
+
+	/** Need to "consume" a runningPrc just as any ribu operation */
+	csp.runningPrcS_m.pop()
 
 	if (prc._state !== "RUNNING") {   // ie, is cancelling
 		return
 	}
 
 	prc._state = "DONE"
-	/**
-	 * After asyncFn is done, the last ribu op sets csp.runningPrc, but there
-	 * will be no more ribu ops on this process. This will prevent bugs, for
-	 * example, if next ribu op is go() and process think this finishing process
-	 * is its parent.
-	 */
-	csp.runningPrc = undefined
 
 	const { _$childS } = prc
 
@@ -189,7 +181,7 @@ async function finishNormalDone(prc: Prc): Promise<void> {
 function cancelChildS($childS: Set<Prc>) {
 	let cancelProms = []
 	for (const prc of $childS) {
-		cancelProms.push(prc.cancel())  // eslint-disable-line functional/immutable-data
+		cancelProms.push(prc.cancel())
 	}
 	return Promise.allSettled(cancelProms)
 }
@@ -212,7 +204,7 @@ function hardCancel(prc: Prc): void {
 }
 
 function resolveConcuCallers(prc: Prc): void {
-	const { cancelPromResolvers } = prc
+	const { cancelPromResolvers_m: cancelPromResolvers } = prc
 	if (cancelPromResolvers) {
 		for (const resolve of cancelPromResolvers) {
 			resolve()
@@ -232,20 +224,24 @@ function isAsyncFn(fn?: OnCancel): fn is AsyncFn {
 
 export const go: Go = (fn, ...fnArgs) => {
 
-	const parentPrc = csp.runningPrc
-
-	console.log("LAUNCHING:", fn.name, ", with parent:", parentPrc?._fnName)
+	const parentPrc = csp.runningPrcS_m.at(-1)
 
 	const prc = new Prc(parentPrc, fn.name)
-	csp.runningPrc = prc  // eslint-disable-line functional/immutable-data
-	const prom = fn(...fnArgs) as ReturnType<typeof fn>
 
+	/**
+	 * The new prc need to be set as first in the runningPrcS_m queue because it
+	 * will be the running prc in the newly launched asyncFn. The ribu
+	 * operations inside it pull it as if set from a chan/sleep operation
+	 */
+	csp.runningPrcS_m.push(prc)
+
+	const prom = fn(...fnArgs) as ReturnType<typeof fn>
 
 	/**
 	 * To solve the problem of implicit chan receive as first asyncFn operation:
 	 * .then() on the ch object is called asynchronously by means of await, so
 	 * ch.rec getter has no chance to get a reference to a runningPrc because
-	 * runningPrc has alrady popped of the stack.
+	 * runningPrc has already popped of the stack.
 	 * To solve it, go() sets this microTask so that in case that an implicit
 	 * receive is the first asyncFn operation, ch.then() and ch.rec inside it
 	 * can get the reference.
@@ -258,11 +254,10 @@ export const go: Go = (fn, ...fnArgs) => {
 
 	prom.then(
 		() => {
-			finishNormalDone(prc)
+			normalFinish(prc)
 		},
 	)
 
-	csp.runningPrc = parentPrc  // eslint-disable-line functional/immutable-data
 	return prc
 }
 
@@ -284,23 +279,15 @@ export const go: Go = (fn, ...fnArgs) => {
 export function sleep(ms: number): Promise<void> {
 
 	let runningPrc = getRunningPrc(`ribu: can't use sleep() outside a process`)
-	console.log("SLEEPING:", runningPrc._fnName, {ms})
-
-	csp.runningPrc = undefined
 
 	return new Promise<void>(resolveSleep => {
 
-		const timeoutID = setTimeout(function _sleepTimeOut() {
-			/** In case this callback fires while prc.cancel() */
-			if (runningPrc._state !== "RUNNING") {
-				return
-			}
-			csp.runningPrc = runningPrc
-			console.log("WAKING SLEEP:", runningPrc._fnName, {ms})
+		const timeoutID = setTimeout(function sleepTimeOut() {
+			csp.runningPrcS_m.unshift(runningPrc)
 			resolveSleep()
 		}, ms)
 
-		runningPrc._timeoutID = timeoutID  // eslint-disable-line functional/immutable-data
+		runningPrc._timeoutID = timeoutID
 	})
 }
 
@@ -331,7 +318,7 @@ export function wait(...prcS: Prc[]): Ch {
 
 		let prcDoneChs: Array<Ch> = []
 		for (const prc of _$childS) {
-			prcDoneChs.push(prc.done)  // eslint-disable-line functional/immutable-data
+			prcDoneChs.push(prc.done)
 		}
 		doneChs = prcDoneChs
 	}
@@ -340,7 +327,7 @@ export function wait(...prcS: Prc[]): Ch {
 	}
 
 	go(async function _donePrc() {
-		await all(...doneChs)
+		await all(...doneChs).rec
 		await allDone.put()
 	})
 
@@ -368,9 +355,9 @@ export function race(...prcS: Prc[]): Ch<unknown> {
 
 	const done = ch<unknown>()
 
-	let prcSDone: Array<Ch> = []   // eslint-disable-line prefer-const
+	let prcSDone: Array<Ch> = []
 	for (const prc of prcS) {
-		prcSDone.push(prc._done)  // eslint-disable-line functional/immutable-data
+		prcSDone.push(prc._done)
 	}
 
 	for (const chan of prcSDone) {

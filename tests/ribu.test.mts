@@ -2,7 +2,7 @@
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
 import { go, ch, sleep, wait, race } from "../source/index.mjs"
-import { promSleep } from "./utils.mjs"
+import { promSleep, range } from "./utils.mjs"
 import csp from "../source/initCsp.mjs"
 
 // @todo: change tests to make assertions inside processes when sophi is fixed
@@ -33,14 +33,14 @@ topic("unbuffered channels", () => {
 
             */
             await sleep(3)
-            console.log("child 1:", csp.runningPrc?._fnName)
+            console.log("child 1:", csp.runningPrcS_m?._fnName)
             await ch1.put(2)
-            console.log("child 2:", csp.runningPrc?._fnName)
+            console.log("child 2:", csp.runningPrcS_m?._fnName)
          })
 
          await sleep(2)
          rec = await ch1
-         console.log("main 1:", csp.runningPrc?._fnName)
+         console.log("main 1:", csp.runningPrcS_m?._fnName)
 
       })
 
@@ -48,15 +48,15 @@ topic("unbuffered channels", () => {
       check(rec).with(2)
    })
 
-   it.skip("works when putter arrives first", async () => {
+   it("works when putter arrives first", async () => {
 
       let rec: number = 1
 
-      go(async function main() {
+      go(async function main1() {
 
          const ch1 = ch<number>()
 
-         go(async function child() {
+         go(async function child1() {
             await sleep(1)
             await ch1.put(2)
             await sleep(1)
@@ -71,78 +71,71 @@ topic("unbuffered channels", () => {
          rec = await ch1.rec
       })
 
-      await promSleep(3)
-      console.log("TEST 1: done", {rec})
+      await promSleep(8)
       check(rec).with(8)
    })
 
    it("works when receiver arrives first", async () => {
-      console.log("TEST 2: start")
 
       let recS: string = ""
 
-      go(async function main1() {
+      go(async function main2() {
 
          const _ch = ch<string>()
 
-         go(async function child1() {
-            // console.log("child 1", csp.runningPrc?._fnName)
+         go(async function child2() {
             await sleep(1)  // I sleep so main gets to _ch.rec first.
             await _ch.put("child ")
-            // console.log("child 2", csp.runningPrc?._fnName)
             await sleep(2)
             const _rec = await _ch.rec
             await _ch.put(_rec + _rec)
-            console.log("CHILD1: done")
          })
 
          recS = await _ch.rec
-         // console.log("main 1", csp.runningPrc?._fnName)
          await sleep(1)
-         // console.log("main 2", csp.runningPrc?._fnName)
          await _ch.put("main " + recS)
          recS = await _ch.rec
-         console.log("MAIN1: done")
       })
 
-      await promSleep(6)
-      console.log("TEST 2: done")
+      await promSleep(8)
       check(recS).with("main child main child ")
    })
 })
 
 
-topic.skip("buffered channels", () => {
+topic("buffered channels", () => {
 
-   it("works when putter arrives first", async () => {
+   it.only("works when putter arrives first", async () => {
 
-      let rec: Array<number> = []  // eslint-disable-line prefer-const
-      let procsOpsOrder: Array<string> = []  // eslint-disable-line prefer-const
+      let recS: Array<number> = []
+      let procsOpsOrder: Array<string> = []
 
       go(async function main() {
 
-         const ch1 = ch<number>(2)
+         const ch1 = ch<number>(1)
 
          go(async function child() {
-            await ch1.put(1)
-            procsOpsOrder.push("child")
-            await ch1.put(1)
-            procsOpsOrder.push("child")
-            await ch1.put(1)  // blocked here
-            procsOpsOrder.push("child")
+            for (let i = 0; i < 2; i++) {
+
+      // how to test that this blocks here?
+      // both, theoretically, resume *at the same time* when rec arrives
+      // so is really a race to procsOpsOrder.push()
+
+               await ch1.put(i)
+               procsOpsOrder.push("child")
+            }
          })
 
-         rec.push(await ch1)
-         procsOpsOrder.push("main")
          await sleep(1)
-         rec.push(await ch1)
-         procsOpsOrder.push("main")
-         rec.push(await ch1)
-         procsOpsOrder.push("main")
+         for (let i = 0; i < 2; i++) {
+            const rec = await ch1.rec
+            procsOpsOrder.push("main")
+            recS.push(rec)
+         }
       })
 
-      await promSleep(5)
-      check(rec).with([1, 1, 1])
+      await promSleep(10)
+      check(recS).with([0, 1])
       check(procsOpsOrder).with(["child", "child", "main", "child", "main", "main"])
    })
 })
@@ -151,7 +144,6 @@ topic.skip("buffered channels", () => {
 topic("process cancellation", () => {
 
    it("ribu automatically cancels child if parent does not wait to be done", async () => {
-      console.log("TEST 3: start")
 
       let mutated = false
 
