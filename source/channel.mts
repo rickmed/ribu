@@ -28,11 +28,11 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 		return new Promise<V>(resolveReceiver => {
 
-			const putterPrc = this._waitingPutters.pull()
+			const putterPrc = this._waitingPutters.deQ()
 
 			if (!putterPrc) {
 				receiverPrc._promResolve<V> = resolveReceiver
-				this._waitingReceivers.push(receiverPrc)
+				this._waitingReceivers.enQ(receiverPrc)
 				return
 			}
 
@@ -61,7 +61,7 @@ class Chan<V> extends BaseChan implements Ch<V> {
 	put(msg?: V): Promise<void> {
 
 		if (this._closed) {
-			throw new Error(`ribu: can't put on a closed channel`)
+			throw Error(`ribu: can't put on a closed channel`)
 		}
 
 		const putterPrc = getRunningPrc(`can't put outside a process.`)
@@ -69,12 +69,12 @@ class Chan<V> extends BaseChan implements Ch<V> {
 
 		return new Promise(resolvePutter => {
 
-			let receiverPrc = _waitingReceivers.pull()
+			let receiverPrc = _waitingReceivers.deQ()
 
 			if (!receiverPrc) {
 				putterPrc._promResolve<void> = resolvePutter
 				putterPrc._chanPutMsg_m = msg
-				this._waitingPutters.push(putterPrc)
+				this._waitingPutters.enQ(putterPrc)
 				return
 			}
 
@@ -88,7 +88,7 @@ class Chan<V> extends BaseChan implements Ch<V> {
 					return
 				}
 
-				receiverPrc = _waitingReceivers.pull()
+				receiverPrc = _waitingReceivers.deQ()
 			}
 		})
 	}
@@ -121,19 +121,19 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 
 		return new Promise<V>(resolveReceiver => {
 
-			const msg = this.#buffer.pull()
+			const msg = this.#buffer.deQ()
 
 			if (msg === undefined) {  // buffer is empty
 				receiverPrc._promResolve<V> = resolveReceiver
-				this._waitingReceivers.push(receiverPrc)
+				this._waitingReceivers.enQ(receiverPrc)
 				return
 			}
 
-			const putterPrc = this._waitingPutters.pull()
+			const putterPrc = this._waitingPutters.deQ()
 
 			if (putterPrc !== undefined) {
 
-				this.#buffer.push(putterPrc._chanPutMsg_m as V)
+				this.#buffer.enQ(putterPrc._chanPutMsg_m as V)
 
 				if (putterPrc._state === "RUNNING") {
 					csp.runningPrcS_m.unshift(putterPrc)
@@ -149,7 +149,7 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 	put(msg?: V): Promise<void> {
 
 		if (this._closed) {
-			throw new Error(`ribu: can't put on a closed channel`)
+			throw Error(`ribu: can't put on a closed channel`)
 		}
 
 		const putterPrc = getRunningPrc(`can't put outside a process.`)
@@ -161,15 +161,15 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 			if (buffer.isFull) {
 				putterPrc._promResolve<void> = resolvePutter
 				putterPrc._chanPutMsg_m = msg
-				this._waitingPutters.push(putterPrc)
+				this._waitingPutters.enQ(putterPrc)
 				return
 			}
 
 			const {_waitingReceivers} = this
-			let receiverPrc = _waitingReceivers.pull()
+			let receiverPrc = _waitingReceivers.deQ()
 
 			if (!receiverPrc) {
-				buffer.push(msg)
+				buffer.enQ(msg)
 				csp.runningPrcS_m.unshift(putterPrc)
 				resolvePutter(undefined)
 				return
@@ -182,7 +182,7 @@ class BufferedChan<V> extends BaseChan implements Ch<V> {
 					resolvePutter(undefined)
 					return
 				}
-				receiverPrc = _waitingReceivers.pull()
+				receiverPrc = _waitingReceivers.deQ()
 			}
 		})
 	}
@@ -233,12 +233,12 @@ class Queue<V> {
 		return this.#array_m.length === 0 ? true : false
 	}
 
-	pull() {
+	deQ() {
 		// @todo: check if empty when using other data structures
 		return this.#array_m.pop()
 	}
 
-	push(x?: V) {
+	enQ(x?: V) {
 		this.#array_m.unshift(x as V)
 	}
 }

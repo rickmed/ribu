@@ -57,8 +57,8 @@ export class Prc {
 		}
 	}
 
-	get done(): Ch {
-		return this._done
+	get done() {
+		return this._done.rec
 	}
 
 	ports<_P extends Ports>(ports: _P) {
@@ -89,6 +89,10 @@ export class Prc {
 		}
 
 		if (state === "CANCELLING") {
+
+			// maybe channels are more perfomant than native proms
+			// bc they are only thenables. So use channels here.
+			// and return .rec to caller
 
 			return new Promise<void>(resolve => {
 
@@ -126,7 +130,8 @@ export class Prc {
 		}
 
 		else if (_$childS && isSyncFn(_onCancel)) {
-			_onCancel(); await cancelChildS(_$childS)
+			_onCancel()
+			await cancelChildS(_$childS)
 		}
 
 		else {  /* _$child && isAsyncFn(_onCancel) */
@@ -138,12 +143,17 @@ export class Prc {
 		resolveConcuCallers(this)
 	}
 
+	#cancel(): Ch {
+
+		
+	}
+
 	#$onCancel(): Ch {
 
 		const done = ch()
 
 		const $onCancel = go(async () => {
-			await go(this._onCancel as AsyncFn).done.rec
+			await go(this._onCancel as AsyncFn).done
 			hardCancel($deadline)
 			await done.put()
 		})
@@ -158,7 +168,7 @@ export class Prc {
 	}
 }
 
-async function normalFinish(prc: Prc): Promise<void> {
+async function finishNormal(prc: Prc): Promise<void> {
 
 	/** Need to "consume" a runningPrc just as any ribu operation */
 	csp.runningPrcS_m.pop()
@@ -239,7 +249,7 @@ export const go: Go = (fn, ...fnArgs) => {
 
 	prom.then(
 		() => {
-			normalFinish(prc)
+			finishNormal(prc)
 		},
 	)
 
@@ -303,7 +313,7 @@ export function wait(...prcS: Prc[]): Ch {
 
 		let prcDoneChs: Array<Ch> = []
 		for (const prc of _$childS) {
-			prcDoneChs.push(prc.done)
+			prcDoneChs.push(prc._done)
 		}
 		doneChs = prcDoneChs
 	}
