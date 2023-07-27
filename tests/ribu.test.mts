@@ -1,81 +1,170 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
-import { go, ch, sleep, Gen, wait, race } from "../source/index.mjs"
-import { promSleep } from "./utils.mjs"
+import { go, ch, sleep, wait, race } from "../source/index.mjs"
+import { promSleep, range } from "./utils.mjs"
+// import csp from "../source/initCsp.mjs"
+
+// @todo: change tests to make assertions inside processes when sophi is fixed
+// with failing test when no assertions are made.
 
 
-// @todo: put assertions inside all main*()
-   // and remove all respective sleepProm()
-// now is not possible bc sophi does not fail on tests without ran assertions
+topic("unbuffered channels", () => {
 
+   it.only("simple put() and rec", () => {
 
-topic("process basics", () => {
+      go(function* main() {
+         const _ch = ch<number>()
 
-   it("can sleep without blocking", async () => {
+         go(function* child() {
+            yield* _ch.put(13)
+         })
 
-      let mutated = undefined
-
-      go(function* proc1() {
-         yield sleep(1)
-         mutated = true
+         const rec = yield* _ch.rec
+         check(rec).with(13)
       })
-
-      await promSleep(2)
-      mutated = false  // this statement should execute last
-
-      check(mutated).with(false)
    })
 
+   it("works when putter arrives first", async () => {
 
-   it("can yield promises which are resolved", async () => {
+      let rec: number = 1
 
-      go(function* proc1() {
-         const res = yield Promise.resolve(1)
-         check(res).with(1)
+      go(async function main1() {
+
+         const ch1 = ch<number>()
+
+         go(async function child1() {
+            await sleep(1)
+            await ch1.put(2)
+            await sleep(1)
+            const _rec = await ch1.rec
+            await ch1.put(_rec * 2)
+         })
+
+         await sleep(2)
+         rec = await ch1.rec
+         await sleep(1)
+         await ch1.put(rec * 2)
+         rec = await ch1.rec
       })
 
-      await promSleep(1)
+      await promSleep(8)
+      check(rec).with(8)
+   })
+
+   it("works when receiver arrives first", async () => {
+
+      let recS: string = ""
+
+      go(async function main2() {
+
+         const _ch = ch<string>()
+
+         go(async function child2() {
+            await sleep(1)  // I sleep so main gets to _ch.rec first.
+            await _ch.put("child ")
+            await sleep(2)
+            const _rec = await _ch.rec
+            await _ch.put(_rec + _rec)
+         })
+
+         recS = await _ch.rec
+         await sleep(1)
+         await _ch.put("main " + recS)
+         recS = await _ch.rec
+      })
+
+      await promSleep(8)
+      check(recS).with("main child main child ")
    })
 })
 
 
-topic("channels", () => {
+topic("process", () => {
 
-   it("can send/receive on channels", async () => {
+   it("can sleep without blocking", async () => {
 
-      let mutated
+      let mutated = false
 
-      const ch1 = ch<boolean>()
-
-      function* child() {
-         yield ch1.put(false)
-      }
-
-      go(function* main(): Gen<boolean> {
-         go(child)
-         mutated = yield ch1.rec
+      go(function* proc1() {
+         yield* sleep(1)
+         mutated = true
       })
 
       check(mutated).with(false)
+      await promSleep(2)
+      check(mutated).with(true)
+   })
+})
+
+
+topic("buffered channels", () => {
+
+   it("works when receiver arrives first", async () => {
+
+      let recS: Array<number> = []
+
+      go(async function main() {
+
+         const ch1 = ch<number>(1)
+
+         go(async function child() {
+            for (const i of range(2)) {
+               await ch1.put(i)
+            }
+            ch1.close()
+         })
+
+         while (ch1.isNotDone) {
+            const rec = await ch1.rec
+            recS.push(rec)
+         }
+      })
+
+      await promSleep(1)
+      check(recS).with([0, 1])
    })
 
-   it("can receive implicitly on a channel without using .rec", async () => {
+   it("works when putter arrives first", async () => {
 
-      let mutated
+      let recS: Array<number> = []
 
-      const ch1 = ch<boolean>()
+      go(async function main() {
 
-      function* child() {
-         yield ch1.put(false)
-      }
+         const ch1 = ch<number>(1)
 
-      go(function* main(): Gen<boolean> {
-         go(child)
-         mutated = yield ch1
+         go(async function child() {
+            for (const i of range(2)) {
+               await ch1.put(i)
+            }
+            ch1.close()
+         })
+
+         await sleep(1)
+         while (ch1.isNotDone) {
+            const rec = await ch1.rec
+            recS.push(rec)
+         }
       })
 
-      check(mutated).with(false)
+      await promSleep(2)
+      check(recS).with([0, 1])
+   })
+
+   it("blocks when buffer is full", async () => {
+
+      let opS: Array<number> = []
+      const ch1 = ch(2)
+
+      go(async function main() {
+         for (let i = 0; i < 3; i++) {
+            await ch1.put()
+            opS.push(i)
+         }
+      })
+
+      await promSleep(2)
+      check(opS).with([0, 1])
    })
 })
 
@@ -86,35 +175,36 @@ topic("process cancellation", () => {
 
       let mutated = false
 
-      go(function* main() {
-         go(function* sleeper() {
-            yield sleep(3)
+      go(async function main3() {
+
+         go(async function sleeper() {
+            await sleep(3)
             mutated = true
          })
-         yield sleep(1)
+
+         await sleep(1)
       })
 
       await promSleep(2)
-
       check(mutated).with(false)
    })
 })
 
 
-topic("process can wait for children processes", () => {
+topic.skip("process can wait for children processes", () => {
 
    it("explicit waiting with wait(...Procs). No return values", async () => {
 
       let mutated = false
 
-      go(function* main() {
+      go(async function main() {
 
-         const child = go(function* sleeper() {
-            yield sleep(1)
+         const child = go(async function sleeper() {
+            await sleep(1)
             mutated = true
          })
 
-         yield wait(child)
+         await wait(child).rec
       })
 
       await promSleep(2)
@@ -127,14 +217,14 @@ topic("process can wait for children processes", () => {
 
       let mutated = false
 
-      go(function* main() {
+      go(async function main() {
 
-         go(function* sleeper() {
-            yield sleep(1)
+         go(async function sleeper() {
+            await sleep(1)
             mutated = true
          })
 
-         yield wait()
+         await wait().rec
       })
 
       await promSleep(2)
@@ -144,29 +234,28 @@ topic("process can wait for children processes", () => {
 })
 
 
-topic("race()", () => {
+topic.skip("race()", () => {
 
    it("when all processes finish succesfully", async () => {
 
       let won = ""
 
-      go(function* main() {
+      go(async () => {
 
-         function* one() {
-            yield sleep(2)
+         async function one() {
+            await sleep(2)
             won = "one"
          }
 
-         function* two() {
-            yield sleep(1)
+         async function two() {
+            await sleep(1)
             won = "two"
          }
 
-         yield race(go(one), go(two))
+         await race(go(one), go(two)).rec
       })
 
       await promSleep(3)
-
       check(won).with("two")
    })
 

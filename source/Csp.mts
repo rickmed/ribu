@@ -17,7 +17,7 @@ export class Csp {
 		this.scheduledPrcS.add(prc)
 	}
 
-	get runningPrc() {
+	get runningPrc(): Prc | undefined {
 		return this.prcStack[this.prcStack.length - 1]
 	}
 }

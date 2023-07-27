@@ -1,6 +1,6 @@
+import { ch, BaseChan, type Ch } from "./channel.mjs"
 import { all } from "./index.mjs"
 import csp from "./initCsp.mjs"
-import { ch, BaseChan, type Ch } from "./channel.mjs"
 
 
 /* === Prc class ====================================================== */
@@ -12,7 +12,7 @@ export class Prc {
 
 	/** undefined when instantiated in Cancellable  */
 	_gen?: Gen = undefined
-	_genName: string = ""
+	_name: string
 
 	/* defaults are RUNNING/RESUME because gen is ran immediately */
 	_state: PrcState = "RUNNING"
@@ -29,7 +29,7 @@ export class Prc {
 	/** For auto cancel child Procs */
 	_$childS?: Set<Prc> = undefined
 
-	_onCancel?: OnCancel = undefined
+	_onCancel_m?: OnCancel = undefined
 	_deadline: number = csp.defaultDeadline
 
 	/** Setup by sleep(). Used by .cancel() to clearTimeout(_timeoutID) */
@@ -37,10 +37,11 @@ export class Prc {
 
 	done = ch()
 
-	constructor() {
+	constructor(gen?: Gen, genFnName: string = "") {
+		this._gen = gen
+		this._name = genFnName
 
 		const { runningPrc } = csp
-
 		if (runningPrc) {
 
 			this._parentPrc = runningPrc
@@ -53,7 +54,7 @@ export class Prc {
 		}
 	}
 
-	deadline(ms: number) {
+	setCancelDeadline(ms: number) {
 
 		const { _parentPrc } = this
 
@@ -91,7 +92,7 @@ export class Prc {
 		csp.scheduledPrcS.delete(this)
 		ifSleepTimeoutClear(this)
 
-		const { _$childS, _onCancel: onCancel } = this
+		const { _$childS, _onCancel_m: onCancel } = this
 
 		if (_$childS === undefined) {
 
@@ -123,10 +124,11 @@ export class Prc {
 		}
 	}
 
+	/** Since a new object is passed anyway, reuse the object for the api */
 	ports<_P extends Ports>(ports: _P) {
-		const _ports = ports   as WithCancel<_P>
-		_ports.cancel = this.cancel.bind(this)
-		return _ports
+		const prcApi_m = ports as WithCancel<_P>
+		prcApi_m.cancel = this.cancel.bind(this)
+		return prcApi_m
 	}
 }
 
@@ -237,7 +239,7 @@ function* finishNormalDone(prc: Prc) {
 }
 
 function* cancelChildS(prc: Prc) {
-	const $childS = prc._$childS    as Set<Prc>
+	const $childS = prc._$childS as Set<Prc>
 
 	let cancelChs = []  // eslint-disable-line prefer-const
 	for (const prc of $childS) {
@@ -257,7 +259,7 @@ function $onCancel(prc: Prc) {
 	const done = ch()
 
 	const $onCancel = go(function* $onCancel() {
-		yield go(prc._onCancel as GenFn).done
+		yield go(prc._onCancel_m as GenFn).done
 		// need to cancel $deadline because I won the race
 		yield $deadline.cancel()
 		nilParentRefAndMarkDONE(prc)
@@ -314,17 +316,9 @@ function runChildSCancelAndOnCancel(prc: Prc) {
 
 /* === Prc constructor ====================================================== */
 
-export function go<Args extends unknown[], _Ports extends Ports>(
-	genFn: GenFn<_Ports, Args>,
-	...genFnArgs: Args
-): Prc & _Ports {
-
-	const prc = new Prc()    as Prc & _Ports
-	prc._genName = genFn.name
-
-	const gen = genFn.call(prc, ...genFnArgs)
-	prc._gen = gen
-
+export const go: Go = (genFn, ...args) => {
+	const gen = genFn(...args)
+	const prc = new Prc(gen, genFn.name)
 	run(prc)
 	return prc
 }
@@ -336,14 +330,17 @@ export function go<Args extends unknown[], _Ports extends Ports>(
  */
 export function Cancellable(onCancel: OnCancel) {
 	const prc = new Prc()
-	prc._onCancel = onCancel
+	prc._onCancel_m = onCancel
 	return prc
 }
 
 
 export function onCancel(onCancel: OnCancel): void {
 	const runningPrc = csp.runningPrc
-	runningPrc._onCancel = onCancel
+	if (!runningPrc) {
+		throw Error(`ribu: can't use onCancel outside a process`)
+	}
+	runningPrc._onCancel_m = onCancel
 }
 
 
@@ -353,7 +350,7 @@ export function onCancel(onCancel: OnCancel): void {
 /**
  * Sleep
  */
-export function sleep(ms: number): YIELDABLE {
+export function sleep(ms: number): Yieldable {
 	const runningPrc = csp.runningPrc
 	const timeoutID = setTimeout(function _sleepTimeOut() {
 		setResume(runningPrc)
@@ -466,13 +463,21 @@ export function race(...prcS: Prc[]): Ch {
 export const YIELD = "RIBU_YIELD_VAL"
 export type YIELD_T = typeof YIELD
 
-export type YIELDABLE = YIELD_T | Ch<unknown> | Promise<unknown>
+export type Yieldable = YIELD_T | Ch<unknown> | Promise<unknown>
 
 export type Gen<Rec = unknown, Ret = void> =
-	Generator<YIELDABLE, Ret, Rec>
+	Generator<Yieldable, Ret, Rec>
 
-type GenFn< _Ports extends Ports = Ports, Args extends unknown[] = unknown[]> =
-	(this: Prc & _Ports, ...args: Args) => Gen
+type Go<Args extends unknown[] = unknown[]> =
+	(genFn: GenFn<Args>, ...fnArgs: Args) => Prc
+
+type GenFn<Args extends unknown[] = unknown[]> =
+	(...args: Args) => Gen
+
+
+type AsyncFn<Args extends unknown[] = unknown[]> =
+	(...args: Args) => Prom<unknown>
+
 
 type PrcState = "RUNNING" | "CANCELLING" | "DONE"
 type ExecNext = "RESUME" | "PARK"

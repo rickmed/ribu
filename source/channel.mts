@@ -1,25 +1,36 @@
-import { go, pullOutMsg, run, setPark, setResume, type Prc, type YIELD_T, YIELD } from "./process.mjs"
+import { go, pullOutMsg, run, setPark, setResume, type Prc, type YIELD_T, YIELD, Yieldable } from "./process.mjs"
 import csp from "./initCsp.mjs"
 
 
-export function ch<V = undefined>(capacity = 0):Ch<V> {
+export const DONE = Symbol("ribu chan DONE")
+
+
+export function ch<V = undefined>(capacity = 0): Ch<V> {
 	const _ch = capacity === 0 ? new Chan<V>() : new BufferedChan<V>(capacity)
 	return _ch
 }
 
-
 export type Ch<V = undefined> = {
-	put(msg: V): YIELD_T,
-   put(...msg: V extends undefined ? [] : [V]): YIELD_T,
-   get rec(): YIELD_T,
+	put(msg: V): ChGen<V>,
+   put(...msg: V extends undefined ? [] : [V]): ChGen<V>,
+   get rec(): ChGen<V>,
+	get isNotDone(): boolean
+	close(): void
    dispatch(msg: V): void,
 }
+
+type ChGen<V> = Generator<Yieldable, V, unknown>
 
 
 export class BaseChan<V> {
 
 	protected _waitingSenders = new Queue<Prc>()
 	protected _waitingReceivers = new Queue<Prc>()
+	protected _closed = false
+
+	close() {
+		this._closed = true
+	}
 
 	dispatch(msg: V): void {
 		// ok to cast. I would throw anyways and the error should be evident
@@ -35,48 +46,50 @@ export class BaseChan<V> {
 }
 
 
-class Chan<V> extends BaseChan<V> {
+class Chan<V> extends BaseChan<V> implements Ch<V> {
 
-   put(msg?: V): YIELD_T {
+   *put(msg?: V): YIELD_T {
 
-		const runningPrc = csp.runningPrc
 
-		const { _waitingReceivers } = this
 
-		if (_waitingReceivers.isEmpty) {
-			this._waitingSenders.push(runningPrc)
-			return setPark(runningPrc, msg)
-		}
+		// const runningPrc = csp.runningPrc
 
-		// cast is ok since _waitingReceivers is NOT Empty
-		const receiverPrc = _waitingReceivers.pull() as Prc
-		setResume(receiverPrc, msg)
-		csp.schedule(receiverPrc)
-		return setResume(runningPrc, undefined)
+		// const { _waitingReceivers } = this
+
+		// if (_waitingReceivers.isEmpty) {
+		// 	this._waitingSenders.push(runningPrc)
+		// 	return setPark(runningPrc, msg)
+		// }
+
+		// // cast is ok since _waitingReceivers is NOT Empty
+		// const receiverPrc = _waitingReceivers.pull() as Prc
+		// setResume(receiverPrc, msg)
+		// csp.schedule(receiverPrc)
+		// return setResume(runningPrc, undefined)
 	}
 
 	get rec(): YIELD_T {
 
-		const runningPrc = csp.runningPrc
+		// const runningPrc = csp.runningPrc
 
-		const { _waitingSenders } = this
+		// const { _waitingSenders } = this
 
-		if (_waitingSenders.isEmpty) {
-			this._waitingReceivers.push(runningPrc)
-			return setPark(runningPrc, undefined)
-		}
+		// if (_waitingSenders.isEmpty) {
+		// 	this._waitingReceivers.push(runningPrc)
+		// 	return setPark(runningPrc, undefined)
+		// }
 
-		// cast is ok since _waitingSenders is NOT Empty
-		const senderPrc = _waitingSenders.pull() as Prc
-		const msg = pullOutMsg(senderPrc)
-		setResume(senderPrc, undefined)
-		csp.schedule(senderPrc)
-		return setResume(runningPrc, msg)
+		// // cast is ok since _waitingSenders is NOT Empty
+		// const senderPrc = _waitingSenders.pull() as Prc
+		// const msg = pullOutMsg(senderPrc)
+		// setResume(senderPrc, undefined)
+		// csp.schedule(senderPrc)
+		// return setResume(runningPrc, msg)
 	}
 }
 
 
-class BufferedChan<V> extends BaseChan<V> {
+class BufferedChan<V> extends BaseChan<V> implements Ch<V> {
 
 	#buffer: Queue<V>
 	isFull: boolean
@@ -143,7 +156,7 @@ class BufferedChan<V> extends BaseChan<V> {
  */
 class Queue<V> {
 
-	#array: Array<V> = []
+	#array_m: Array<V> = []
 	#capacity
 
 	constructor(capacity = Number.MAX_SAFE_INTEGER) {
@@ -151,18 +164,18 @@ class Queue<V> {
 	}
 
 	get isEmpty() {
-		return this.#array.length === 0
+		return this.#array_m.length === 0
 	}
 	get isFull() {
-		return this.#array.length === this.#capacity
+		return this.#array_m.length === this.#capacity
 	}
 
 	pull() {
-		return this.#array.pop()
+		return this.#array_m.pop()
 	}
 
 	push(x: V) {
-		this.#array.unshift(x)
+		this.#array_m.unshift(x)
 	}
 }
 
@@ -255,5 +268,3 @@ export function all(...chanS: Ch[]): Ch {
 
 	return allDone
 }
-
-
