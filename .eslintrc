@@ -17,7 +17,7 @@
     "quotes": ["error", "double", {
       "allowTemplateLiterals": true
     }],
-    "no-inner-declarations" : "off",
+    "no-inner-declarations": "off",
 		"no-console": "error",
     "functional/immutable-data": ["error", {
       "ignoreClasses": "fieldsOnly",
@@ -25,8 +25,11 @@
       "ignoreAccessorPattern": "**.*_m*.**"
     }],
     "prefer-const": "off",
-    "@typescript-eslint/await-thenable": "error",
-    "@typescript-eslint/strict-boolean-expressions": "error"
+    "@typescript-eslint/no-this-alias": ["error", {
+      "allowedNames": ["self"]
+    }],
+    "@typescript-eslint/strict-boolean-expressions": "error",
+    "@typescript-eslint/await-thenable": "error"
   },
   "env": {
     "es2022": true,

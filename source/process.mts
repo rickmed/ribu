@@ -2,13 +2,15 @@ import { ch, BaseChan, type Ch } from "./channel.mjs"
 import { all } from "./index.mjs"
 import { csp, getRunningPrcOrThrow } from "./initCsp.mjs"
 
+type ChRec<V = undefined> = Ch<V>["rec"]
 
 /* === Prc class ====================================================== */
 
 /**
  * The generator manager
+ * @template Ret - The return type of the generator
  */
-export class Prc {
+export class Prc<Ret = unknown> {
 
 	_gen: Gen
 	_name: string
@@ -24,7 +26,17 @@ export class Prc {
 	_onCancel_m?: OnCancel = undefined
 	_deadline: number = csp.defaultDeadline
 
-	done = ch()
+	_lateCancelCallerChs_m: undefined | Ch[] = undefined
+
+	done = ch<Ret>()
+
+	/*
+		const res = prc2.done.rec    meanwhile    prc2.cancel()
+		res should be ErrCancelled (each prc.done.rec need to disambiguate if err)
+
+		so I think done is ch<Ret | Err>
+
+	*/
 
 	constructor(gen: Gen, genFnName: string = "") {
 		this._gen = gen
@@ -43,6 +55,187 @@ export class Prc {
 		}
 	}
 
+	_resume(msg?: unknown): void {
+
+		if (this._state !== "RUNNING") {
+			return
+		}
+
+		csp.prcStack.push(this)
+
+		for (;;) {
+			const { done, value } = this._gen.next(msg)
+
+			if (done === true) {
+				go(this.#finishNormalDone, value as Ret)
+				return
+			}
+			if (value === "PARK") {
+				break
+			}
+			if (value === "RESUME") {
+				continue
+			}
+			if (value instanceof Promise) {
+				value.then(
+					(val: unknown) => {
+						this._resume(val)
+					},
+					(err: unknown) => {
+						// @todo implement errors
+						throw err
+					}
+				)
+				break
+			}
+			// if (value instanceof BaseChan) {
+			// 	// @todo
+			// }
+		}
+
+		csp.prcStack.pop()
+	}
+
+	*#finishNormalDone(genRetVal: Ret) {
+		csp.prcStack.pop()
+		this._state = "DONE"
+
+		const { done, _$childS } = this
+
+		// No need to put a deadline on auto canceling any active children because,
+		// at instantiation, they have a shorter/equal deadline than this prc.
+		// So just need for them to finish cancelling themselves.
+		if (_$childS) {
+			yield* this.#cancelChildS(_$childS).rec
+		}
+
+		this.#finalCleanup()
+		yield done.put(genRetVal)
+	}
+
+	#cancelChildS($childS: Set<Prc>): Ch {
+		let cancelChs: Ch[] = []
+		for (const prc of $childS) {
+			cancelChs.push(prc.cancel())
+		}
+		return all(...cancelChs)
+	}
+
+	#finalCleanup(): void {
+		this._$childS = undefined
+		const { _parentPrc } = this
+		if (_parentPrc) {
+			_parentPrc._$childS?.delete(this)
+			this._parentPrc = undefined
+		}
+	}
+
+	#_cancel(): Ch {
+
+		const state = this._state
+
+		if (state === "DONE") {
+			// @todo: implement a more efficient ch.resolve() to not create a whole prc
+			const _ch = ch()
+			go(function* doneCancel() {
+				yield _ch.put()
+			})
+			return _ch
+		}
+
+		if (state === "CANCELLING") {
+			const _ch = ch()
+			if (!this._lateCancelCallerChs_m) {
+				this._lateCancelCallerChs_m = []
+			}
+			this._lateCancelCallerChs_m.push(_ch)
+			return _ch
+		}
+
+		this._state = "CANCELLING"
+
+		const { _$childS, _onCancel_m } = this
+
+		this.#clearTimeout()
+
+		if (!_$childS && !_onCancel_m) {
+			// void and goes to this.#finalCleanup() below
+		}
+
+		else if (!_$childS && isRegFn(_onCancel_m)) {
+			_onCancel_m()
+		}
+
+		else if (!_$childS && isGenFn(_onCancel_m)) {
+			return this.#onCancelPrc()
+		}
+
+		else if (_$childS && !_onCancel_m) {
+			yield* cancelChildS(_$childS)
+		}
+
+		else if (_$childS && isRegFn(_onCancel_m)) {
+			_onCancel_m()
+			yield cancelChildS(_$childS)
+		}
+
+		else {  /* _$child && isGenFn(_onCancel) */
+			yield Promise.allSettled([this.#onCancelPrc(), cancelChildS(_$childS!)])
+		}
+
+		this._state = "DONE"
+		this.#finalCleanup()
+		this.#notifyLateCancelCallers()
+	}
+
+	#onCancelPrc(): Ch {
+
+		const done = ch()
+		const self = this
+
+		const $onCancel = go(function* () {
+			yield* go(self._onCancel_m as GenFn).done.rec
+			hardCancel($deadline)
+			yield done.put()
+		})
+
+		const $deadline = go(function* () {
+			yield sleep(self._deadline)
+			hardCancel($onCancel)
+			yield done.put()
+		})
+
+		return done
+
+		function hardCancel(prc: Prc) {
+			prc.#clearTimeout()
+			prc.#finalCleanup()
+		}
+	}
+
+	#clearTimeout(): void {
+		const {_timeoutID_m} = this
+		if (_timeoutID_m) {
+			clearTimeout(_timeoutID_m)
+		}
+	}
+
+
+	/** Public methods */
+	// get done() {
+	// 	return
+	// }
+	cancel(): ChRec {
+		return this.#_cancel().rec
+	}
+
+	ports<_P extends Ports>(ports: _P) {
+		const prcApi_m = ports as WithCancel<_P>
+		// Since a new object is passed anyway, reuse the object for the api
+		prcApi_m.cancel = this.cancel.bind(this)
+		return prcApi_m
+	}
+
 	setCancelDeadline(ms: number) {
 
 		const { _parentPrc } = this
@@ -55,160 +248,11 @@ export class Prc {
 		this._deadline = ms
 		return this
 	}
-
-	cancel(): Ch {
-
-		const state = this._state
-		const { done } = this
-
-		if (state === "DONE") {
-			/* @todo: when state === DONE (late .cancel() callers)
-				when I implement done -> results/errs, the results/errs must be kept inside cache
-				and be returned here for late proc.done callers
-			*/
-			return done
-		}
-
-		if (state === "CANCELLING") {
-			/* @todo: concurrent .cancel() calls:
-				need to return some ch to caller that when cancel protocol is done it will notify
-			*/
-			return done
-		}
-
-		this._state = "CANCELLING"
-
-		const { _timeoutID_m, _$childS, _onCancel_m } = this
-
-		if (_timeoutID_m) {
-			clearTimeout(_timeoutID_m)
-		}
-
-		if (!_$childS && !_onCancel_m) {
-			// void and goes to this.#finalCleanup() below
-		}
-
-		else if (!_$childS && isRegFn(_onCancel_m)) {
-			_onCancel_m()
-		}
-
-		else if (!_$childS && isGenFn(_onCancel_m)) {
-			yield* this.#$onCancel().rec
-		}
-
-		else if (_$childS && !_onCancel_m) {
-			yield* cancelChildS(_$childS)
-		}
-
-		else if (_$childS && isRegFn(_onCancel_m)) {
-			_onCancel_m()
-			await cancelChildS(_$childS)
-		}
-
-		else {  /* _$child && isGenFn(_onCancel) */
-			await Promise.allSettled([this.#$onCancel(), cancelChildS(_$childS!)])
-		}
-
-		this._state = "DONE"
-		finalCleanup(this)
-		resolveConcuCallers(this)
-	}
-
-	#$onCancel(): Ch {
-
-		const done = ch()
-
-		const $onCancel = go(async () => {
-			await go(this._onCancel as AsyncFn).done
-			hardCancel($deadline)
-			await done.put()
-		})
-
-		const $deadline = go(async () => {
-			await sleep(this._deadline)
-			hardCancel($onCancel)
-			await done.put()
-		})
-
-		return done
-	}
-
-	/** Since a new object is passed anyway, reuse the object for the api */
-	ports<_P extends Ports>(ports: _P) {
-		const prcApi_m = ports as WithCancel<_P>
-		prcApi_m.cancel = this.cancel.bind(this)
-		return prcApi_m
-	}
-}
-
-export function resume(prc: Prc, msg?: unknown): void {
-	if (prc._state !== "RUNNING") {
-		return
-	}
-
-	csp.prcStack.push(prc)
-
-	// eslint-disable-next-line no-constant-condition
-	while (true) {
-		const { done, value } = prc._gen.next(msg)
-		if (done === true) {
-			go(finishNormalDone, prc, value)
-			return
-		}
-		if (value === "PARK") break
-		if (value === "RESUME") continue
-		if (value instanceof Promise) {
-			handleProm(value, prc)
-			break
-		}
-		// if (value instanceof BaseChan) {
-		// 	// @todo
-		// }
-	}
-
-	csp.prcStack.pop()
-}
-
-function handleProm(prom: Promise<unknown>, prc: Prc) {
-	prom.then(
-		function onVal(val: unknown) {
-			resume(prc, val)
-		},
-		function onErr(err: unknown) {
-			// @todo implement errors
-			throw err
-		}
-	)
 }
 
 
-function* finishNormalDone(prc: Prc, value) {
-	csp.prcStack.pop()
-	prc._state = "DONE"
 
-	const { done, _$childS } = prc
 
-	// No need to put a deadline on auto canceling any active children because,
-	// at instantiation, they have a shorter/equal deadline than this prc.
-	// So just need for them to finish cancelling themselves
-	if (_$childS && _$childS.size > 0) {
-		yield* go(cancelChildS, prc).done.rec
-	}
-
-	prc._parentPrc = undefined
-	yield done.put()
-}
-
-function* cancelChildS(prc: Prc) {
-	const $childS = prc._$childS!
-
-	let cancelChs: Ch[] = []
-	for (const prc of $childS) {
-		cancelChs.push(prc.cancel())
-	}
-	yield* all(...cancelChs).rec
-	prc._$childS = undefined
-}
 
 function nilParentRefAndMarkDONE(prc: Prc) {
 	prc._state = "DONE"
@@ -236,13 +280,6 @@ function $onCancel(prc: Prc) {
 	return done
 }
 
-function hardCancel(prc: Prc) {
-	prc._state = "DONE"
-	ifSleepTimeoutClear(prc)
-	prc._gen?.return()
-	prc._parentPrc = undefined
-	prc._$childS = undefined
-}
 
 function cancelChildSAndFinish(prc: Prc) {
 	const { done } = prc
@@ -298,6 +335,9 @@ export function onCancel(onCancel: OnCancel): void {
 	const runningPrc = csp.runningPrc
 	if (!runningPrc) {
 		throw Error(`ribu: can't use onCancel outside a process`)
+	}
+	if (runningPrc._onCancel_m) {
+		throw Error(`ribu: process onCancel is already set`)
 	}
 	runningPrc._onCancel_m = onCancel
 }
@@ -386,7 +426,7 @@ export function race(...prcS: Prc[]): Ch {
 
 	const done = ch<unknown>()
 
-	let prcSDone: Array<Ch> = []   // eslint-disable-line prefer-const
+	let prcSDone: Array<Ch> = []
 	for (const prc of prcS) {
 		prcSDone.push(prc.done)
 	}

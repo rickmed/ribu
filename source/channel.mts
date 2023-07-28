@@ -1,4 +1,4 @@
-import { resume as resume, Prc, type Gen, go } from "./process.mjs"
+import { Prc, type Gen, go } from "./process.mjs"
 import { getRunningPrcOrThrow } from "./initCsp.mjs"
 
 
@@ -11,7 +11,7 @@ export function ch<V = undefined>(capacity = 0): Ch<V> {
 }
 
 export type Ch<V = undefined> = {
-   get rec(): Gen<V, V>,
+   get rec(): Gen<V>,
 	put(msg: V): "PARK" | "RESUME",
    put(...msg: V extends undefined ? [] : [V]): "PARK" | "RESUME",
 	get isNotDone(): boolean
@@ -40,7 +40,7 @@ export class BaseChan<V> {
 			this._enQueuedMsgs.enQ(msg)
 			return
 		}
-		resume(receiverPrc, msg)
+		receiverPrc._resume(msg)
 	}
 
 	/* Subclasses below overwrite it.
@@ -57,28 +57,28 @@ class Chan<V> extends BaseChan<V> implements Ch<V> {
 	 * typescript can't preserve the types between what is yielded and what is
 	 * returned at gen.next()
 	 */
-	get rec(): Gen<V, V> {
+	get rec() {
 
 		const receiverPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
 		let putterPrc = this._waitingPutters.deQ()
-		const thisCh = this  // eslint-disable-line @typescript-eslint/no-this-alias
+		const self = this
 
-		function* _rec(): Gen<V, V> {
+		function* _rec(): Gen<V> {
 			if (!putterPrc) {
-				thisCh._waitingReceivers.enQ(receiverPrc)
+				self._waitingReceivers.enQ(receiverPrc)
 				const msg = yield "PARK"
-				return msg
+				return msg as V
 			}
 
-			const {_enQueuedMsgs} = thisCh
+			const {_enQueuedMsgs} = self
 			if (!_enQueuedMsgs.isEmpty) {
 				return _enQueuedMsgs.deQ()!
 			}
 
 			else {
-				resume(putterPrc)
-				const msg = putterPrc._chanPutMsg_m as V
-				return msg
+				putterPrc._resume()
+				const msg = putterPrc._chanPutMsg_m
+				return msg as V
 			}
 
 		}
@@ -104,7 +104,7 @@ class Chan<V> extends BaseChan<V> implements Ch<V> {
 			return "PARK"
 		}
 
-		resume(receiverPrc, msg)
+		receiverPrc._resume(msg)
 		return "RESUME"
 	}
 
@@ -129,24 +129,24 @@ class BufferedChan<V> extends BaseChan<V> implements Ch<V> {
 	get rec(): Gen<V, V> {
 
 		const receiverPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
-		const thisCh = this  // eslint-disable-line @typescript-eslint/no-this-alias
+		const self = this
 
 		function* _rec(): Gen<V, V> {
 
-			const buffer = thisCh.#buffer
+			const buffer = self.#buffer
 			const msg = buffer.deQ()
 
 			if (msg === undefined) {
-				thisCh._waitingReceivers.enQ(receiverPrc)
+				self._waitingReceivers.enQ(receiverPrc)
 				const msg = yield "PARK"
 				return msg
 			}
 
-			const putterPrc = thisCh._waitingPutters.deQ()
+			const putterPrc = self._waitingPutters.deQ()
 
 			if (putterPrc) {
 				buffer.enQ(putterPrc._chanPutMsg_m as V)
-				resume(putterPrc)
+				putterPrc._resume()
 			}
 
 			return msg
@@ -176,13 +176,13 @@ class BufferedChan<V> extends BaseChan<V> implements Ch<V> {
 
 		if (!receiverPrc) {
 			buffer.enQ(msg as V)
-			resume(putterPrc)
+			putterPrc._resume()
 			return "RESUME"
 		}
 
 		while (receiverPrc) {
 			if (receiverPrc._state === "RUNNING") {
-				resume(receiverPrc, msg)
+				receiverPrc._resume(msg)
 				break
 			}
 			receiverPrc = _waitingReceivers.deQ()
@@ -227,66 +227,66 @@ class Queue<V> {
 
 
 
-// @todo
-// /**
-//  * @template TChVal
-//  * @implements {Ribu.Ch<TChVal>}
-//  */
-// export class BroadcastCh {
+/**
+ * @todo
+ * @template TChVal
+ * @implements {Ribu.Ch<TChVal>}
+ */
+export class BroadcastCh {
 
-// 	/** @type {Ch | Array<Ch> | undefined} */
-// 	#listeners = undefined
+	/** @type {Ch | Array<Ch> | undefined} */
+	#listeners = undefined
 
-// 	/** @return {_Ribu.YIELD_VAL} */
-// 	get rec() {
+	/** @return {_Ribu.YIELD_VAL} */
+	get rec() {
 
-// 		const listenerCh = ch()
-// 		const listeners = this.#listeners
+		const listenerCh = ch()
+		const listeners = this.#listeners
 
-// 		if (listeners === undefined) {
-// 			this.#listeners = listenerCh
-// 		}
-// 		else if (Array.isArray(listeners)) {
-// 			listeners.push(listenerCh)
-// 		}
-// 		else {
-// 			this.#listeners = []
-// 			this.#listeners.push(listenerCh)
-// 		}
+		if (listeners === undefined) {
+			this.#listeners = listenerCh
+		}
+		else if (Array.isArray(listeners)) {
+			listeners.push(listenerCh)
+		}
+		else {
+			this.#listeners = []
+			this.#listeners.push(listenerCh)
+		}
 
-// 		return listenerCh
-// 	}
+		return listenerCh
+	}
 
-// 	/** @type {() => _Ribu.YIELD_VAL} */
-// 	put() {
+	/** @type {() => _Ribu.YIELD_VAL} */
+	put() {
 
-// 		const notifyDone = ch()
-// 		const listeners = this.#listeners
+		const notifyDone = ch()
+		const listeners = this.#listeners
 
-// 		go(function* _emit() {
-// 			if (listeners === undefined) {
-// 				yield notifyDone
-// 				return
-// 			}
-// 			if (Array.isArray(listeners)) {
-// 				for (const ch of listeners) {
-// 					yield ch.put()
-// 				}
-// 				yield notifyDone
-// 				return
-// 			}
-// 			yield listeners.put()
-// 			yield notifyDone.rec
-// 		})
+		go(function* _emit() {
+			if (listeners === undefined) {
+				yield notifyDone
+				return
+			}
+			if (Array.isArray(listeners)) {
+				for (const ch of listeners) {
+					yield ch.put()
+				}
+				yield notifyDone
+				return
+			}
+			yield listeners.put()
+			yield notifyDone.rec
+		})
 
-// 		return notifyDone.put()
-// 	}
+		return notifyDone.put()
+	}
 
-// 	/** @type {(msg: TChVal) => void} */
-// 	dispatch(msg) {
+	/** @type {(msg: TChVal) => void} */
+	dispatch(msg) {
 
-// 	}
-// }
+	}
+}
 
 
 
