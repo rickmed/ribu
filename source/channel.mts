@@ -1,5 +1,5 @@
-import { go, pullOutMsg, run, setPark, setResume, type Prc, type YIELD_T, YIELD, Yieldable } from "./process.mjs"
-import csp from "./initCsp.mjs"
+import { resume as resume, Prc, type Gen, go } from "./process.mjs"
+import { getRunningPrcOrThrow } from "./initCsp.mjs"
 
 
 export const DONE = Symbol("ribu chan DONE")
@@ -11,80 +11,105 @@ export function ch<V = undefined>(capacity = 0): Ch<V> {
 }
 
 export type Ch<V = undefined> = {
-	put(msg: V): ChGen<V>,
-   put(...msg: V extends undefined ? [] : [V]): ChGen<V>,
-   get rec(): ChGen<V>,
+   get rec(): Gen<V, V>,
+	put(msg: V): "PARK" | "RESUME",
+   put(...msg: V extends undefined ? [] : [V]): "PARK" | "RESUME",
 	get isNotDone(): boolean
 	close(): void
-   dispatch(msg: V): void,
+   enQueue(msg: V): void,
 }
-
-type ChGen<V> = Generator<Yieldable, V, unknown>
 
 
 export class BaseChan<V> {
 
-	protected _waitingSenders = new Queue<Prc>()
+	protected _waitingPutters = new Queue<Prc>()
 	protected _waitingReceivers = new Queue<Prc>()
+	protected _enQueuedMsgs = new Queue<V>()
 	protected _closed = false
 
 	close() {
 		this._closed = true
 	}
 
-	dispatch(msg: V): void {
-		// ok to cast. I would throw anyways and the error should be evident
-		const waitingReceiver = this._waitingReceivers.pull() as Prc
-		setResume(waitingReceiver, msg)
-		run(waitingReceiver)
+	enQueue(msg: V): void {
+		if (this._closed) {
+			throw Error(`ribu: can't enQueue() on a closed channel`)
+		}
+		const receiverPrc = this._waitingReceivers.deQ()
+		if (!receiverPrc) {
+			this._enQueuedMsgs.enQ(msg)
+			return
+		}
+		resume(receiverPrc, msg)
 	}
 
 	/* Subclasses below overwrite it.
-	 * Placed for "value instanceof BaseChan" in run(prc)
+	 * Needed for "value instanceof BaseChan" in proceed(prc)
 	*/
-	get rec() { return YIELD }
+	// get rec() { return YIELD }
 }
 
 
 class Chan<V> extends BaseChan<V> implements Ch<V> {
 
-   *put(msg?: V): YIELD_T {
+	/**
+	 * Need to use full generator, ie, yield*, instead of just yield, because
+	 * typescript can't preserve the types between what is yielded and what is
+	 * returned at gen.next()
+	 */
+	get rec(): Gen<V, V> {
 
+		const receiverPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
+		let putterPrc = this._waitingPutters.deQ()
+		const thisCh = this  // eslint-disable-line @typescript-eslint/no-this-alias
 
+		function* _rec(): Gen<V, V> {
+			if (!putterPrc) {
+				thisCh._waitingReceivers.enQ(receiverPrc)
+				const msg = yield "PARK"
+				return msg
+			}
 
-		// const runningPrc = csp.runningPrc
+			const {_enQueuedMsgs} = thisCh
+			if (!_enQueuedMsgs.isEmpty) {
+				return _enQueuedMsgs.deQ()!
+			}
 
-		// const { _waitingReceivers } = this
+			else {
+				resume(putterPrc)
+				const msg = putterPrc._chanPutMsg_m as V
+				return msg
+			}
 
-		// if (_waitingReceivers.isEmpty) {
-		// 	this._waitingSenders.push(runningPrc)
-		// 	return setPark(runningPrc, msg)
-		// }
+		}
 
-		// // cast is ok since _waitingReceivers is NOT Empty
-		// const receiverPrc = _waitingReceivers.pull() as Prc
-		// setResume(receiverPrc, msg)
-		// csp.schedule(receiverPrc)
-		// return setResume(runningPrc, undefined)
+		return _rec()
 	}
 
-	get rec(): YIELD_T {
+	/**
+	 * No need to pay the cost of using yield* because put() returns nothing
+	 * within a process, so no type preserving needed.
+	 */
+   put(msg?: V): "PARK" | "RESUME" {
 
-		// const runningPrc = csp.runningPrc
+		if (this._closed) {
+			throw Error(`ribu: can't put() on a closed channel`)
+		}
 
-		// const { _waitingSenders } = this
+		const putterPrc = getRunningPrcOrThrow(`can't put outside a process.`)
+		let receiverPrc = this._waitingReceivers.deQ()
 
-		// if (_waitingSenders.isEmpty) {
-		// 	this._waitingReceivers.push(runningPrc)
-		// 	return setPark(runningPrc, undefined)
-		// }
+		if (!receiverPrc) {
+			this._waitingPutters.enQ(putterPrc)
+			return "PARK"
+		}
 
-		// // cast is ok since _waitingSenders is NOT Empty
-		// const senderPrc = _waitingSenders.pull() as Prc
-		// const msg = pullOutMsg(senderPrc)
-		// setResume(senderPrc, undefined)
-		// csp.schedule(senderPrc)
-		// return setResume(runningPrc, msg)
+		resume(receiverPrc, msg)
+		return "RESUME"
+	}
+
+	get isNotDone() {
+		return this._waitingPutters.isEmpty ? false : true
 	}
 }
 
@@ -101,52 +126,72 @@ class BufferedChan<V> extends BaseChan<V> implements Ch<V> {
 		this.isFull = buffer.isFull
 	}
 
-	put(msg?: V): YIELD_T {
+	get rec(): Gen<V, V> {
 
-		const runningPrc = csp.runningPrc
+		const receiverPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
+		const thisCh = this  // eslint-disable-line @typescript-eslint/no-this-alias
+
+		function* _rec(): Gen<V, V> {
+
+			const buffer = thisCh.#buffer
+			const msg = buffer.deQ()
+
+			if (msg === undefined) {
+				thisCh._waitingReceivers.enQ(receiverPrc)
+				const msg = yield "PARK"
+				return msg
+			}
+
+			const putterPrc = thisCh._waitingPutters.deQ()
+
+			if (putterPrc) {
+				buffer.enQ(putterPrc._chanPutMsg_m as V)
+				resume(putterPrc)
+			}
+
+			return msg
+		}
+
+		return _rec()
+	}
+
+	put(msg?: V): "PARK" | "RESUME" {
+
+		if (this._closed) {
+			throw Error(`ribu: can't put on a closed channel`)
+		}
+
+		const putterPrc = getRunningPrcOrThrow(`can't put outside a process.`)
 
 		const buffer = this.#buffer
 
 		if (buffer.isFull) {
-			this._waitingSenders.push(runningPrc)
-			return setPark(runningPrc, msg)
+			putterPrc._chanPutMsg_m = msg
+			this._waitingPutters.enQ(putterPrc)
+			return "PARK"
 		}
 
-		const { _waitingReceivers } = this
-		if (_waitingReceivers.isEmpty) {
-			buffer.push(msg as V)
-			return setResume(runningPrc, undefined)
+		const {_waitingReceivers} = this
+		let receiverPrc = _waitingReceivers.deQ()
+
+		if (!receiverPrc) {
+			buffer.enQ(msg as V)
+			resume(putterPrc)
+			return "RESUME"
 		}
 
-		// cast is ok since _waitingReceivers is NOT Empty
-		const receiverPrc = _waitingReceivers.pull() as Prc
-		setResume(receiverPrc, msg)
-		csp.schedule(receiverPrc)
-		return setResume(runningPrc, undefined)
+		while (receiverPrc) {
+			if (receiverPrc._state === "RUNNING") {
+				resume(receiverPrc, msg)
+				break
+			}
+			receiverPrc = _waitingReceivers.deQ()
+		}
+		return "RESUME"
 	}
 
-	get rec(): YIELD_T {
-
-		const runningPrc = csp.runningPrc
-
-		const buffer = this.#buffer
-
-		if (buffer.isEmpty) {
-			this._waitingReceivers.push(runningPrc)
-			return setPark(runningPrc, undefined)
-		}
-
-		const { _waitingSenders } = this
-		if (_waitingSenders.isEmpty) {
-			return setResume(runningPrc, buffer.pull())
-		}
-
-		// cast is ok since _waitingSenders is NOT Empty
-		const senderPrc = _waitingSenders.pull() as Prc
-		const msg = pullOutMsg(senderPrc)
-		setResume(senderPrc, undefined)
-		csp.schedule(senderPrc)
-		return setResume(runningPrc, msg)
+	get isNotDone() {
+		return this.#buffer.isEmpty && this._waitingPutters.isEmpty ? false : true
 	}
 }
 
@@ -166,15 +211,16 @@ class Queue<V> {
 	get isEmpty() {
 		return this.#array_m.length === 0
 	}
+
 	get isFull() {
 		return this.#array_m.length === this.#capacity
 	}
 
-	pull() {
+	deQ() {
 		return this.#array_m.pop()
 	}
 
-	push(x: V) {
+	enQ(x: V) {
 		this.#array_m.unshift(x)
 	}
 }
@@ -252,7 +298,7 @@ export function all(...chanS: Ch[]): Ch {
 
 	for (const chan of chanS) {
 		go(function* _all() {
-			yield chan
+			yield* chan.rec
 			yield notifyDone.put()
 		})
 	}
@@ -260,7 +306,7 @@ export function all(...chanS: Ch[]): Ch {
 	go(function* _collectDones() {
 		let nDone = 0
 		while (nDone < chansL) {
-			yield notifyDone
+			yield* notifyDone.rec
 			nDone++
 		}
 		yield allDone.put()

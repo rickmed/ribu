@@ -1,6 +1,6 @@
 import { ch, BaseChan, type Ch } from "./channel.mjs"
 import { all } from "./index.mjs"
-import csp from "./initCsp.mjs"
+import { csp, getRunningPrcOrThrow } from "./initCsp.mjs"
 
 
 /* === Prc class ====================================================== */
@@ -10,34 +10,23 @@ import csp from "./initCsp.mjs"
  */
 export class Prc {
 
-	/** undefined when instantiated in Cancellable  */
-	_gen?: Gen = undefined
+	_gen: Gen
 	_name: string
-
-	/* defaults are RUNNING/RESUME because gen is ran immediately */
 	_state: PrcState = "RUNNING"
-	_execNext: ExecNext = "RESUME"
-
-	/**
-	 * Whatever is yield/.next() to/from the generator.
-	 * Default is undefined because first .next(genMsg) is ignored anyways
-	 */
-	_genMsg: unknown = undefined
+	_chanPutMsg_m: unknown
 
 	/** For bubbling errors up (undefined for root prcS) */
 	_parentPrc?: Prc = undefined
 	/** For auto cancel child Procs */
 	_$childS?: Set<Prc> = undefined
 
+	_timeoutID_m?: NodeJS.Timeout = undefined
 	_onCancel_m?: OnCancel = undefined
 	_deadline: number = csp.defaultDeadline
 
-	/** Setup by sleep(). Used by .cancel() to clearTimeout(_timeoutID) */
-	_timeoutID?: NodeJS.Timeout = undefined
-
 	done = ch()
 
-	constructor(gen?: Gen, genFnName: string = "") {
+	constructor(gen: Gen, genFnName: string = "") {
 		this._gen = gen
 		this._name = genFnName
 
@@ -67,7 +56,7 @@ export class Prc {
 		return this
 	}
 
-	cancel() {
+	cancel(): Ch {
 
 		const state = this._state
 		const { done } = this
@@ -88,40 +77,60 @@ export class Prc {
 		}
 
 		this._state = "CANCELLING"
-		this._gen?.return()
-		csp.scheduledPrcS.delete(this)
-		ifSleepTimeoutClear(this)
 
-		const { _$childS, _onCancel_m: onCancel } = this
+		const { _timeoutID_m, _$childS, _onCancel_m } = this
 
-		if (_$childS === undefined) {
-
-			if (onCancel === undefined) {
-				nilParentRefAndMarkDONE(this)
-				return done
-			}
-
-			if (onCancel.constructor === Function) {
-				(onCancel as onCancelFn)()
-				nilParentRefAndMarkDONE(this)
-				return done
-			}
-
-			return $onCancel(this)
+		if (_timeoutID_m) {
+			clearTimeout(_timeoutID_m)
 		}
-		else { /* has _$childS */
 
-			if (onCancel === undefined) {
-				return cancelChildSAndFinish(this)
-			}
-
-			if (onCancel.constructor === Function) {
-				(onCancel as onCancelFn)()
-				return cancelChildSAndFinish(this)
-			}
-
-			return runChildSCancelAndOnCancel(this)
+		if (!_$childS && !_onCancel_m) {
+			// void and goes to this.#finalCleanup() below
 		}
+
+		else if (!_$childS && isRegFn(_onCancel_m)) {
+			_onCancel_m()
+		}
+
+		else if (!_$childS && isGenFn(_onCancel_m)) {
+			yield* this.#$onCancel().rec
+		}
+
+		else if (_$childS && !_onCancel_m) {
+			yield* cancelChildS(_$childS)
+		}
+
+		else if (_$childS && isRegFn(_onCancel_m)) {
+			_onCancel_m()
+			await cancelChildS(_$childS)
+		}
+
+		else {  /* _$child && isGenFn(_onCancel) */
+			await Promise.allSettled([this.#$onCancel(), cancelChildS(_$childS!)])
+		}
+
+		this._state = "DONE"
+		finalCleanup(this)
+		resolveConcuCallers(this)
+	}
+
+	#$onCancel(): Ch {
+
+		const done = ch()
+
+		const $onCancel = go(async () => {
+			await go(this._onCancel as AsyncFn).done
+			hardCancel($deadline)
+			await done.put()
+		})
+
+		const $deadline = go(async () => {
+			await sleep(this._deadline)
+			hardCancel($onCancel)
+			await done.put()
+		})
+
+		return done
 	}
 
 	/** Since a new object is passed anyway, reuse the object for the api */
@@ -132,97 +141,49 @@ export class Prc {
 	}
 }
 
-export function pullOutMsg(prc: Prc): unknown {
-	const outMsg = prc._genMsg
-	prc._genMsg = undefined
-	return outMsg
-}
-
-export function setResume(prc: Prc, genMsg?: unknown): YIELD_T {
-	prc._execNext = "RESUME"
-	prc._genMsg = genMsg
-	return YIELD
-}
-
-export function setPark(prc: Prc, genMsg?: unknown): YIELD_T {
-	prc._execNext = "PARK"
-	prc._genMsg = genMsg
-	return YIELD
-}
-
-export function run(prc: Prc): void {
-
-	csp.prcStack.push(prc)
-
-	let genDone = false
-	while (genDone === false) {
-
-		const exec = prc._execNext
-
-		if (exec === "PARK") {
-			break
-		}
-
-		if (exec === "RESUME") {
-
-			// ok to cast since _gen can only be undefined with Cancellable()
-			// which never calls .run()
-			const gen = prc._gen as Gen
-			const { done, value } = gen.next(prc._genMsg)
-
-			if (done === true) {
-				genDone = true
-				break
-			}
-
-			if (value instanceof BaseChan) {
-				value.rec
-			}
-
-			if (value === YIELD) {
-				// ch.put()/rec and sleep() set the appropiate conditions to be
-				// checked in the next while loop
-				continue
-			}
-
-			if (value instanceof Promise) {
-				const prom = value
-
-				prom.then(
-					function onVal(val: unknown) {
-						if (prc._state !== "RUNNING") {
-							return
-						}
-						setResume(prc, val)
-						run(prc)
-					},
-					function onErr(err: unknown) {
-						if (prc._state !== "RUNNING") {
-							return
-						}
-						// @todo implement errors
-						throw err
-					}
-				)
-
-				setPark(prc)
-				break
-			}
-		}
-	}
-
-	csp.prcStack.pop()
-
-	if (genDone) {
-		go(finishNormalDone, prc)
+export function resume(prc: Prc, msg?: unknown): void {
+	if (prc._state !== "RUNNING") {
 		return
 	}
 
-	csp.runScheduledPrcS()
+	csp.prcStack.push(prc)
+
+	// eslint-disable-next-line no-constant-condition
+	while (true) {
+		const { done, value } = prc._gen.next(msg)
+		if (done === true) {
+			go(finishNormalDone, prc, value)
+			return
+		}
+		if (value === "PARK") break
+		if (value === "RESUME") continue
+		if (value instanceof Promise) {
+			handleProm(value, prc)
+			break
+		}
+		// if (value instanceof BaseChan) {
+		// 	// @todo
+		// }
+	}
+
+	csp.prcStack.pop()
 }
 
-function* finishNormalDone(prc: Prc) {
+function handleProm(prom: Promise<unknown>, prc: Prc) {
+	prom.then(
+		function onVal(val: unknown) {
+			resume(prc, val)
+		},
+		function onErr(err: unknown) {
+			// @todo implement errors
+			throw err
+		}
+	)
+}
 
+
+function* finishNormalDone(prc: Prc, value) {
+	csp.prcStack.pop()
 	prc._state = "DONE"
 
 	const { done, _$childS } = prc
@@ -231,7 +192,7 @@ function* finishNormalDone(prc: Prc) {
 	// at instantiation, they have a shorter/equal deadline than this prc.
 	// So just need for them to finish cancelling themselves
 	if (_$childS && _$childS.size > 0) {
-		yield go(cancelChildS, prc).done
+		yield* go(cancelChildS, prc).done.rec
 	}
 
 	prc._parentPrc = undefined
@@ -239,13 +200,13 @@ function* finishNormalDone(prc: Prc) {
 }
 
 function* cancelChildS(prc: Prc) {
-	const $childS = prc._$childS as Set<Prc>
+	const $childS = prc._$childS!
 
-	let cancelChs = []  // eslint-disable-line prefer-const
+	let cancelChs: Ch[] = []
 	for (const prc of $childS) {
 		cancelChs.push(prc.cancel())
 	}
-	yield all(...cancelChs)
+	yield* all(...cancelChs).rec
 	prc._$childS = undefined
 }
 
@@ -295,10 +256,10 @@ function cancelChildSAndFinish(prc: Prc) {
 }
 
 function ifSleepTimeoutClear(prc: Prc) {
-	const timeoutID = prc._timeoutID
+	const timeoutID = prc._timeoutID_m
 	if (timeoutID !== undefined) {
 		clearTimeout(timeoutID)
-		prc._timeoutID = undefined
+		prc._timeoutID_m = undefined
 	}
 }
 
@@ -313,24 +274,22 @@ function runChildSCancelAndOnCancel(prc: Prc) {
 }
 
 
+function isRegFn(fn?: OnCancel): fn is RegFn {
+	return fn?.constructor.name === "Function"
+}
 
-/* === Prc constructor ====================================================== */
-
-export const go: Go = (genFn, ...args) => {
-	const gen = genFn(...args)
-	const prc = new Prc(gen, genFn.name)
-	run(prc)
-	return prc
+const genCtor = function* () { }.constructor
+function isGenFn(x: unknown): x is Gen {
+	return x instanceof genCtor
 }
 
 
-/**
- * A way to create a new Prc which sets it up as a child of last called go()
- * so the parent can child.cancel() and thus onCancel is ran.
- */
-export function Cancellable(onCancel: OnCancel) {
-	const prc = new Prc()
-	prc._onCancel_m = onCancel
+/* === Prc constructor ====================================================== */
+
+export function go<Args extends unknown[]>(genFn: GenFn<Args>, ...args: Args): Prc {
+	const gen = genFn(...args)
+	const prc = new Prc(gen, genFn.name)
+	resume(prc)
 	return prc
 }
 
@@ -347,19 +306,16 @@ export function onCancel(onCancel: OnCancel): void {
 
 /* === Helpers ====================================================== */
 
-/**
- * Sleep
- */
-export function sleep(ms: number): Yieldable {
-	const runningPrc = csp.runningPrc
-	const timeoutID = setTimeout(function _sleepTimeOut() {
-		setResume(runningPrc)
-		run(runningPrc)
-	}, ms)
-	runningPrc._timeoutID = timeoutID
-	return setPark(runningPrc)
-}
+export function sleep(ms: number): "PARK" {
+	const runningPrc = getRunningPrcOrThrow(`can't sleep() outside a process.`)
 
+	const timeoutID = setTimeout(function _sleepTimeOut() {
+		resume(runningPrc)
+	}, ms)
+
+	runningPrc._timeoutID_m = timeoutID
+	return "PARK"
+}
 
 /**
  * wait
@@ -460,27 +416,14 @@ export function race(...prcS: Prc[]): Ch {
 
 /* === Types ====================================================== */
 
-export const YIELD = "RIBU_YIELD_VAL"
-export type YIELD_T = typeof YIELD
+type PrcState = "RUNNING" | "CANCELLING" | "DONE"
+export type Yieldable = "PARK" | "RESUME" | Promise<unknown>
 
-export type Yieldable = YIELD_T | Ch<unknown> | Promise<unknown>
-
-export type Gen<Rec = unknown, Ret = void> =
+export type Gen<Ret = unknown, Rec = unknown> =
 	Generator<Yieldable, Ret, Rec>
-
-type Go<Args extends unknown[] = unknown[]> =
-	(genFn: GenFn<Args>, ...fnArgs: Args) => Prc
 
 type GenFn<Args extends unknown[] = unknown[]> =
 	(...args: Args) => Gen
-
-
-type AsyncFn<Args extends unknown[] = unknown[]> =
-	(...args: Args) => Prom<unknown>
-
-
-type PrcState = "RUNNING" | "CANCELLING" | "DONE"
-type ExecNext = "RESUME" | "PARK"
 
 type onCancelFn = (...args: unknown[]) => unknown
 type OnCancel = onCancelFn | GenFn
@@ -490,3 +433,6 @@ type Ports = {
 }
 
 type WithCancel<Ports> = Ports & Pick<Prc, "cancel">
+
+type RegFn<Args extends unknown[] = unknown[]> =
+	(...args: Args) => unknown

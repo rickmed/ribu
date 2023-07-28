@@ -17,10 +17,11 @@ topic("unbuffered channels", () => {
          const _ch = ch<number>()
 
          go(function* child() {
-            yield* _ch.put(13)
+            yield _ch.put(13)
          })
 
          const rec = yield* _ch.rec
+         console.log({rec})
          check(rec).with(13)
       })
    })
@@ -84,16 +85,16 @@ topic("process", () => {
 
    it("can sleep without blocking", async () => {
 
-      let mutated = false
+      let x = false
 
-      go(function* proc1() {
-         yield* sleep(1)
-         mutated = true
+      go(function* sleeper() {
+         yield sleep(1)
+         x = true
       })
 
-      check(mutated).with(false)
+      check(x).with(false)
       await promSleep(2)
-      check(mutated).with(true)
+      check(x).with(true)
    })
 })
 
