@@ -1,5 +1,6 @@
 import { Prc, type Gen, go } from "./process.mjs"
 import { getRunningPrcOrThrow } from "./initCsp.mjs"
+import { Queue } from "./dataStructures.mjs"
 
 
 export const DONE = Symbol("ribu chan DONE")
@@ -31,9 +32,10 @@ export class BaseChan<V> {
 		this._closed = true
 	}
 
+	/** @todo: I think this should broadcast msg instead of deQueuing, ie, sending a different msg to each waitingRec */
 	enQueue(msg: V): void {
 		if (this._closed) {
-			throw Error(`ribu: can't enQueue() on a closed channel`)
+			throw Error(`ribu: can't enQueue() on a closed channel.`)
 		}
 		const receiverPrc = this._waitingReceivers.deQ()
 		if (!receiverPrc) {
@@ -42,11 +44,6 @@ export class BaseChan<V> {
 		}
 		receiverPrc._resume(msg)
 	}
-
-	/* Subclasses below overwrite it.
-	 * Needed for "value instanceof BaseChan" in proceed(prc)
-	*/
-	// get rec() { return YIELD }
 }
 
 
@@ -57,33 +54,30 @@ class Chan<V> extends BaseChan<V> implements Ch<V> {
 	 * typescript can't preserve the types between what is yielded and what is
 	 * returned at gen.next()
 	 */
-	get rec() {
-
+	get rec(): Gen<V> {
 		const receiverPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
+		return this.#rec(receiverPrc)
+	}
+
+	*#rec(receiverPrc: Prc): Gen<V> {
 		let putterPrc = this._waitingPutters.deQ()
-		const self = this
 
-		function* _rec(): Gen<V> {
-			if (!putterPrc) {
-				self._waitingReceivers.enQ(receiverPrc)
-				const msg = yield "PARK"
-				return msg as V
-			}
-
-			const {_enQueuedMsgs} = self
-			if (!_enQueuedMsgs.isEmpty) {
-				return _enQueuedMsgs.deQ()!
-			}
-
-			else {
-				putterPrc._resume()
-				const msg = putterPrc._chanPutMsg_m
-				return msg as V
-			}
-
+		if (!putterPrc) {
+			this._waitingReceivers.enQ(receiverPrc)
+			const msg = yield "PARK"
+			return msg as V
 		}
 
-		return _rec()
+		const {_enQueuedMsgs} = this
+		if (!_enQueuedMsgs.isEmpty) {
+			return _enQueuedMsgs.deQ()!
+		}
+
+		else {
+			putterPrc._resume()
+			const msg = putterPrc._chanPutMsg_m
+			return msg as V
+		}
 	}
 
 	/**
@@ -93,7 +87,7 @@ class Chan<V> extends BaseChan<V> implements Ch<V> {
    put(msg?: V): "PARK" | "RESUME" {
 
 		if (this._closed) {
-			throw Error(`ribu: can't put() on a closed channel`)
+			throw Error(`can't put() on a closed channel`)
 		}
 
 		const putterPrc = getRunningPrcOrThrow(`can't put outside a process.`)
@@ -126,33 +120,30 @@ class BufferedChan<V> extends BaseChan<V> implements Ch<V> {
 		this.isFull = buffer.isFull
 	}
 
-	get rec(): Gen<V, V> {
-
+	get rec(): Gen<V> {
 		const receiverPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
-		const self = this
+		return this.#rec(receiverPrc)
+	}
 
-		function* _rec(): Gen<V, V> {
+	*#rec(receiverPrc: Prc): Gen<V> {
 
-			const buffer = self.#buffer
-			const msg = buffer.deQ()
+		const buffer = this.#buffer
+		const msg = buffer.deQ()
 
-			if (msg === undefined) {
-				self._waitingReceivers.enQ(receiverPrc)
-				const msg = yield "PARK"
-				return msg
-			}
-
-			const putterPrc = self._waitingPutters.deQ()
-
-			if (putterPrc) {
-				buffer.enQ(putterPrc._chanPutMsg_m as V)
-				putterPrc._resume()
-			}
-
-			return msg
+		if (msg === undefined) {
+			this._waitingReceivers.enQ(receiverPrc)
+			const msg = yield "PARK"
+			return msg as V
 		}
 
-		return _rec()
+		const putterPrc = this._waitingPutters.deQ()
+
+		if (putterPrc) {
+			buffer.enQ(putterPrc._chanPutMsg_m as V)
+			putterPrc._resume()
+		}
+
+		return msg
 	}
 
 	put(msg?: V): "PARK" | "RESUME" {
@@ -196,99 +187,7 @@ class BufferedChan<V> extends BaseChan<V> implements Ch<V> {
 }
 
 
-/**
- * @todo rewrite to specialized data structure (ring buffer, LL...)
- */
-class Queue<V> {
-
-	#array_m: Array<V> = []
-	#capacity
-
-	constructor(capacity = Number.MAX_SAFE_INTEGER) {
-		this.#capacity = capacity
-	}
-
-	get isEmpty() {
-		return this.#array_m.length === 0
-	}
-
-	get isFull() {
-		return this.#array_m.length === this.#capacity
-	}
-
-	deQ() {
-		return this.#array_m.pop()
-	}
-
-	enQ(x: V) {
-		this.#array_m.unshift(x)
-	}
-}
-
-
-
-/**
- * @todo
- * @template TChVal
- * @implements {Ribu.Ch<TChVal>}
- */
-export class BroadcastCh {
-
-	/** @type {Ch | Array<Ch> | undefined} */
-	#listeners = undefined
-
-	/** @return {_Ribu.YIELD_VAL} */
-	get rec() {
-
-		const listenerCh = ch()
-		const listeners = this.#listeners
-
-		if (listeners === undefined) {
-			this.#listeners = listenerCh
-		}
-		else if (Array.isArray(listeners)) {
-			listeners.push(listenerCh)
-		}
-		else {
-			this.#listeners = []
-			this.#listeners.push(listenerCh)
-		}
-
-		return listenerCh
-	}
-
-	/** @type {() => _Ribu.YIELD_VAL} */
-	put() {
-
-		const notifyDone = ch()
-		const listeners = this.#listeners
-
-		go(function* _emit() {
-			if (listeners === undefined) {
-				yield notifyDone
-				return
-			}
-			if (Array.isArray(listeners)) {
-				for (const ch of listeners) {
-					yield ch.put()
-				}
-				yield notifyDone
-				return
-			}
-			yield listeners.put()
-			yield notifyDone.rec
-		})
-
-		return notifyDone.put()
-	}
-
-	/** @type {(msg: TChVal) => void} */
-	dispatch(msg) {
-
-	}
-}
-
-
+/* ===  Helpers  ==================================================== */
 
 export function all(...chanS: Ch[]): Ch {
 

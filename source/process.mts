@@ -1,6 +1,5 @@
-import { ch, BaseChan, type Ch } from "./channel.mjs"
-import { all } from "./index.mjs"
 import { csp, getRunningPrcOrThrow } from "./initCsp.mjs"
+import { ch, all, type Ch } from "./channel.mjs"
 
 type ChRec<V = undefined> = Ch<V>["rec"]
 
@@ -15,28 +14,23 @@ export class Prc<Ret = unknown> {
 	_gen: Gen
 	_name: string
 	_state: PrcState = "RUNNING"
-	_chanPutMsg_m: unknown
+
+	_doneVal?: Ret = undefined
+	_waitingDone_m?: Prc | Array<Prc> = undefined
+
+	_chanPutMsg_m: unknown = undefined
 
 	/** For bubbling errors up (undefined for root prcS) */
 	_parentPrc?: Prc = undefined
 	/** For auto cancel child Procs */
 	_$childS?: Set<Prc> = undefined
 
-	_timeoutID_m?: NodeJS.Timeout = undefined
-	_onCancel_m?: OnCancel = undefined
-	_deadline: number = csp.defaultDeadline
+	_sleepTimeoutID_m?: NodeJS.Timeout = undefined
 
+	_onCancel_m?: OnCancel = undefined
 	_lateCancelCallerChs_m: undefined | Ch[] = undefined
 
-	done = ch<Ret>()
-
-	/*
-		const res = prc2.done.rec    meanwhile    prc2.cancel()
-		res should be ErrCancelled (each prc.done.rec need to disambiguate if err)
-
-		so I think done is ch<Ret | Err>
-
-	*/
+	_deadline: number = csp.defaultDeadline
 
 	constructor(gen: Gen, genFnName: string = "") {
 		this._gen = gen
@@ -67,7 +61,8 @@ export class Prc<Ret = unknown> {
 			const { done, value } = this._gen.next(msg)
 
 			if (done === true) {
-				go(this.#finishNormalDone, value as Ret)
+				this._doneVal = value as Ret
+				go(this.#finishNormalDone)
 				return
 			}
 			if (value === "PARK") {
@@ -88,29 +83,42 @@ export class Prc<Ret = unknown> {
 				)
 				break
 			}
-			// if (value instanceof BaseChan) {
-			// 	// @todo
-			// }
 		}
 
 		csp.prcStack.pop()
 	}
 
-	*#finishNormalDone(genRetVal: Ret) {
+	*#finishNormalDone() {
 		csp.prcStack.pop()
 		this._state = "DONE"
 
-		const { done, _$childS } = this
-
-		// No need to put a deadline on auto canceling any active children because,
-		// at instantiation, they have a shorter/equal deadline than this prc.
-		// So just need for them to finish cancelling themselves.
+		/**
+		 * No need to timeout cancelling children because, at instantiation,
+		 * they have a shorter/equal deadline than this (parent) prc.
+		 * So just need for them to finish cancelling themselves.
+		 */
+		const { _$childS } = this
 		if (_$childS) {
 			yield* this.#cancelChildS(_$childS).rec
 		}
 
 		this.#finalCleanup()
-		yield done.put(genRetVal)
+		this.#resumeWaitingDone()
+	}
+
+	#resumeWaitingDone() {
+		const prcS = this._waitingDone_m
+		if (!prcS) {
+			return
+		}
+		else if (prcS instanceof Prc) {
+			prcS._resume(this._doneVal)
+		}
+		else {
+			for (const prc of prcS) {
+				prc._resume(this._doneVal)
+			}
+		}
 	}
 
 	#cancelChildS($childS: Set<Prc>): Ch {
@@ -171,7 +179,7 @@ export class Prc<Ret = unknown> {
 		}
 
 		else if (_$childS && !_onCancel_m) {
-			yield* cancelChildS(_$childS)
+			yield * cancelChildS(_$childS)
 		}
 
 		else if (_$childS && isRegFn(_onCancel_m)) {
@@ -214,17 +222,42 @@ export class Prc<Ret = unknown> {
 	}
 
 	#clearTimeout(): void {
-		const {_timeoutID_m} = this
+		const { _sleepTimeoutID_m: _timeoutID_m } = this
 		if (_timeoutID_m) {
 			clearTimeout(_timeoutID_m)
 		}
 	}
 
+	*#done(receiverPrc: Prc): Gen<Ret> {
+
+		const {_doneVal} = this
+		if (_doneVal !== undefined) {
+			return _doneVal
+		}
+
+		let waitingDone = this._waitingDone_m
+
+		if (waitingDone === undefined) {
+			this._waitingDone_m = receiverPrc
+		}
+		else if (waitingDone instanceof Prc) {
+			this._waitingDone_m = [waitingDone, receiverPrc]
+		}
+		else {
+			waitingDone.push(receiverPrc)
+		}
+
+		const doneVal = yield "PARK"
+		return doneVal as Ret
+	}
 
 	/** Public methods */
-	// get done() {
-	// 	return
-	// }
+
+	get done(): Gen<Ret> {
+		const receiverPrc = getRunningPrcOrThrow(`can't yield* done outside a process.`)
+		return this.#done(receiverPrc)
+	}
+
 	cancel(): ChRec {
 		return this.#_cancel().rec
 	}
@@ -249,9 +282,6 @@ export class Prc<Ret = unknown> {
 		return this
 	}
 }
-
-
-
 
 
 function nilParentRefAndMarkDONE(prc: Prc) {
@@ -293,10 +323,10 @@ function cancelChildSAndFinish(prc: Prc) {
 }
 
 function ifSleepTimeoutClear(prc: Prc) {
-	const timeoutID = prc._timeoutID_m
+	const timeoutID = prc._sleepTimeoutID_m
 	if (timeoutID !== undefined) {
 		clearTimeout(timeoutID)
-		prc._timeoutID_m = undefined
+		prc._sleepTimeoutID_m = undefined
 	}
 }
 
@@ -321,7 +351,7 @@ function isGenFn(x: unknown): x is Gen {
 }
 
 
-/* === Prc constructor ====================================================== */
+/* ===  Prc constructor  ==================================================== */
 
 export function go<Args extends unknown[]>(genFn: GenFn<Args>, ...args: Args): Prc {
 	const gen = genFn(...args)
@@ -344,7 +374,7 @@ export function onCancel(onCancel: OnCancel): void {
 
 
 
-/* === Helpers ====================================================== */
+/* ===  Helpers  ============================================================ */
 
 export function sleep(ms: number): "PARK" {
 	const runningPrc = getRunningPrcOrThrow(`can't sleep() outside a process.`)
@@ -353,7 +383,7 @@ export function sleep(ms: number): "PARK" {
 		resume(runningPrc)
 	}, ms)
 
-	runningPrc._timeoutID_m = timeoutID
+	runningPrc._sleepTimeoutID_m = timeoutID
 	return "PARK"
 }
 
