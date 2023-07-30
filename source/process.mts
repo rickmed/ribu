@@ -49,10 +49,13 @@ export class Prc<Ret = unknown> {
 		}
 	}
 
-	_resume(msg?: unknown): void {
+	/**
+	 * @returns boolean - True if did resume. False otherwise
+	 */
+	_resume(msg?: unknown): boolean {
 
 		if (this.#state !== "RUNNING") {
-			return
+			return false
 		}
 
 		csp.prcStack.push(this)
@@ -63,7 +66,7 @@ export class Prc<Ret = unknown> {
 			if (done === true) {
 				this.#doneVal = value as Ret
 				go(this.#finishNormalDone)
-				return
+				return true
 			}
 			if (value === "PARK") {
 				break
@@ -86,6 +89,7 @@ export class Prc<Ret = unknown> {
 		}
 
 		csp.prcStack.pop()
+		return true
 	}
 
 	*#finishNormalDone() {
@@ -341,7 +345,7 @@ class OncePutBroadcastCh<V> {
 export function go<Args extends unknown[]>(genFn: GenFn<Args>, ...args: Args): Prc {
 	const gen = genFn(...args)
 	const prc = new Prc(gen, genFn.name)
-	resume(prc)
+	prc._resume()
 	return prc
 }
 
@@ -365,7 +369,7 @@ export function sleep(ms: number): "PARK" {
 	const runningPrc = getRunningPrcOrThrow(`can't sleep() outside a process.`)
 
 	const timeoutID = setTimeout(function _sleepTimeOut() {
-		resume(runningPrc)
+		runningPrc._resume()
 	}, ms)
 
 	runningPrc._sleepTimeoutID_m = timeoutID
