@@ -13,7 +13,7 @@ export class Prc<Ret = unknown> {
 
 	#gen: Gen
 	#name: string
-	#state: PrcState = "RUNNING"
+	_state: PrcState = "RUNNING"
 
 	#doneVal?: Ret = undefined
 	#waitingDone?: Prc | Array<Prc> = undefined
@@ -49,13 +49,10 @@ export class Prc<Ret = unknown> {
 		}
 	}
 
-	/**
-	 * @returns boolean - True if did resume. False otherwise
-	 */
-	_resume(msg?: unknown): boolean {
+	_resume(msg?: unknown): void {
 
-		if (this.#state !== "RUNNING") {
-			return false
+		if (this._state !== "RUNNING") {
+			return
 		}
 
 		csp.prcStack.push(this)
@@ -66,7 +63,7 @@ export class Prc<Ret = unknown> {
 			if (done === true) {
 				this.#doneVal = value as Ret
 				go(this.#finishNormalDone)
-				return true
+				return
 			}
 			if (value === "PARK") {
 				break
@@ -89,12 +86,11 @@ export class Prc<Ret = unknown> {
 		}
 
 		csp.prcStack.pop()
-		return true
 	}
 
 	*#finishNormalDone() {
 		csp.prcStack.pop()
-		this.#state = "DONE"
+		this._state = "DONE"
 
 		/**
 		 * No need to timeout cancelling children because, at instantiation,
@@ -144,9 +140,9 @@ export class Prc<Ret = unknown> {
 
 	#cancel_(): Ch {
 
-		const state = this.#state
+		const {_state} = this
 
-		if (state === "DONE") {
+		if (_state === "DONE") {
 			// @todo: implement a more efficient ch.resolve() to not create a whole temp process
 			const _ch = ch()
 			go(function* doneCancel() {
@@ -155,7 +151,7 @@ export class Prc<Ret = unknown> {
 			return _ch
 		}
 
-		if (state === "CANCELLING") {
+		if (_state === "CANCELLING") {
 			const _ch = ch()
 			if (!this.#lateCancelCallerChs_m) {
 				this.#lateCancelCallerChs_m = []
@@ -164,38 +160,38 @@ export class Prc<Ret = unknown> {
 			return _ch
 		}
 
-		this.#state = "CANCELLING"
+		this._state = "CANCELLING"
 
-		const { #childS: _$childS, _onCancel_m } = this
+		const {#childS: childS, _onCancel_m} = this
 
 		this.#clearTimeout()
 
-		if (!_$childS && !_onCancel_m) {
+		if (!childS && !_onCancel_m) {
 			// void and goes to this.#finalCleanup() below
 		}
 
-		else if (!_$childS && isRegFn(_onCancel_m)) {
+		else if (!childS && isRegFn(_onCancel_m)) {
 			_onCancel_m()
 		}
 
-		else if (!_$childS && isGenFn(_onCancel_m)) {
+		else if (!childS && isGenFn(_onCancel_m)) {
 			return this.#onCancelPrc()
 		}
 
-		else if (_$childS && !_onCancel_m) {
-			yield * cancelChildS(_$childS)
+		else if (childS && !_onCancel_m) {
+			yield * cancelChildS(childS)
 		}
 
-		else if (_$childS && isRegFn(_onCancel_m)) {
+		else if (childS && isRegFn(_onCancel_m)) {
 			_onCancel_m()
-			yield cancelChildS(_$childS)
+			yield cancelChildS(childS)
 		}
 
 		else {  /* _$child && isGenFn(_onCancel) */
-			yield Promise.allSettled([this.#onCancelPrc(), cancelChildS(_$childS!)])
+			yield Promise.allSettled([this.#onCancelPrc(), cancelChildS(childS!)])
 		}
 
-		this.#state = "DONE"
+		this._state = "DONE"
 		this.#finalCleanup()
 		this.#notifyLateCancelCallers()
 	}

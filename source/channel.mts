@@ -172,8 +172,8 @@ class BufferedChan<V> extends BaseChan<V> implements Ch<V> {
 		}
 
 		while (receiverPrc) {
-			const didResume = receiverPrc._resume(msg)
-			if (didResume) {
+			if (receiverPrc._state === "RUNNING") {
+				receiverPrc._resume(msg)
 				break
 			}
 			receiverPrc = _waitingReceivers.deQ()
