@@ -8,5 +8,6 @@
       "sourceMap": true,
       "outDir": "./dist/",
       "moduleDetection": "force",
+      "strictPropertyInitialization": true
    },
 }
