@@ -172,7 +172,7 @@ class BufferedChan<V> extends BaseChan<V> implements Ch<V> {
 		}
 
 		while (receiverPrc) {
-			if (receiverPrc._state === "RUNNING") {
+			if (receiverPrc.#state === "RUNNING") {
 				receiverPrc._resume(msg)
 				break
 			}

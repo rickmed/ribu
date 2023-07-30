@@ -11,57 +11,57 @@ type ChRec<V = undefined> = Ch<V>["rec"]
  */
 export class Prc<Ret = unknown> {
 
-	_gen: Gen
-	_name: string
-	_state: PrcState = "RUNNING"
+	#gen: Gen
+	#name: string
+	#state: PrcState = "RUNNING"
 
-	_doneVal?: Ret = undefined
-	_waitingDone_m?: Prc | Array<Prc> = undefined
+	#doneVal?: Ret = undefined
+	#waitingDone?: Prc | Array<Prc> = undefined
 
 	_chanPutMsg_m: unknown = undefined
 
 	/** For bubbling errors up (undefined for root prcS) */
-	_parentPrc?: Prc = undefined
+	#parent?: Prc = undefined
 	/** For auto cancel child Procs */
-	_$childS?: Set<Prc> = undefined
+	#childS?: Set<Prc> = undefined
 
 	_sleepTimeoutID_m?: NodeJS.Timeout = undefined
 
 	_onCancel_m?: OnCancel = undefined
-	_lateCancelCallerChs_m: undefined | Ch[] = undefined
+	#lateCancelCallerChs_m: undefined | Ch[] = undefined
 
-	_deadline: number = csp.defaultDeadline
+	#deadline: number = csp.defaultDeadline
 
 	constructor(gen: Gen, genFnName: string = "") {
-		this._gen = gen
-		this._name = genFnName
+		this.#gen = gen
+		this.#name = genFnName
 
 		const { runningPrc } = csp
 		if (runningPrc) {
 
-			this._parentPrc = runningPrc
+			this.#parent = runningPrc
 
-			if (runningPrc._$childS === undefined) {
-				runningPrc._$childS = new Set()
+			if (runningPrc.#childS === undefined) {
+				runningPrc.#childS = new Set()
 			}
 
-			runningPrc._$childS.add(this)
+			runningPrc.#childS.add(this)
 		}
 	}
 
 	_resume(msg?: unknown): void {
 
-		if (this._state !== "RUNNING") {
+		if (this.#state !== "RUNNING") {
 			return
 		}
 
 		csp.prcStack.push(this)
 
 		for (;;) {
-			const { done, value } = this._gen.next(msg)
+			const { done, value } = this.#gen.next(msg)
 
 			if (done === true) {
-				this._doneVal = value as Ret
+				this.#doneVal = value as Ret
 				go(this.#finishNormalDone)
 				return
 			}
@@ -90,14 +90,14 @@ export class Prc<Ret = unknown> {
 
 	*#finishNormalDone() {
 		csp.prcStack.pop()
-		this._state = "DONE"
+		this.#state = "DONE"
 
 		/**
 		 * No need to timeout cancelling children because, at instantiation,
 		 * they have a shorter/equal deadline than this (parent) prc.
 		 * So just need for them to finish cancelling themselves.
 		 */
-		const { _$childS } = this
+		const { #childS: _$childS } = this
 		if (_$childS) {
 			yield* this.#cancelChildS(_$childS).rec
 		}
@@ -107,16 +107,16 @@ export class Prc<Ret = unknown> {
 	}
 
 	#resumeWaitingDone() {
-		const prcS = this._waitingDone_m
+		const prcS = this.#waitingDone
 		if (!prcS) {
 			return
 		}
 		else if (prcS instanceof Prc) {
-			prcS._resume(this._doneVal)
+			prcS._resume(this.#doneVal)
 		}
 		else {
 			for (const prc of prcS) {
-				prc._resume(this._doneVal)
+				prc._resume(this.#doneVal)
 			}
 		}
 	}
@@ -130,20 +130,20 @@ export class Prc<Ret = unknown> {
 	}
 
 	#finalCleanup(): void {
-		this._$childS = undefined
-		const { _parentPrc } = this
+		this.#childS = undefined
+		const { #parentPrc: _parentPrc } = this
 		if (_parentPrc) {
 			_parentPrc._$childS?.delete(this)
-			this._parentPrc = undefined
+			this.#parent = undefined
 		}
 	}
 
-	#_cancel(): Ch {
+	#cancel_(): Ch {
 
-		const state = this._state
+		const state = this.#state
 
 		if (state === "DONE") {
-			// @todo: implement a more efficient ch.resolve() to not create a whole prc
+			// @todo: implement a more efficient ch.resolve() to not create a whole temp process
 			const _ch = ch()
 			go(function* doneCancel() {
 				yield _ch.put()
@@ -153,16 +153,16 @@ export class Prc<Ret = unknown> {
 
 		if (state === "CANCELLING") {
 			const _ch = ch()
-			if (!this._lateCancelCallerChs_m) {
-				this._lateCancelCallerChs_m = []
+			if (!this.#lateCancelCallerChs_m) {
+				this.#lateCancelCallerChs_m = []
 			}
-			this._lateCancelCallerChs_m.push(_ch)
+			this.#lateCancelCallerChs_m.push(_ch)
 			return _ch
 		}
 
-		this._state = "CANCELLING"
+		this.#state = "CANCELLING"
 
-		const { _$childS, _onCancel_m } = this
+		const { #childS: _$childS, _onCancel_m } = this
 
 		this.#clearTimeout()
 
@@ -191,7 +191,7 @@ export class Prc<Ret = unknown> {
 			yield Promise.allSettled([this.#onCancelPrc(), cancelChildS(_$childS!)])
 		}
 
-		this._state = "DONE"
+		this.#state = "DONE"
 		this.#finalCleanup()
 		this.#notifyLateCancelCallers()
 	}
@@ -208,7 +208,7 @@ export class Prc<Ret = unknown> {
 		})
 
 		const $deadline = go(function* () {
-			yield sleep(self._deadline)
+			yield sleep(self.#deadline)
 			hardCancel($onCancel)
 			yield done.put()
 		})
@@ -229,6 +229,88 @@ export class Prc<Ret = unknown> {
 	}
 
 	*#done(receiverPrc: Prc): Gen<Ret> {
+
+		const {#doneVal: _doneVal} = this
+		if (_doneVal !== undefined) {
+			return _doneVal
+		}
+
+		let waitingDone = this.#waitingDone
+
+		if (waitingDone === undefined) {
+			this.#waitingDone = receiverPrc
+		}
+		else if (waitingDone instanceof Prc) {
+			this.#waitingDone = [waitingDone, receiverPrc]
+		}
+		else {
+			waitingDone.push(receiverPrc)
+		}
+
+		const doneVal = yield "PARK"
+		return doneVal as Ret
+	}
+
+	/** Public methods */
+
+	get done(): Gen<Ret> {
+		const receiverPrc = getRunningPrcOrThrow(`can't yield* done outside a process.`)
+		return this.#done(receiverPrc)
+	}
+
+	cancel(): ChRec {
+		return this.#cancel_().rec
+	}
+
+	ports<_P extends Ports>(ports: _P) {
+		const prcApi_m = ports as WithCancel<_P>
+		// Since a new object is passed anyway, reuse the object for the api
+		prcApi_m.cancel = this.cancel.bind(this)
+		return prcApi_m
+	}
+
+	setCancelDeadline(ms: number) {
+
+		const { #parentPrc: _parentPrc } = this
+
+		if (_parentPrc) {
+			const parentMS = _parentPrc._deadline
+			ms = ms > parentMS ? parentMS : ms
+		}
+
+		this.#deadline = ms
+		return this
+	}
+}
+
+
+
+
+
+function isRegFn(fn?: OnCancel): fn is RegFn {
+	return fn?.constructor.name === "Function"
+}
+
+const genCtor = function* () { }.constructor
+function isGenFn(x: unknown): x is Gen {
+	return x instanceof genCtor
+}
+
+class OncePutBroadcastCh<V> {
+
+	#cache?: V = undefined
+	#waitingReceivers?: Prc | Array<Prc> = undefined
+
+	emit(value: V) {
+
+	}
+
+	newReceiver() {
+		const receiverPrc = getRunningPrcOrThrow(`can't yield* done outside a process.`)
+		return this.#recGenFn(receiverPrc)
+	}
+
+	*#recGenFn(receiverPrc: Prc): Gen<Ret> {
 
 		const {_doneVal} = this
 		if (_doneVal !== undefined) {
@@ -251,103 +333,6 @@ export class Prc<Ret = unknown> {
 		return doneVal as Ret
 	}
 
-	/** Public methods */
-
-	get done(): Gen<Ret> {
-		const receiverPrc = getRunningPrcOrThrow(`can't yield* done outside a process.`)
-		return this.#done(receiverPrc)
-	}
-
-	cancel(): ChRec {
-		return this.#_cancel().rec
-	}
-
-	ports<_P extends Ports>(ports: _P) {
-		const prcApi_m = ports as WithCancel<_P>
-		// Since a new object is passed anyway, reuse the object for the api
-		prcApi_m.cancel = this.cancel.bind(this)
-		return prcApi_m
-	}
-
-	setCancelDeadline(ms: number) {
-
-		const { _parentPrc } = this
-
-		if (_parentPrc) {
-			const parentMS = _parentPrc._deadline
-			ms = ms > parentMS ? parentMS : ms
-		}
-
-		this._deadline = ms
-		return this
-	}
-}
-
-
-function nilParentRefAndMarkDONE(prc: Prc) {
-	prc._state = "DONE"
-	prc._parentPrc = undefined
-}
-
-function $onCancel(prc: Prc) {
-
-	const done = ch()
-
-	const $onCancel = go(function* $onCancel() {
-		yield go(prc._onCancel_m as GenFn).done
-		// need to cancel $deadline because I won the race
-		yield $deadline.cancel()
-		nilParentRefAndMarkDONE(prc)
-		yield done.put()
-	})
-
-	const $deadline = go(function* _deadline() {
-		yield sleep(prc._deadline)
-		hardCancel($onCancel)
-		yield done.put()
-	})
-
-	return done
-}
-
-
-function cancelChildSAndFinish(prc: Prc) {
-	const { done } = prc
-
-	go(function* cancelChildSAndFinish() {
-		yield go(cancelChildS, prc).done
-		yield done.put()
-	})
-
-	return done
-}
-
-function ifSleepTimeoutClear(prc: Prc) {
-	const timeoutID = prc._sleepTimeoutID_m
-	if (timeoutID !== undefined) {
-		clearTimeout(timeoutID)
-		prc._sleepTimeoutID_m = undefined
-	}
-}
-
-function runChildSCancelAndOnCancel(prc: Prc) {
-
-	go(function* _handleChildSAndOnCancel() {
-		yield all(go(cancelChildS, prc).done, $onCancel(prc))
-		yield prc.done.put()
-	})
-
-	return prc.done
-}
-
-
-function isRegFn(fn?: OnCancel): fn is RegFn {
-	return fn?.constructor.name === "Function"
-}
-
-const genCtor = function* () { }.constructor
-function isGenFn(x: unknown): x is Gen {
-	return x instanceof genCtor
 }
 
 
