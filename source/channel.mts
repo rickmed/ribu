@@ -1,27 +1,27 @@
-import { Prc, type Gen, go } from "./process.mjs"
+import { Prc, type Gen } from "./process.mjs"
 import { getRunningPrcOrThrow } from "./initCsp.mjs"
 import { Queue } from "./dataStructures.mjs"
 
 
 export const DONE = Symbol("ribu chan DONE")
 
-
-export function ch<V = undefined>(capacity = 0): Ch<V> {
-	const _ch = capacity === 0 ? new Chan<V>() : new BufferedChan<V>(capacity)
-	return _ch
+export function ch<V = undefined>(): Ch<V>
+export function ch<V = undefined>(capacity: number): BufferedCh<V>
+export function ch<V = undefined>(capacity?: number) {
+	return capacity === undefined ? new Ch<V>()
+		: new BufferedCh<V>(capacity)
 }
 
-export type Ch<V = undefined> = {
-   get rec(): Gen<V>,
-	put(msg: V): "PARK" | "RESUME",
-   put(...msg: V extends undefined ? [] : [V]): "PARK" | "RESUME",
-	get isNotDone(): boolean
-	close(): void
-   enQueue(msg: V): void,
-}
+// export type Ch<V = undefined> = {
+//    get rec(): Gen<V>,
+// 	put(msg: V): "PARK" | "RESUME",
+//    put(...msg: V extends undefined ? [] : [V]): "PARK" | "RESUME",
+// 	get isNotDone(): boolean
+// 	close(): void
+//    enQueue(msg: V): void,
+// }
 
-
-export class BaseChan<V> {
+class BaseChan<V> {
 
 	protected _waitingPutters = new Queue<Prc>()
 	protected _waitingReceivers = new Queue<Prc>()
@@ -46,8 +46,7 @@ export class BaseChan<V> {
 	}
 }
 
-
-class Chan<V> extends BaseChan<V> implements Ch<V> {
+export class Ch<V = undefined> extends BaseChan<V> {
 
 	/**
 	 * Need to use full generator, ie, yield*, instead of just yield, because
@@ -105,10 +104,22 @@ class Chan<V> extends BaseChan<V> implements Ch<V> {
 	get isNotDone() {
 		return this._waitingPutters.isEmpty ? false : true
 	}
+
+	_addReceiver(prc: Prc): void {
+		this._waitingReceivers.enQ(prc)
+	}
+
+	_resumeAllWith(msg: V): void {
+		const {_waitingReceivers} = this
+		while (!_waitingReceivers.isEmpty) {
+			const recPrc = _waitingReceivers.deQ()!
+			recPrc._resume(msg)
+		}
+		_waitingReceivers.clear()
+	}
 }
 
-
-class BufferedChan<V> extends BaseChan<V> implements Ch<V> {
+export class BufferedCh<V = undefined> extends BaseChan<V> {
 
 	#buffer: Queue<V>
 	isFull: boolean
@@ -184,32 +195,4 @@ class BufferedChan<V> extends BaseChan<V> implements Ch<V> {
 	get isNotDone() {
 		return this.#buffer.isEmpty && this._waitingPutters.isEmpty ? false : true
 	}
-}
-
-
-/* ===  Helpers  ==================================================== */
-
-export function all(...chanS: Ch[]): Ch {
-
-	const allDone = ch()
-	const chansL = chanS.length
-	const notifyDone = ch(chansL)
-
-	for (const chan of chanS) {
-		go(function* _all() {
-			yield* chan.rec
-			yield notifyDone.put()
-		})
-	}
-
-	go(function* _collectDones() {
-		let nDone = 0
-		while (nDone < chansL) {
-			yield* notifyDone.rec
-			nDone++
-		}
-		yield allDone.put()
-	})
-
-	return allDone
 }

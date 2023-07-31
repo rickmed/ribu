@@ -18,6 +18,10 @@ export class Queue<V> {
 		return this.#array_m.length === this.#capacity
 	}
 
+	clear() {
+		this.#array_m = []
+	}
+
 	deQ() {
 		return this.#array_m.pop()
 	}
