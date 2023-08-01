@@ -3,23 +3,14 @@ import { getRunningPrcOrThrow } from "./initCsp.mjs"
 import { Queue } from "./dataStructures.mjs"
 
 
-export const DONE = Symbol("ribu chan DONE")
-
-export function ch<V = undefined>(): Ch<V>
-export function ch<V = undefined>(capacity: number): BufferedCh<V>
-export function ch<V = undefined>(capacity?: number) {
-	return capacity === undefined ? new Ch<V>()
-		: new BufferedCh<V>(capacity)
+export function ch<V = undefined>() {
+	return new Ch<V>()
 }
 
-// export type Ch<V = undefined> = {
-//    get rec(): Gen<V>,
-// 	put(msg: V): "PARK" | "RESUME",
-//    put(...msg: V extends undefined ? [] : [V]): "PARK" | "RESUME",
-// 	get isNotDone(): boolean
-// 	close(): void
-//    enQueue(msg: V): void,
-// }
+export function chBuff<V = undefined>(capacity: number) {
+	return new BufferedCh<V>(capacity)
+}
+
 
 class BaseChan<V> {
 
@@ -71,7 +62,6 @@ export class Ch<V = undefined> extends BaseChan<V> {
 		if (!_enQueuedMsgs.isEmpty) {
 			return _enQueuedMsgs.deQ()!
 		}
-
 		else {
 			putterPrc._resume()
 			const msg = putterPrc._chanPutMsg_m
@@ -93,6 +83,7 @@ export class Ch<V = undefined> extends BaseChan<V> {
 		let receiverPrc = this._waitingReceivers.deQ()
 
 		if (!receiverPrc) {
+			putterPrc._chanPutMsg_m = msg
 			this._waitingPutters.enQ(putterPrc)
 			return "PARK"
 		}

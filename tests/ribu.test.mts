@@ -1,7 +1,7 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
-import { go, ch, sleep, wait, race } from "../source/index.mjs"
+import { go, ch, sleep } from "../source/index.mjs"
 import { promSleep, range } from "./utils.mjs"
 // import csp from "../source/initCsp.mjs"
 
@@ -16,7 +16,7 @@ topic("unbuffered channels", () => {
       go(function* main() {
          const _ch = ch<number>()
 
-         go(function* child() {
+         go(function* sub() {
             yield _ch.put(13)
          })
 
