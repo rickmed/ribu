@@ -1,6 +1,6 @@
 import { csp, getRunningPrcOrThrow } from "./initCsp.js"
 import { ch, addReceiver, type Ch } from "./channel.js"
-import { EPrcCancelled, E, type ExcProcessCancelled } from "./errors.js"
+import { E, EUnknown, EPrcCancelled } from "./errors.js"
 
 /* BUGS:
 	1) #finishNormalDone calls #finishNormalDone when done, recursive...
@@ -84,16 +84,24 @@ function getDoneCh(prc: Prc) {
 
 function handleThrownErr(prc: Prc, err: Error): void {
 	prc._state = "DONE"
-	// need to let know waiters of ._doneCh
-	prc._doneVal = "ds"
-	const doneCh = getDoneCh(prc)
+	// need to run own onCancel as well
+	// need to cancel children and put in prc._doneVal_m collected results. Schema:
+		// - OG stack trace.
+		// - err :: message, name, stack
+		/*
+			tag: "Unknown"
+			cause: {
+				message, name, stack
+			}
+		*/
+	prc._doneVal_m = EUnknown(err)  // @todo: check if ts complains when creating a prc
+
 }
 
 function finishNormalDone(prc: Prc, prcRetVal: unknown): void {
 	prc._state = "DONE"
-	prc._doneVal = prcRetVal
-	nilParentChildSRefs(prc)
-	prc._doneCh?.resumeReceivers(prcRetVal)
+	// check if active childS to wait for them
+	prc._doneVal_m = prcRetVal
 }
 
 function nilParentChildSRefs(prc: Prc): void {
@@ -211,10 +219,8 @@ function isGenFn(x: unknown): x is GenFn {
 	* can't be cancelled.
 	* children?:
 		if children explodes, need to track them it to construct nice stack.
-
-
-
 */
+
 
 function _all(...chanS: Ch<unknown>[]): Ch {
 	const nChanS = chanS.length
@@ -234,31 +240,33 @@ function _all(...chanS: Ch<unknown>[]): Ch {
 	return allDone
 }
 
-type DoneVal<PrcRet> = PrcRet | ExcProcessCancelled | Exc<"Unknown">
+type DoneVal<PrcRet> = PrcRet | EPrcCancelled | E<"Unknown">
 
 type _Prc<Ret = unknown> = Gen<Ret, unknown> & {
 	_chanPutMsg_m: unknown
-	_doneVal?: DoneVal<Ret>
+	_doneVal_m?: DoneVal<Ret>
 }
 
 export type Prc<Ret = unknown> = _Prc<Ret> & {
 	_name: string
 	_state: "RUNNING" | "CANCELLING" | "DONE"
 	_doneCh?: Ch<DoneVal<Ret>>
+	/** Used remove prc from parent's childS when its done and for stack traces */
 	_parent?: Prc
+	/** Used to cancel children is prc is cancelled */
 	_childS?: Set<Prc>
 	_sleepTimeout_m?: NodeJS.Timeout
 	_onCancel_m?: OnCancel
 	_cancelCh?: Ch
-	get _done(): ReturnType<typeof _done>
+	get _done(): ReturnType<typeof _doneGetter>
 }
 
 
 type PrcRet<Prc_> = Prc_ extends Prc<infer Ret> ? Ret : never
 
-function _done(this: Prc): Ch<PrcRet<Prc>> {
-	const { _doneVal } = this
-	const doneCh = this._doneCh ??= ch<PrcRet<Prc>>()  // eslint-disable-line functional/immutable-data
+function _doneGetter(this: Prc) {
+	const doneCh = this._doneCh ??= ch()  // eslint-disable-line functional/immutable-data
+	const _doneVal = this._doneVal_m
 	if (_doneVal !== undefined) {
 		// @todo: optimize to yield ch + resumeReceivers()
 		go(function* () {
@@ -266,6 +274,12 @@ function _done(this: Prc): Ch<PrcRet<Prc>> {
 		})
 	}
 	return doneCh
+}
+
+function _doneSetter(this: Prc, _doneVal: unknown) {
+	this._doneVal_m = _doneVal
+	this._doneCh?.resumeReceivers(_doneVal)
+	nilParentChildSRefs(this)
 }
 
 /*
@@ -276,11 +290,12 @@ export function go<Args extends unknown[]>(genFn: GenFn<Args>, ...args: Args): P
 
 	let prc = genFn(...args) as Prc<GenFnRet<typeof genFn>>
 
-	Object.defineProperty(Object.getPrototypeOf(prc), "_done", {
-		get: _done
+	Object.defineProperty(Object.getPrototypeOf(prc), "_doneVal", {
+		get: _doneGetter,
+		set: _doneSetter
 	})
 	prc._chanPutMsg_m = undefined
-	prc._doneVal = undefined
+	prc._doneVal_m = undefined
 	prc._name = genFn.name
 	prc._state = "RUNNING"
 	prc._doneCh = undefined
