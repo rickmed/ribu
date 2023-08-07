@@ -1,7 +1,7 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
-import { go, ch, sleep } from "../source/index.mjs"
+import { go, ch, sleep } from "../source/index.js"
 import { promSleep, range } from "./utils.mjs"
 // import csp from "../source/initCsp.mjs"
 

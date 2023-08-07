@@ -1,5 +1,5 @@
-import { Csp } from "./Csp.mjs"
-import { type Prc } from "./process.mjs"
+import { Csp } from "./Csp.js"
+import { type Prc } from "./process.js"
 
 export const csp = new Csp()
 

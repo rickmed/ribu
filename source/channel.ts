@@ -1,6 +1,6 @@
-import { Prc, type Gen } from "./process.mjs"
-import { getRunningPrcOrThrow } from "./initCsp.mjs"
-import { Queue } from "./dataStructures.mjs"
+import { resume, type Prc, type Gen } from "./process.js"
+import { getRunningPrcOrThrow } from "./initCsp.js"
+import { Queue } from "./dataStructures.js"
 
 
 export function ch<V = undefined>() {
@@ -15,25 +15,12 @@ export function chBuff<V = undefined>(capacity: number) {
 class BaseChan<V> {
 
 	protected _waitingPutters = new Queue<Prc>()
-	protected _waitingReceivers = new Queue<Prc>()
+	_waitingReceivers = new Queue<Prc>()
 	protected _enQueuedMsgs = new Queue<V>()
 	protected _closed = false
 
 	close() {
 		this._closed = true
-	}
-
-	/** @todo: I think this should broadcast msg instead of deQueuing, ie, sending a different msg to each waitingRec */
-	enQueue(msg: V): void {
-		if (this._closed) {
-			throw Error(`ribu: can't enQueue() on a closed channel.`)
-		}
-		const receiverPrc = this._waitingReceivers.deQ()
-		if (!receiverPrc) {
-			this._enQueuedMsgs.enQ(msg)
-			return
-		}
-		receiverPrc._resume(msg)
 	}
 }
 
@@ -45,15 +32,16 @@ export class Ch<V = undefined> extends BaseChan<V> {
 	 * returned at gen.next()
 	 */
 	get rec(): Gen<V> {
-		const receiverPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
-		return this.#rec(receiverPrc)
+		return this.#rec()
 	}
 
-	*#rec(receiverPrc: Prc): Gen<V> {
-		let putterPrc = this._waitingPutters.deQ()
+	*#rec(): Gen<V> {
+		const recPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
 
-		if (!putterPrc) {
-			this._waitingReceivers.enQ(receiverPrc)
+		let putPrc = this._waitingPutters.deQ()
+
+		if (!putPrc) {
+			this._waitingReceivers.enQ(recPrc)
 			const msg = yield "PARK"
 			return msg as V
 		}
@@ -63,8 +51,8 @@ export class Ch<V = undefined> extends BaseChan<V> {
 			return _enQueuedMsgs.deQ()!
 		}
 		else {
-			putterPrc._resume()
-			const msg = putterPrc._chanPutMsg_m
+			resume(putPrc)
+			const msg = putPrc._chanPutMsg_m
 			return msg as V
 		}
 	}
@@ -73,22 +61,24 @@ export class Ch<V = undefined> extends BaseChan<V> {
 	 * No need to pay the cost of using yield* because put() returns nothing
 	 * within a process, so no type preserving needed.
 	 */
+	put(msg: V): "PARK" | "RESUME"
+	put(...msg: V extends undefined ? [] : [V]): "PARK" | "RESUME"
    put(msg?: V): "PARK" | "RESUME" {
 
 		if (this._closed) {
 			throw Error(`can't put() on a closed channel`)
 		}
 
-		const putterPrc = getRunningPrcOrThrow(`can't put outside a process.`)
-		let receiverPrc = this._waitingReceivers.deQ()
+		const putPrc = getRunningPrcOrThrow(`can't put outside a process.`)
+		let recPrc = this._waitingReceivers.deQ()
 
-		if (!receiverPrc) {
-			putterPrc._chanPutMsg_m = msg
-			this._waitingPutters.enQ(putterPrc)
+		if (!recPrc) {
+			putPrc._chanPutMsg_m = msg
+			this._waitingPutters.enQ(putPrc)
 			return "PARK"
 		}
 
-		receiverPrc._resume(msg)
+		resume(recPrc, msg)
 		return "RESUME"
 	}
 
@@ -96,18 +86,18 @@ export class Ch<V = undefined> extends BaseChan<V> {
 		return this._waitingPutters.isEmpty ? false : true
 	}
 
-	_addReceiver(prc: Prc): void {
-		this._waitingReceivers.enQ(prc)
-	}
-
-	_resumeAllWith(msg: V): void {
+	resumeReceivers(msg: V): void {
 		const {_waitingReceivers} = this
 		while (!_waitingReceivers.isEmpty) {
 			const recPrc = _waitingReceivers.deQ()!
-			recPrc._resume(msg)
+			resume(recPrc, msg)
 		}
 		_waitingReceivers.clear()
 	}
+}
+
+export function addReceiver(ch: Ch, prc: Prc): void {
+	ch._waitingReceivers.enQ(prc)
 }
 
 export class BufferedCh<V = undefined> extends BaseChan<V> {
@@ -123,62 +113,62 @@ export class BufferedCh<V = undefined> extends BaseChan<V> {
 	}
 
 	get rec(): Gen<V> {
-		const receiverPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
-		return this.#rec(receiverPrc)
+		return this.#rec()
 	}
 
-	*#rec(receiverPrc: Prc): Gen<V> {
+	*#rec(): Gen<V> {
+		const recPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
 
 		const buffer = this.#buffer
 		const msg = buffer.deQ()
 
 		if (msg === undefined) {
-			this._waitingReceivers.enQ(receiverPrc)
+			this._waitingReceivers.enQ(recPrc)
 			const msg = yield "PARK"
 			return msg as V
 		}
 
-		const putterPrc = this._waitingPutters.deQ()
+		const putPrc = this._waitingPutters.deQ()
 
-		if (putterPrc) {
-			buffer.enQ(putterPrc._chanPutMsg_m as V)
-			putterPrc._resume()
+		if (putPrc) {
+			buffer.enQ(putPrc._chanPutMsg_m as V)
+			resume(putPrc)
 		}
 
 		return msg
 	}
 
-	put(msg?: V): "PARK" | "RESUME" {
+	put(msg: V): "PARK" | "RESUME" {
 
 		if (this._closed) {
 			throw Error(`ribu: can't put on a closed channel`)
 		}
 
-		const putterPrc = getRunningPrcOrThrow(`can't put outside a process.`)
+		const putPrc = getRunningPrcOrThrow(`can't put outside a process.`)
 
 		const buffer = this.#buffer
 
 		if (buffer.isFull) {
-			putterPrc._chanPutMsg_m = msg
-			this._waitingPutters.enQ(putterPrc)
+			putPrc._chanPutMsg_m = msg
+			this._waitingPutters.enQ(putPrc)
 			return "PARK"
 		}
 
 		const {_waitingReceivers} = this
-		let receiverPrc = _waitingReceivers.deQ()
+		let recPrc = _waitingReceivers.deQ()
 
-		if (!receiverPrc) {
+		if (!recPrc) {
 			buffer.enQ(msg as V)
-			putterPrc._resume()
+			resume(putPrc)
 			return "RESUME"
 		}
 
-		while (receiverPrc) {
-			if (receiverPrc._state === "RUNNING") {
-				receiverPrc._resume(msg)
+		while (recPrc) {
+			if (recPrc._state === "RUNNING") {
+				resume(recPrc, msg)
 				break
 			}
-			receiverPrc = _waitingReceivers.deQ()
+			recPrc = _waitingReceivers.deQ()
 		}
 		return "RESUME"
 	}

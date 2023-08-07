@@ -4,7 +4,6 @@
   "version": "0.1.2",
   "files": [
     "source",
-    "types",
     "test-utils"
   ],
   "exports": {
@@ -15,7 +14,7 @@
       "import": "./tests/test-utils.mjs"
     }
   },
-  "types": "./types",
+  "type": "module",
   "scripts": {
     "test": "clear; node --no-warnings --loader tsx ./tests/runTests.mts",
     "test:watch": "clear; node --no-warnings --watch --enable-source-maps --loader tsx ./tests/runTests.mts",

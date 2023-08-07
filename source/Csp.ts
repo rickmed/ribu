@@ -1,4 +1,4 @@
-import { type Prc } from "./process.mjs"
+import { type Prc } from "./process.js"
 
 export class Csp {
 
