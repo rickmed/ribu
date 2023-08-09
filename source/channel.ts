@@ -1,3 +1,4 @@
+import { PARK, RESUME, UNSET } from "./shared.js"
 import { resume, type Prc, type Gen } from "./process.js"
 import { getRunningPrcOrThrow } from "./initCsp.js"
 import { Queue } from "./dataStructures.js"
@@ -26,6 +27,8 @@ class BaseChan<V> {
 
 export class Ch<V = undefined> extends BaseChan<V> {
 
+	_resolvedVal: V | UNSET = UNSET
+
 	/**
 	 * Need to use full generator, ie, yield*, instead of just yield, because
 	 * typescript can't preserve the types between what is yielded and what is
@@ -38,11 +41,17 @@ export class Ch<V = undefined> extends BaseChan<V> {
 	*#rec(): Gen<V> {
 		const recPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
 
+		const { _resolvedVal } = this
+		if (_resolvedVal !== UNSET) {
+			this._resolvedVal = UNSET
+			return _resolvedVal
+		}
+
 		let putPrc = this._waitingPutters.deQ()
 
 		if (!putPrc) {
 			this._waitingReceivers.enQ(recPrc)
-			const msg = yield "PARK"
+			const msg = yield PARK
 			return msg as V
 		}
 
@@ -61,9 +70,9 @@ export class Ch<V = undefined> extends BaseChan<V> {
 	 * No need to pay the cost of using yield* because put() returns nothing
 	 * within a process, so no type preserving needed.
 	 */
-	put(msg: V): "PARK" | "RESUME"
-	put(...msg: V extends undefined ? [] : [V]): "PARK" | "RESUME"
-   put(msg?: V): "PARK" | "RESUME" {
+	put(msg: V): PARK | RESUME
+	put(...msg: V extends undefined ? [] : [V]): PARK | RESUME
+   put(msg?: V): PARK | RESUME {
 
 		if (this._closed) {
 			throw Error(`can't put() on a closed channel`)
@@ -75,24 +84,29 @@ export class Ch<V = undefined> extends BaseChan<V> {
 		if (!recPrc) {
 			putPrc._chanPutMsg_m = msg
 			this._waitingPutters.enQ(putPrc)
-			return "PARK"
+			return PARK
 		}
 
 		resume(recPrc, msg)
-		return "RESUME"
+		return RESUME
 	}
 
 	get isNotDone() {
 		return this._waitingPutters.isEmpty ? false : true
 	}
 
-	resumeReceivers(msg: V): void {
+	resumeAll(msg: V): void {
 		const {_waitingReceivers} = this
 		while (!_waitingReceivers.isEmpty) {
 			const recPrc = _waitingReceivers.deQ()!
 			resume(recPrc, msg)
 		}
 		_waitingReceivers.clear()
+	}
+
+	resolve(msg: V): this {
+		this._resolvedVal = msg
+		return this
 	}
 }
 
@@ -124,7 +138,7 @@ export class BufferedCh<V = undefined> extends BaseChan<V> {
 
 		if (msg === undefined) {
 			this._waitingReceivers.enQ(recPrc)
-			const msg = yield "PARK"
+			const msg = yield PARK
 			return msg as V
 		}
 
@@ -138,7 +152,7 @@ export class BufferedCh<V = undefined> extends BaseChan<V> {
 		return msg
 	}
 
-	put(msg: V): "PARK" | "RESUME" {
+	put(msg: V): PARK | RESUME {
 
 		if (this._closed) {
 			throw Error(`ribu: can't put on a closed channel`)
@@ -151,7 +165,7 @@ export class BufferedCh<V = undefined> extends BaseChan<V> {
 		if (buffer.isFull) {
 			putPrc._chanPutMsg_m = msg
 			this._waitingPutters.enQ(putPrc)
-			return "PARK"
+			return PARK
 		}
 
 		const {_waitingReceivers} = this
@@ -160,7 +174,7 @@ export class BufferedCh<V = undefined> extends BaseChan<V> {
 		if (!recPrc) {
 			buffer.enQ(msg as V)
 			resume(putPrc)
-			return "RESUME"
+			return RESUME
 		}
 
 		while (recPrc) {
@@ -170,7 +184,7 @@ export class BufferedCh<V = undefined> extends BaseChan<V> {
 			}
 			recPrc = _waitingReceivers.deQ()
 		}
-		return "RESUME"
+		return RESUME
 	}
 
 	get isNotDone() {

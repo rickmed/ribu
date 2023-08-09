@@ -1,6 +1,7 @@
 import { csp, getRunningPrcOrThrow } from "./initCsp.js"
 import { ch, addReceiver, type Ch } from "./channel.js"
-import { E, EUnknown, EPrcCancelled } from "./errors.js"
+import { E, Ether, EPrcCancelled } from "./errors.js"
+import { PARK, RESUME, UNSET } from "./shared.js"
 
 /* BUGS:
 	1) #finishNormalDone calls #finishNormalDone when done, recursive...
@@ -17,6 +18,15 @@ import { E, EUnknown, EPrcCancelled } from "./errors.js"
 
 	go():
 		calls genFn, wraps in Prc, calls prc.resume()
+*/
+
+
+/*
+	Need to break out runOnCancelAndChildSCancel out of cancelPrc
+
+
+
+
 */
 
 export class PrcClass {
@@ -43,7 +53,8 @@ export function resume(prc: Prc, msg?: unknown): void {
 			var { done, value } = prc.next(msg)  // eslint-disable-line no-var
 		}
 		catch (err) {
-			handleThrownErr(prc, err instanceof Error ? err : Error("", {cause: err}))
+			_go(handleThrownErr, prc, err instanceof Error ? err : Error("", { cause: err }))
+			return
 		}
 
 		if (done === true) {
@@ -55,10 +66,11 @@ export function resume(prc: Prc, msg?: unknown): void {
 			finishNormalDone(prc, value)
 			return
 		}
-		if (value === "PARK") {
+		// @todo: implement yielding channels
+		if (value === PARK) {
 			break
 		}
-		if (value === "RESUME") {
+		if (value === RESUME) {
 			continue
 		}
 		if (value instanceof Promise) {
@@ -82,20 +94,29 @@ function getDoneCh(prc: Prc) {
 	return prc._doneCh ??= ch<PrcRet<Prc>>()
 }
 
-function handleThrownErr(prc: Prc, err: Error): void {
+/**
+ * If a prc throws anywhere, its onCancel is ran (tried) and children are cancelled.
+ * The result of that operation is placed in its done channel
+ */
+function* handleThrownErr(prc: Prc, err: Error) {
 	prc._state = "DONE"
 	// need to run own onCancel as well
 	// need to cancel children and put in prc._doneVal_m collected results. Schema:
-		// - OG stack trace.
-		// - err :: message, name, stack
-		/*
-			tag: "Unknown"
-			cause: {
-				message, name, stack
-			}
-		*/
-	prc._doneVal_m = EUnknown(err)  // @todo: check if ts complains when creating a prc
+	// - OG stack trace.
+	// - err :: message, name, stack
+	/*
+		tag: "Unknown"
+		cause: {
+			message, name, stack
+		}
+	*/
+	// wrap the result in EUnkown ?
+	// need to contruct ribu stack trace with args
 
+	const res = yield* runOnCancelAndChildSCancel(prc)
+	// const ribuStackTrace = need to iterate _childS and _parent.
+		// should I include siblings in stack?
+	prc._doneVal_m = EOther(res)  // @todo: check if ts complains when creating a prc
 }
 
 function finishNormalDone(prc: Prc, prcRetVal: unknown): void {
@@ -113,40 +134,23 @@ function nilParentChildSRefs(prc: Prc): void {
 	}
 }
 
-// @todo: optimize to yield ch
-// If ._doneCh waiters, need to resolve them with ExcPrcCancelled or Exc<Unknown>
-//
-function* cancelPrc(prc: Prc): Gen<void> {
 
-	const callingPrc = getRunningPrcOrThrow(`can't call cancel() outside a process.`)
-
-	const { _state } = prc
-	const waitingCancel = prc._cancelCh ??= ch()
-
-	if (_state === "DONE") {
-		// waitingCancel._addReceiver(receiverPrc)
-		// can be in process of finisNormalDone ??
-		waitingCancel.resumeReceivers(undefined)
-		return undefined
-	}
-
-	if (_state === "CANCELLING") {
-		addReceiver(waitingCancel, callingPrc)
-		return undefined
-	}
-
-	prc._state = "CANCELLING"
-	if (prc._sleepTimeout_m) clearTimeout(prc._sleepTimeout_m)
+// since prcS are being cancelled, the result must be available at .doneVal
+	// so need to do those side effects here
+// return thing?
+	// is it likely that user handles errors in onCancelFns?
+// maybe cancel(prcS) should return "ok" | Error
+function* runOnCancelAndChildSCancel(prc: Prc): Gen<undefined | Error> {
 
 	const onCancel = prc._onCancel_m
 	const childS = prc._childS
 
 	if (!childS && !onCancel) {
-		// void and goes final cleanup below
+		return undefined
 	}
 
 	else if (!childS && isRegFn(onCancel)) {
-		onCancel()
+		return try_(onCancel)
 	}
 
 	else if (!childS && isGenFn(onCancel)) {
@@ -158,7 +162,7 @@ function* cancelPrc(prc: Prc): Gen<void> {
 	}
 
 	else if (childS && isRegFn(onCancel)) {
-		onCancel()
+		const res = try_(onCancel)
 		yield* cancel(...childS).rec
 	}
 
@@ -167,6 +171,45 @@ function* cancelPrc(prc: Prc): Gen<void> {
 		// need to put this on ._doneVal
 		yield* _all(go(onCancel as OnCancelGen)._done, cancelPrcS(...childS!)).rec
 	}
+
+	function try_(fn: RegFn) {
+		try {
+			fn()
+			return undefined
+		}
+		catch (err) {
+			return err as Error
+		}
+	}
+}
+
+// @todo: optimize to yield ch
+// If ._doneCh waiters, need to resolve them with ExcPrcCancelled or Exc<Unknown>
+//
+function* cancelPrc(prc: Prc): Gen<void> {
+
+	const callingPrc = getRunningPrcOrThrow(`can't call cancel() outside a process.`)
+
+	const { _state } = prc
+	const waitingCancel = prc._cancelCh ??= ch()
+
+	if (_state === "DONE") {
+		// can be runn
+		// waitingCancel._addReceiver(receiverPrc)
+		// can be in process of finisNormalDone ??
+		waitingCancel.resumeAll(undefined)
+		return undefined
+	}
+
+	if (_state === "CANCELLING") {
+		addReceiver(waitingCancel, callingPrc)
+		return undefined
+	}
+
+	prc._state = "CANCELLING"
+	if (prc._sleepTimeout_m) clearTimeout(prc._sleepTimeout_m)
+
+	const res = yield* runOnCancelAndChildSCancel(prc)
 
 	prc._state = "DONE"
 	nilParentChildSRefs(prc)
@@ -244,11 +287,12 @@ type DoneVal<PrcRet> = PrcRet | EPrcCancelled | E<"Unknown">
 
 type _Prc<Ret = unknown> = Gen<Ret, unknown> & {
 	_chanPutMsg_m: unknown
-	_doneVal_m?: DoneVal<Ret>
+	_doneVal_m: DoneVal<Ret> | UNSET
 }
 
 export type Prc<Ret = unknown> = _Prc<Ret> & {
 	_name: string
+	_args: unknown[]
 	_state: "RUNNING" | "CANCELLING" | "DONE"
 	_doneCh?: Ch<DoneVal<Ret>>
 	/** Used remove prc from parent's childS when its done and for stack traces */
@@ -264,22 +308,24 @@ export type Prc<Ret = unknown> = _Prc<Ret> & {
 
 type PrcRet<Prc_> = Prc_ extends Prc<infer Ret> ? Ret : never
 
-function _doneGetter(this: Prc) {
-	const doneCh = this._doneCh ??= ch()  // eslint-disable-line functional/immutable-data
-	const _doneVal = this._doneVal_m
-	if (_doneVal !== undefined) {
-		// @todo: optimize to yield ch + resumeReceivers()
-		go(function* () {
-			yield doneCh.put(_doneVal)
-		})
-	}
-	return doneCh
-}
 
-function _doneSetter(this: Prc, _doneVal: unknown) {
-	this._doneVal_m = _doneVal
-	this._doneCh?.resumeReceivers(_doneVal)
-	nilParentChildSRefs(this)
+const settersAndGetters = {
+	_doneVal: {
+		set: function _doneValSet(this: Prc, _doneVal: unknown) {
+			this._doneVal_m = _doneVal
+			this._doneCh?.resumeAll(_doneVal)
+		}
+	},
+	_done: {
+		get: function _doneGet<Ret>(this: Prc<Ret>): Ch<DoneVal<Ret>> {
+			const doneCh = this._doneCh ??= ch()  // eslint-disable-line functional/immutable-data
+			const _doneVal = this._doneVal_m
+			if (_doneVal === UNSET) {
+				return doneCh
+			}
+			return doneCh.resolve(_doneVal)
+		}
+	},
 }
 
 /*
@@ -290,13 +336,11 @@ export function go<Args extends unknown[]>(genFn: GenFn<Args>, ...args: Args): P
 
 	let prc = genFn(...args) as Prc<GenFnRet<typeof genFn>>
 
-	Object.defineProperty(Object.getPrototypeOf(prc), "_doneVal", {
-		get: _doneGetter,
-		set: _doneSetter
-	})
+	Object.defineProperties(Object.getPrototypeOf(prc), settersAndGetters)
 	prc._chanPutMsg_m = undefined
-	prc._doneVal_m = undefined
+	prc._doneVal_m = UNSET
 	prc._name = genFn.name
+	prc._args = args
 	prc._state = "RUNNING"
 	prc._doneCh = undefined
 	prc._childS = undefined
@@ -337,7 +381,7 @@ export function onCancel(userOnCancel: OnCancel): void {
 	runningPrc._onCancel_m = userOnCancel
 }
 
-export function sleep(ms: number): "PARK" {
+export function sleep(ms: number): PARK {
 	const runningPrc = getRunningPrcOrThrow(`can't sleep() outside a process.`)
 
 	const timeoutID = setTimeout(function _sleepTimeOut() {
@@ -345,21 +389,24 @@ export function sleep(ms: number): "PARK" {
 	}, ms)
 
 	runningPrc._sleepTimeout_m = timeoutID
-	return "PARK"
+	return PARK
 }
 
 /**
  * Cancel several processes concurrently
  * @todo: cancel() needs to put to prc.done PrcCancelledErr() or if err during cancellation
  */
-export function cancel(...prcS: _Prc[]): Ch<void> {
-	// this should call cancelPrcS and return Ch<void> to End-User
+
+// returns Map<prc, onCancelRetVal> | onCancelRetVal
+export function* cancel(...prcS: _Prc[]) {
+	yield cancelPrcS(prcS)
+	return ch<void>() // who resumes this?
 }
 
 
 /* === Types ====================================================== */
 
-export type Yieldable = "PARK" | "RESUME" | Promise<unknown>
+export type Yieldable = PARK | RESUME | Promise<unknown>
 
 export type Gen<Ret = unknown, Rec = unknown> =
 	Generator<Yieldable, Ret, Rec>
