@@ -116,7 +116,7 @@ topic("buffered channels", () => {
             ch1.close()
          })
 
-         while (ch1.isNotDone) {
+         while (ch1.notDone) {
             const rec = await ch1.rec
             recS.push(rec)
          }
@@ -142,7 +142,7 @@ topic("buffered channels", () => {
          })
 
          await sleep(1)
-         while (ch1.isNotDone) {
+         while (ch1.notDone) {
             const rec = await ch1.rec
             recS.push(rec)
          }

@@ -91,7 +91,7 @@ export class Ch<V = undefined> extends BaseChan<V> {
 		return RESUME
 	}
 
-	get isNotDone() {
+	get notDone() {
 		return this._waitingPutters.isEmpty ? false : true
 	}
 

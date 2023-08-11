@@ -52,8 +52,8 @@ export function resume(prc: Prc, msg?: unknown): void {
 		try {
 			var { done, value } = prc.next(msg)  // eslint-disable-line no-var
 		}
-		catch (err) {
-			_go(handleThrownErr, prc, err instanceof Error ? err : Error("", { cause: err }))
+		catch (thrown) {
+			_go(handleThrownErr, prc, thrown)
 			return
 		}
 
@@ -98,7 +98,7 @@ function getDoneCh(prc: Prc) {
  * If a prc throws anywhere, its onCancel is ran (tried) and children are cancelled.
  * The result of that operation is placed in its done channel
  */
-function* handleThrownErr(prc: Prc, err: Error) {
+function* handleThrownErr(prc: Prc, thrown: unknown) {
 	prc._state = "DONE"
 	// need to run own onCancel as well
 	// need to cancel children and put in prc._doneVal_m collected results. Schema:
@@ -116,22 +116,16 @@ function* handleThrownErr(prc: Prc, err: Error) {
 	const res = yield* runOnCancelAndChildSCancel(prc)
 	// const ribuStackTrace = need to iterate _childS and _parent.
 		// should I include siblings in stack?
-	prc._doneVal_m = EOther(res)  // @todo: check if ts complains when creating a prc
+
+	// this is suppose to resume ._done waiters.
+	prc._doneVal = EOther(res)  // @todo: check if ts complains when creating a prc
 }
 
 function finishNormalDone(prc: Prc, prcRetVal: unknown): void {
 	prc._state = "DONE"
 	// check if active childS to wait for them
-	prc._doneVal_m = prcRetVal
-}
-
-function nilParentChildSRefs(prc: Prc): void {
-	prc._childS = undefined
-	const parent = prc._parent
-	if (parent) {
-		parent._childS?.delete(prc)
-		prc._parent = undefined
-	}
+	// this is suppose to resume ._done waiters.
+	prc._doneVal = prcRetVal
 }
 
 
@@ -212,7 +206,6 @@ function* cancelPrc(prc: Prc): Gen<void> {
 	const res = yield* runOnCancelAndChildSCancel(prc)
 
 	prc._state = "DONE"
-	nilParentChildSRefs(prc)
 	return
 }
 
@@ -283,37 +276,47 @@ function _all(...chanS: Ch<unknown>[]): Ch {
 	return allDone
 }
 
+
+
+
+
+type PrcRet<Prc_> = Prc_ extends Prc<infer Ret> ? Ret : never
 type DoneVal<PrcRet> = PrcRet | EPrcCancelled | E<"Unknown">
 
-type _Prc<Ret = unknown> = Gen<Ret, unknown> & {
+type _Prc<Ret = unknown> = {
+	_genObj: Gen
 	_chanPutMsg_m: unknown
 	_doneVal_m: DoneVal<Ret> | UNSET
 }
+
+
+/*
+ * =====  Public functions  ====================================================
+*/
 
 export type Prc<Ret = unknown> = _Prc<Ret> & {
 	_name: string
 	_args: unknown[]
 	_state: "RUNNING" | "CANCELLING" | "DONE"
 	_doneCh?: Ch<DoneVal<Ret>>
-	/** Used remove prc from parent's childS when its done and for stack traces */
-	_parent?: Prc
-	/** Used to cancel children is prc is cancelled */
+	/** Used to cancel children if prc is cancelled */
 	_childS?: Set<Prc>
 	_sleepTimeout_m?: NodeJS.Timeout
 	_onCancel_m?: OnCancel
 	_cancelCh?: Ch
-	get _done(): ReturnType<typeof _doneGetter>
+}
+const methods = {
+	set _doneVal(_doneVal: unknown) {
+		let _this = this as unknown as Prc
+		_this._doneVal_m = _doneVal
+		_this._doneCh?.resumeAll(_doneVal)
+	}
 }
 
-
-type PrcRet<Prc_> = Prc_ extends Prc<infer Ret> ? Ret : never
-
-
-const settersAndGetters = {
-	_doneVal: {
-		set: function _doneValSet(this: Prc, _doneVal: unknown) {
-			this._doneVal_m = _doneVal
-			this._doneCh?.resumeAll(_doneVal)
+const prcProtoMethods = {
+	returnedVal: {
+		get: function returnedVal(this: Prc) {
+			return this._doneVal_m
 		}
 	},
 	_done: {
@@ -328,35 +331,30 @@ const settersAndGetters = {
 	},
 }
 
-/*
- * =====  Public functions  ====================================================
-*/
 
 export function go<Args extends unknown[]>(genFn: GenFn<Args>, ...args: Args): Prc {
 
-	let prc = genFn(...args) as Prc<GenFnRet<typeof genFn>>
+	const prc: Prc<GenFnRet<typeof genFn>> = {
+		_genObj: genFn(...args),
+		_chanPutMsg_m: undefined,
+		_doneVal_m: UNSET,
+		_name: genFn.name,
+		_args: args,
+		_state: "RUNNING",
+		_doneCh: undefined,
+		_childS: undefined,
+		_sleepTimeout_m: undefined,
+		_onCancel_m: undefined,
+		_cancelCh: undefined,
+	}
 
-	Object.defineProperties(Object.getPrototypeOf(prc), settersAndGetters)
-	prc._chanPutMsg_m = undefined
-	prc._doneVal_m = UNSET
-	prc._name = genFn.name
-	prc._args = args
-	prc._state = "RUNNING"
-	prc._doneCh = undefined
-	prc._childS = undefined
-	prc._sleepTimeout_m = undefined
-	prc._onCancel_m = undefined
-	prc._cancelCh = undefined
+	Object.defineProperties(Object.getPrototypeOf(prc), prcProtoMethods)
 
 	const parentPrc = csp.runningPrc
 	if (parentPrc) {
-
-		prc._parent = parentPrc
-
 		if (parentPrc._childS === undefined) {
 			parentPrc._childS = new Set()  // eslint-disable-line functional/immutable-data
 		}
-
 		parentPrc._childS.add(prc)
 	}
 
