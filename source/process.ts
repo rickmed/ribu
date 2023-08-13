@@ -2,6 +2,7 @@ import { csp, getRunningPrcOrThrow } from "./initCsp.js"
 import { Ch, addReceiver } from "./channel.js"
 import { E, Ether, EPrcCancelled } from "./errors.js"
 import { PARK, RESUME, UNSET } from "./shared.js"
+import { waitForDebugger } from "inspector"
 
 // @todo: add parent pointers and remove from parent when done
 
@@ -31,16 +32,35 @@ type DoneVal<PrcRet> = PrcRet | EPrcCancelled | E<"Unknown">
 export abstract class Prc {
 	_chanPutMsg_m: unknown = undefined
 
-	constructor(protected _gen: Gen) {}
+	constructor(protected _gen: Gen) { }
 
 	abstract _resume(msg?: unknown): void
 }
 
 class InternalPrc extends Prc {
+
 	constructor(gen: Gen) {
 		super(gen)
 	}
-	_resume(): void {
+
+	_resume(msg?: unknown): void {
+
+		csp.prcStack.push(this)
+
+		for (; ;) {
+			const { done, value } = this._gen.next(msg)
+			if (done === true) {
+				return
+			}
+			// @todo: implement yielding channels
+			if (value === PARK) {
+				break
+			}
+			if (value === RESUME) {
+				continue
+			}
+		}
+		csp.prcStack.pop()
 	}
 }
 
@@ -82,6 +102,7 @@ class UserPrc<Ret = unknown> extends Prc {
 		csp.prcStack.push(this)
 
 		for (; ;) {
+
 			try {
 				var { done, value } = this._gen.next(msg)  // eslint-disable-line no-var
 			}
@@ -91,11 +112,7 @@ class UserPrc<Ret = unknown> extends Prc {
 			}
 
 			if (done === true) {
-
 				csp.prcStack.pop()
-
-				if (this._name === "#finishNormalDone") return  // @todo: cleaner
-
 				finishNormalDone(this, value)
 				return
 			}
@@ -123,6 +140,91 @@ class UserPrc<Ret = unknown> extends Prc {
 		csp.prcStack.pop()
 	}
 
+	/**
+ * If a prc throws anywhere, its onCancel is ran (tried) and children are cancelled.
+ * The result of that operation is placed in its done channel
+ */
+	*handleThrownErr(thrown: unknown) {
+		this.#state = "DONE"
+		// need to run own onCancel as well
+		// need to cancel children and put in prc._doneVal_m collected results. Schema:
+		// - OG stack trace.
+		// - err :: message, name, stack
+		/*
+			tag: "Unknown"
+			cause: {
+				message, name, stack
+			}
+		*/
+		// wrap the result in EUnkown ?
+		// need to contruct ribu stack trace with args
+
+		const res = yield* runOnCancelAndChildSCancel(prc)
+		// const ribuStackTrace = need to iterate _childS and _parent.
+		// should I include siblings in stack?
+
+		// this is suppose to resume ._done waiters.
+		this._doneVal = EOther(res)  // @todo: check if ts complains when creating a prc
+	}
+
+	// since prcS are being cancelled, the result must be available at .doneVal
+	// so need to do those side effects here
+	// return thing?
+	// is it likely that user handles errors in onCancelFns?
+	// maybe cancel(prcS) should return "ok" | Error
+	*runOnCancelAndChildSCancel(): Gen<undefined | Error> {
+
+		const onCancel = this._onCancel_m
+		const childS = this.#childS
+
+		if (!childS && !onCancel) {
+			return undefined
+		}
+
+		else if (!childS && isRegFn(onCancel)) {
+			return try_(onCancel)
+		}
+
+		else if (!childS && isGenFn(onCancel)) {
+			yield* go(onCancel)._done.rec
+		}
+
+		else if (childS && onCancel === undefined) {
+			yield* cancel(...childS).rec
+		}
+
+		else if (childS && isRegFn(onCancel)) {
+			const res = try_(onCancel)
+			yield* cancel(...childS).rec
+		}
+
+		else {  /* _$child && isGenFn(_onCancel) */
+			// @todo: maybe use wait(...) here
+			// need to put this on ._doneVal
+			yield* _all(go(onCancel as OnCancelGen)._done, cancelPrcS(...childS!)).rec
+		}
+
+		function try_(fn: RegFn) {
+			try {
+				fn()
+				return undefined
+			}
+			catch (err) {
+				return err as Error
+			}
+		}
+	}
+
+	*finishNormalDone(prcRetVal: unknown) {
+		this.#state = "DONE"
+		const childS = this.#childS
+		if (childS) {
+			const res = yield* waitErr(childS)
+		}
+		// this is suppose to resume ._done waiters.
+		this._doneVal = prcRetVal
+	}
+
 	get done() {
 		// const doneCh = this.#doneCh ??= Ch<Ret>()  // eslint-disable-line functional/immutable-data
 		// const _doneVal = this._doneVal_m
@@ -145,88 +247,6 @@ class UserPrc<Ret = unknown> extends Prc {
 }
 
 
-/**
- * If a prc throws anywhere, its onCancel is ran (tried) and children are cancelled.
- * The result of that operation is placed in its done channel
- */
-function* handleThrownErr(prc: Prc, thrown: unknown) {
-	prc._state = "DONE"
-	// need to run own onCancel as well
-	// need to cancel children and put in prc._doneVal_m collected results. Schema:
-	// - OG stack trace.
-	// - err :: message, name, stack
-	/*
-		tag: "Unknown"
-		cause: {
-			message, name, stack
-		}
-	*/
-	// wrap the result in EUnkown ?
-	// need to contruct ribu stack trace with args
-
-	const res = yield* runOnCancelAndChildSCancel(prc)
-	// const ribuStackTrace = need to iterate _childS and _parent.
-	// should I include siblings in stack?
-
-	// this is suppose to resume ._done waiters.
-	prc._doneVal = EOther(res)  // @todo: check if ts complains when creating a prc
-}
-
-function finishNormalDone(prc: Prc, prcRetVal: unknown): void {
-	prc._state = "DONE"
-	// check if prc active childS and awaits for them
-	// this is suppose to resume ._done waiters.
-	prc._doneVal = prcRetVal
-}
-
-
-// since prcS are being cancelled, the result must be available at .doneVal
-// so need to do those side effects here
-// return thing?
-// is it likely that user handles errors in onCancelFns?
-// maybe cancel(prcS) should return "ok" | Error
-function* runOnCancelAndChildSCancel(prc: Prc): Gen<undefined | Error> {
-
-	const onCancel = prc._onCancel_m
-	const childS = prc._childS
-
-	if (!childS && !onCancel) {
-		return undefined
-	}
-
-	else if (!childS && isRegFn(onCancel)) {
-		return try_(onCancel)
-	}
-
-	else if (!childS && isGenFn(onCancel)) {
-		yield* go(onCancel)._done.rec
-	}
-
-	else if (childS && onCancel === undefined) {
-		yield* cancel(...childS).rec
-	}
-
-	else if (childS && isRegFn(onCancel)) {
-		const res = try_(onCancel)
-		yield* cancel(...childS).rec
-	}
-
-	else {  /* _$child && isGenFn(_onCancel) */
-		// @todo: maybe use wait(...) here
-		// need to put this on ._doneVal
-		yield* _all(go(onCancel as OnCancelGen)._done, cancelPrcS(...childS!)).rec
-	}
-
-	function try_(fn: RegFn) {
-		try {
-			fn()
-			return undefined
-		}
-		catch (err) {
-			return err as Error
-		}
-	}
-}
 
 // @todo: optimize to yield ch
 // If ._doneCh waiters, need to resolve them with ExcPrcCancelled or Exc<Unknown>
