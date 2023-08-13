@@ -1,11 +1,11 @@
 import { PARK, RESUME, UNSET } from "./shared.js"
-import { resume, type Prc, type Gen } from "./process.js"
+import { type Prc, type Gen } from "./process.js"
 import { getRunningPrcOrThrow } from "./initCsp.js"
 import { Queue } from "./dataStructures.js"
 
-
-export function ch<V = undefined>() {
-	return new Ch<V>()
+export type Ch<V = undefined> = _Ch<V>
+export function Ch<V = undefined>(): Ch<V> {
+	return new _Ch<V>()
 }
 
 export function chBuff<V = undefined>(capacity: number) {
@@ -25,7 +25,7 @@ class BaseChan<V> {
 	}
 }
 
-export class Ch<V = undefined> extends BaseChan<V> {
+class _Ch<V = undefined> extends BaseChan<V> {
 
 	_resolvedVal: V | UNSET = UNSET
 
@@ -60,7 +60,7 @@ export class Ch<V = undefined> extends BaseChan<V> {
 			return _enQueuedMsgs.deQ()!
 		}
 		else {
-			resume(putPrc)
+			putPrc._resume()
 			const msg = putPrc._chanPutMsg_m
 			return msg as V
 		}
@@ -87,7 +87,7 @@ export class Ch<V = undefined> extends BaseChan<V> {
 			return PARK
 		}
 
-		resume(recPrc, msg)
+		recPrc._resume(msg)
 		return RESUME
 	}
 
@@ -99,7 +99,7 @@ export class Ch<V = undefined> extends BaseChan<V> {
 		const {_waitingReceivers} = this
 		while (!_waitingReceivers.isEmpty) {
 			const recPrc = _waitingReceivers.deQ()!
-			resume(recPrc, msg)
+			recPrc._resume(msg)
 		}
 		_waitingReceivers.clear()
 	}
@@ -110,7 +110,7 @@ export class Ch<V = undefined> extends BaseChan<V> {
 	}
 }
 
-export function addReceiver(ch: Ch, prc: Prc): void {
+export function addReceiver(ch: _Ch, prc: Prc): void {
 	ch._waitingReceivers.enQ(prc)
 }
 
@@ -146,7 +146,7 @@ export class BufferedCh<V = undefined> extends BaseChan<V> {
 
 		if (putPrc) {
 			buffer.enQ(putPrc._chanPutMsg_m as V)
-			resume(putPrc)
+			putPrc._resume()
 		}
 
 		return msg
@@ -173,13 +173,13 @@ export class BufferedCh<V = undefined> extends BaseChan<V> {
 
 		if (!recPrc) {
 			buffer.enQ(msg as V)
-			resume(putPrc)
+			putPrc._resume()
 			return RESUME
 		}
 
 		while (recPrc) {
 			if (recPrc._state === "RUNNING") {
-				resume(recPrc, msg)
+				recPrc._resume(msg)
 				break
 			}
 			recPrc = _waitingReceivers.deQ()

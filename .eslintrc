@@ -18,6 +18,7 @@
       "allowTemplateLiterals": true
     }],
     "no-inner-declarations": "off",
+    "no-unused-labels": "off",
 		"no-console": "error",
     "functional/immutable-data": ["error", {
       "ignoreClasses": "fieldsOnly",

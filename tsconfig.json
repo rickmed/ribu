@@ -2,12 +2,13 @@
    "compilerOptions": {
       "strict": true,
       "moduleResolution": "Node16",
+      "moduleDetection": "force",
+      "module": "Node16",
       "target": "ES2022",
       "checkJs": true,
       "skipDefaultLibCheck": true,
       "sourceMap": true,
       "outDir": "./dist/",
-      "moduleDetection": "force",
       "strictPropertyInitialization": true,
       "noUncheckedIndexedAccess": true
    },
