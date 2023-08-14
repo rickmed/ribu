@@ -4,13 +4,14 @@ import { E, Ether, EPrcCancelled } from "./errors.js"
 import { PARK, RESUME, UNSET } from "./shared.js"
 import { waitForDebugger } from "inspector"
 
+
 // @todo: add parent pointers and remove from parent when done
 
 
 /* BUGS:
 	1) #finishNormalDone calls #finishNormalDone when done, recursive...
 	2) #finishNormalDone is added up as _child of sub
-		and so cancelled immediately bc sub was just done.
+		and waited bc prc is just done (ie, finishNormalDone is not a normal child)
 
 
 	- finishNormalDone need:
@@ -28,70 +29,34 @@ import { waitForDebugger } from "inspector"
 type PrcRet<Prc_> = Prc_ extends Prc<infer Ret> ? Ret : never
 type DoneVal<PrcRet> = PrcRet | EPrcCancelled | E<"Unknown">
 
-
-export abstract class Prc {
-	_chanPutMsg_m: unknown = undefined
-
-	constructor(protected _gen: Gen) { }
-
-	abstract _resume(msg?: unknown): void
-}
-
-class InternalPrc extends Prc {
-
-	constructor(gen: Gen) {
-		super(gen)
-	}
-
-	_resume(msg?: unknown): void {
-
-		csp.prcStack.push(this)
-
-		for (; ;) {
-			const { done, value } = this._gen.next(msg)
-			if (done === true) {
-				return
-			}
-			// @todo: implement yielding channels
-			if (value === PARK) {
-				break
-			}
-			if (value === RESUME) {
-				continue
-			}
-		}
-		csp.prcStack.pop()
-	}
-}
-
-class UserPrc<Ret = unknown> extends Prc {
+export class Prc<Ret = unknown> {
 
 	/**
 	 * Used to:
 	 *   - Cancel children recursively if prc is cancelled
 	 *   - When genFn is done, detect if active children to await them
 	*/
-	#childS?: Set<Prc> = undefined
+	_childS_m?: Set<Prc> = undefined
 
 	/**
 	 * When genFn is done, to remove myself from parent.childS
 	*/
-	#parent?: Prc = undefined
+	_parent_m?: Prc = undefined
 
 	#state: PrcState = "RUNNING"
+	_chanPutMsg_m: unknown = undefined
 	#doneCh?: Ch<unknown> = undefined
 	_sleepTimeout_m?: NodeJS.Timeout = undefined
 	_onCancel_m?: OnCancel = undefined
 	#cancelCh?: Ch = undefined
 	_doneVal_m: DoneVal<Ret> | UNSET = UNSET
+	_internalPrc_m: boolean = false
 
 	constructor(
-		gen: Gen,
-		readonly _name: string,
-		readonly _args: unknown[],
-	) {
-		super(gen)
-	}
+		readonly gen: Gen,
+		readonly _name?: string,
+		readonly _args?: unknown[],
+	) {}
 
 	_resume(msg?: unknown): void {
 
@@ -113,6 +78,7 @@ class UserPrc<Ret = unknown> extends Prc {
 
 			if (done === true) {
 				csp.prcStack.pop()
+				if (this._internalPrc_m) return
 				finishNormalDone(this, value)
 				return
 			}
@@ -175,7 +141,7 @@ class UserPrc<Ret = unknown> extends Prc {
 	*runOnCancelAndChildSCancel(): Gen<undefined | Error> {
 
 		const onCancel = this._onCancel_m
-		const childS = this.#childS
+		const childS = this._childS_m
 
 		if (!childS && !onCancel) {
 			return undefined
@@ -217,7 +183,7 @@ class UserPrc<Ret = unknown> extends Prc {
 
 	*finishNormalDone(prcRetVal: unknown) {
 		this.#state = "DONE"
-		const childS = this.#childS
+		const childS = this._childS_m
 		if (childS) {
 			const res = yield* waitErr(childS)
 		}
@@ -234,10 +200,12 @@ class UserPrc<Ret = unknown> extends Prc {
 		// return doneCh.resolve(_doneVal)
 		return Ch<Ret>()
 	}
+
 	// set _doneVal(_doneVal: unknown) {
 	// 	this._doneVal_m = _doneVal
 	// 	this._doneCh?.resumeAll(_doneVal)
 	// },
+
 	// ports<_P extends Ports>(ports: _P) {
 	// 	const prcApi_m = ports as WithCancel<_P>
 	// 	// Since a new object is passed anyway, reuse the object for the api
@@ -355,7 +323,18 @@ function _all(...chanS: Ch<unknown>[]): Ch {
 
 export function go<Args extends unknown[], T = unknown>(genFn: GenFn<Args, T>, ...args: Args) {
 	const gen = genFn(...args)
-	const prc = new UserPrc<GenRet<typeof gen>>(gen, genFn.name, args)
+	const prc = new Prc<GenRet<typeof gen>>(gen, genFn.name, args)
+
+	const parent = csp.runningPrc
+
+	if (parent) {
+		prc._parent_m = parent
+		if (parent._childS_m === undefined) {
+			parent._childS_m = new Set()
+		}
+		parent._childS_m.add(prc)
+	}
+
 	prc._resume()
 	return prc
 }
