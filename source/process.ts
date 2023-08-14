@@ -5,21 +5,7 @@ import { PARK, RESUME, UNSET } from "./shared.js"
 import { waitForDebugger } from "inspector"
 
 
-// @todo: add parent pointers and remove from parent when done
-
-
-/* BUGS:
-	1) #finishNormalDone calls #finishNormalDone when done, recursive...
-	2) #finishNormalDone is added up as _child of sub
-		and waited bc prc is just done (ie, finishNormalDone is not a normal child)
-
-
-	- finishNormalDone need:
-		- .resume(), nothing else
-
-	go():
-		calls genFn, wraps in Prc, calls prc.resume()
-*/
+// @todo: remove from parent when done
 
 
 /*
