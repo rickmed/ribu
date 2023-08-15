@@ -6,3 +6,5 @@ export type PARK = typeof PARK
 
 export const RESUME = "R" as const
 export type RESUME = typeof RESUME
+
+export const genCtor = (function* () { }).constructor

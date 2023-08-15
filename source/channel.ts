@@ -1,5 +1,5 @@
-import { PARK, RESUME, UNSET } from "./shared.js"
-import { type Prc, type Gen } from "./process.js"
+import { PARK, RESUME, UNSET } from "./utils.js"
+import { resume, type Prc, type Gen } from "./process.js"
 import { getRunningPrcOrThrow } from "./initCsp.js"
 import { Queue } from "./dataStructures.js"
 
@@ -60,8 +60,8 @@ class _Ch<V = undefined> extends BaseChan<V> {
 			return _enQueuedMsgs.deQ()!
 		}
 		else {
-			putPrc._resume()
-			const msg = putPrc._chanPutMsg_m
+			resume(putPrc)
+			const msg = putPrc.chanPutMsg
 			return msg as V
 		}
 	}
@@ -78,16 +78,16 @@ class _Ch<V = undefined> extends BaseChan<V> {
 			throw Error(`can't put() on a closed channel`)
 		}
 
-		const putPrc = getRunningPrcOrThrow(`can't put outside a process.`)
+		let putPrc = getRunningPrcOrThrow(`can't put outside a process.`)
 		let recPrc = this._waitingReceivers.deQ()
 
 		if (!recPrc) {
-			putPrc._chanPutMsg_m = msg
+			putPrc.chanPutMsg = msg
 			this._waitingPutters.enQ(putPrc)
 			return PARK
 		}
 
-		recPrc._resume(msg)
+		resume(recPrc, msg)
 		return RESUME
 	}
 
@@ -99,7 +99,7 @@ class _Ch<V = undefined> extends BaseChan<V> {
 		const {_waitingReceivers} = this
 		while (!_waitingReceivers.isEmpty) {
 			const recPrc = _waitingReceivers.deQ()!
-			recPrc._resume(msg)
+			resume(recPrc, msg)
 		}
 		_waitingReceivers.clear()
 	}
@@ -145,8 +145,8 @@ export class BufferedCh<V = undefined> extends BaseChan<V> {
 		const putPrc = this._waitingPutters.deQ()
 
 		if (putPrc) {
-			buffer.enQ(putPrc._chanPutMsg_m as V)
-			putPrc._resume()
+			buffer.enQ(putPrc.chanPutMsg as V)
+			resume(putPrc)
 		}
 
 		return msg
@@ -158,12 +158,12 @@ export class BufferedCh<V = undefined> extends BaseChan<V> {
 			throw Error(`ribu: can't put on a closed channel`)
 		}
 
-		const putPrc = getRunningPrcOrThrow(`can't put outside a process.`)
+		let putPrc = getRunningPrcOrThrow(`can't put outside a process.`)
 
 		const buffer = this.#buffer
 
 		if (buffer.isFull) {
-			putPrc._chanPutMsg_m = msg
+			putPrc.chanPutMsg = msg
 			this._waitingPutters.enQ(putPrc)
 			return PARK
 		}
@@ -173,13 +173,13 @@ export class BufferedCh<V = undefined> extends BaseChan<V> {
 
 		if (!recPrc) {
 			buffer.enQ(msg as V)
-			putPrc._resume()
+			resume(putPrc)
 			return RESUME
 		}
 
 		while (recPrc) {
-			if (recPrc._state === "RUNNING") {
-				recPrc._resume(msg)
+			if (recPrc.state === "RUNNING") {
+				resume(recPrc, msg)
 				break
 			}
 			recPrc = _waitingReceivers.deQ()

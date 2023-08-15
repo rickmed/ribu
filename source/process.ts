@@ -1,190 +1,39 @@
 import { csp, getRunningPrcOrThrow } from "./initCsp.js"
 import { Ch, addReceiver } from "./channel.js"
 import { E, Ether, EPrcCancelled } from "./errors.js"
-import { PARK, RESUME, UNSET } from "./shared.js"
-import { waitForDebugger } from "inspector"
+import { PARK, RESUME, UNSET, genCtor } from "./utils.js"
 
 
-// @todo: remove from parent when done
-
-
-/*
-	Need to break out runOnCancelAndChildSCancel out of cancelPrc
-*/
+// @todo: remove from parent's child and remove parent pointer when done
 
 type PrcRet<Prc_> = Prc_ extends Prc<infer Ret> ? Ret : never
 type DoneVal<PrcRet> = PrcRet | EPrcCancelled | E<"Unknown">
 
 export class Prc<Ret = unknown> {
 
-	/**
-	 * Used to:
-	 *   - Cancel children recursively if prc is cancelled
-	 *   - When genFn is done, detect if active children to await them
-	*/
-	_childS_m?: Set<Prc> = undefined
+	constructor(readonly gen: Gen) {}
+	name: string | undefined = undefined
+	args: Array<unknown> | undefined = undefined
+	state: PrcState = "RUNNING"
 
-	/**
-	 * When genFn is done, to remove myself from parent.childS
-	*/
-	_parent_m?: Prc = undefined
+	childS: Set<Prc> | undefined = undefined
+	parent: Prc | undefined = undefined
 
-	#state: PrcState = "RUNNING"
-	_chanPutMsg_m: unknown = undefined
-	#doneCh?: Ch<unknown> = undefined
-	_sleepTimeout_m?: NodeJS.Timeout = undefined
-	_onCancel_m?: OnCancel = undefined
-	#cancelCh?: Ch = undefined
-	_doneVal_m: DoneVal<Ret> | UNSET = UNSET
-	_internalPrc_m: boolean = false
-
-	constructor(
-		readonly gen: Gen,
-		readonly _name?: string,
-		readonly _args?: unknown[],
-	) {}
-
-	_resume(msg?: unknown): void {
-
-		if (this.#state !== "RUNNING") {
-			return
-		}
-
-		csp.prcStack.push(this)
-
-		for (; ;) {
-
-			try {
-				var { done, value } = this._gen.next(msg)  // eslint-disable-line no-var
-			}
-			catch (thrown) {
-				_go(handleThrownErr, this, thrown)
-				return
-			}
-
-			if (done === true) {
-				csp.prcStack.pop()
-				if (this._internalPrc_m) return
-				finishNormalDone(this, value)
-				return
-			}
-			// @todo: implement yielding channels
-			if (value === PARK) {
-				break
-			}
-			if (value === RESUME) {
-				continue
-			}
-			if (value instanceof Promise) {
-				value.then(
-					(val: unknown) => {
-						this._resume(val)
-					},
-					(err: unknown) => {
-						// @todo implement errors
-						throw err
-					}
-				)
-				break
-			}
-		}
-
-		csp.prcStack.pop()
-	}
-
-	/**
- * If a prc throws anywhere, its onCancel is ran (tried) and children are cancelled.
- * The result of that operation is placed in its done channel
- */
-	*handleThrownErr(thrown: unknown) {
-		this.#state = "DONE"
-		// need to run own onCancel as well
-		// need to cancel children and put in prc._doneVal_m collected results. Schema:
-		// - OG stack trace.
-		// - err :: message, name, stack
-		/*
-			tag: "Unknown"
-			cause: {
-				message, name, stack
-			}
-		*/
-		// wrap the result in EUnkown ?
-		// need to contruct ribu stack trace with args
-
-		const res = yield* runOnCancelAndChildSCancel(prc)
-		// const ribuStackTrace = need to iterate _childS and _parent.
-		// should I include siblings in stack?
-
-		// this is suppose to resume ._done waiters.
-		this._doneVal = EOther(res)  // @todo: check if ts complains when creating a prc
-	}
-
-	// since prcS are being cancelled, the result must be available at .doneVal
-	// so need to do those side effects here
-	// return thing?
-	// is it likely that user handles errors in onCancelFns?
-	// maybe cancel(prcS) should return "ok" | Error
-	*runOnCancelAndChildSCancel(): Gen<undefined | Error> {
-
-		const onCancel = this._onCancel_m
-		const childS = this._childS_m
-
-		if (!childS && !onCancel) {
-			return undefined
-		}
-
-		else if (!childS && isRegFn(onCancel)) {
-			return try_(onCancel)
-		}
-
-		else if (!childS && isGenFn(onCancel)) {
-			yield* go(onCancel)._done.rec
-		}
-
-		else if (childS && onCancel === undefined) {
-			yield* cancel(...childS).rec
-		}
-
-		else if (childS && isRegFn(onCancel)) {
-			const res = try_(onCancel)
-			yield* cancel(...childS).rec
-		}
-
-		else {  /* _$child && isGenFn(_onCancel) */
-			// @todo: maybe use wait(...) here
-			// need to put this on ._doneVal
-			yield* _all(go(onCancel as OnCancelGen)._done, cancelPrcS(...childS!)).rec
-		}
-
-		function try_(fn: RegFn) {
-			try {
-				fn()
-				return undefined
-			}
-			catch (err) {
-				return err as Error
-			}
-		}
-	}
-
-	*finishNormalDone(prcRetVal: unknown) {
-		this.#state = "DONE"
-		const childS = this._childS_m
-		if (childS) {
-			const res = yield* waitErr(childS)
-		}
-		// this is suppose to resume ._done waiters.
-		this._doneVal = prcRetVal
-	}
+	chanPutMsg: unknown = undefined
+	doneVal: DoneVal<Ret> | UNSET = UNSET
+	doneCh: Ch<unknown> | undefined = undefined
+	sleepTimeout: NodeJS.Timeout | undefined = undefined
+	onCancel: OnCancel | undefined = undefined
+	cancelCh: Ch | undefined = undefined
+	internalPrc: boolean = false
 
 	get done() {
-		// const doneCh = this.#doneCh ??= Ch<Ret>()  // eslint-disable-line functional/immutable-data
-		// const _doneVal = this._doneVal_m
-		// if (_doneVal === UNSET) {
-		// 	return doneCh
-		// }
-		// return doneCh.resolve(_doneVal)
-		return Ch<Ret>()
+		const doneCh = this.doneCh ??= Ch<Ret>()
+		const _doneVal = this.doneVal
+		if (_doneVal === UNSET) {
+			return doneCh
+		}
+		return doneCh.resolve(_doneVal)
 	}
 
 	// set _doneVal(_doneVal: unknown) {
@@ -200,16 +49,158 @@ export class Prc<Ret = unknown> {
 	// }
 }
 
+export function resume(prc: Prc, msg?: unknown): void {
+
+	if (prc.state !== "RUNNING") {
+		return
+	}
+
+	csp.prcStack.push(prc)
+
+	for (; ;) {
+
+		try {
+			var { done, value } = prc.gen.next(msg)  // eslint-disable-line no-var
+		}
+		catch (thrown) {
+			_go(handleThrownErr, prc, thrown)
+			return
+		}
+
+		if (done === true) {
+			csp.prcStack.pop()
+			if (prc.internalPrc) {
+				return
+			}
+			_go(finishNormalDone, prc, value)
+			return
+		}
+		// @todo: implement yielding channels
+		if (value === PARK) {
+			break
+		}
+		if (value === RESUME) {
+			continue
+		}
+		if (value instanceof Promise) {
+			value.then(
+				(val: unknown) => {
+					resume(prc, val)
+				},
+				(err: unknown) => {
+					// @todo implement errors
+					throw err
+				}
+			)
+			break
+		}
+	}
+
+	csp.prcStack.pop()
+}
+
+/**
+* If a prc throws anywhere, its onCancel is ran (tried) and children are cancelled.
+* The result of that operation is placed in its done channel
+*/
+function* handleThrownErr(prc: Prc, thrown: unknown) {
+	prc.state = "DONE"
+	// need to run own onCancel as well
+	// need to cancel children and put in prc._doneVal_m collected results. Schema:
+	// - OG stack trace.
+	// - err :: message, name, stack
+	/*
+		tag: "Unknown"
+		cause: {
+			message, name, stack
+		}
+	*/
+	// wrap the result in EUnkown ?
+	// need to contruct ribu stack trace with args
+
+	const res = yield* runOnCancelAndChildSCancel(prc)
+	// const ribuStackTrace = need to iterate _childS and _parent.
+	// should I include siblings in stack?
+
+	// this is suppose to resume ._done waiters.
+	prc.doneVal = EOther(res)  // @todo: check if ts complains when creating a prc
+}
+
+// since prcS are being cancelled, the result must be available at .doneVal
+// so need to do those side effects here
+// return thing?
+// is it likely that user handles errors in onCancelFns?
+// maybe cancel(prcS) should return "ok" | Error
+function* runOnCancelAndChildSCancel(prc: Prc): Gen<undefined | Error> {
+
+	const onCancel = prc.onCancel
+	const childS = prc.childS
+
+	if (!childS && !onCancel) {
+		return undefined
+	}
+
+	else if (!childS && isRegFn(onCancel)) {
+		return try_(onCancel)
+	}
+
+	else if (!childS && isGenFn(onCancel)) {
+		yield* go(onCancel).done.rec
+	}
+
+	else if (childS && onCancel === undefined) {
+		yield* cancel(...childS).rec
+	}
+
+	else if (childS && isRegFn(onCancel)) {
+		const res = try_(onCancel)
+		yield* cancel(...childS).rec
+	}
+
+	else {  /* _$child && isGenFn(_onCancel) */
+		// @todo: maybe use wait(...) here
+		// need to put this on ._doneVal
+		yield* _all(go(onCancel as OnCancelGen).done, cancelPrcS(...childS!)).rec
+	}
+
+	// helpers
+	function try_(fn: RegFn) {
+		try {
+			fn()
+			return undefined
+		}
+		catch (err) {
+			return err as Error
+		}
+	}
+
+	function isRegFn(fn?: OnCancel): fn is RegFn {
+		return fn?.constructor.name === "Function"
+	}
+	function isGenFn(x: unknown): x is GenFn {
+		return x instanceof genCtor
+	}
+}
+
+function* finishNormalDone(prc: Prc, prcRetVal: unknown) {
+	prc.state = "DONE"
+	const childS = prc.childS
+
+	// if children active, await them and return whatever the prc returned
+	// if children erred, resolve prc with err.
+	if (childS) {
+		const res = yield* waitErr(childS)
+	}
+	// this is suppose to resume ._done waiters.
+	prc.doneVal = prcRetVal
+}
 
 
-// @todo: optimize to yield ch
-// If ._doneCh waiters, need to resolve them with ExcPrcCancelled or Exc<Unknown>
-//
 function* cancelPrc(prc: Prc): Gen<void> {
 
 	const callingPrc = getRunningPrcOrThrow(`can't call cancel() outside a process.`)
 
-	const { _state } = prc
+	const { state: _state } = prc
 	const waitingCancel = prc._cancelCh ??= Ch()
 
 	if (_state === "DONE") {
@@ -225,16 +216,16 @@ function* cancelPrc(prc: Prc): Gen<void> {
 		return undefined
 	}
 
-	prc._state = "CANCELLING"
-	if (prc._sleepTimeout_m) clearTimeout(prc._sleepTimeout_m)
+	prc.state = "CANCELLING"
+	if (prc.sleepTimeout) clearTimeout(prc.sleepTimeout)
 
 	const res = yield* runOnCancelAndChildSCancel(prc)
 
-	prc._state = "DONE"
+	prc.state = "DONE"
 	return
 }
 
-function cancelPrcS(prcS: _Prc[]): unknown {
+function cancelPrcS(prcS: Prc[]): unknown {
 	// what should I return if there's an error cancelling a Prc?
 	// should return a collection of all errors
 	// (can't really do anything really at app layer, but log to see at Op layer)
@@ -259,29 +250,6 @@ function cancelPrcS(prcS: _Prc[]): unknown {
 }
 
 
-function isRegFn(fn?: OnCancel): fn is RegFn {
-	return fn?.constructor.name === "Function"
-}
-
-const genCtor = (function* () { }).constructor
-
-function isGenFn(x: unknown): x is GenFn {
-	return x instanceof genCtor
-}
-
-
-// can explode and each cancelChilds too
-
-//
-
-/* $onCancel:
-	* ._done should resolve to: PrcRet | Exc<"Unknown">
-		* PrcRet is ignored though
-	* can't be cancelled.
-	* children?:
-		if children explodes, need to track them it to construct nice stack.
-*/
-
 
 function _all(...chanS: Ch<unknown>[]): Ch {
 	const nChanS = chanS.length
@@ -301,6 +269,13 @@ function _all(...chanS: Ch<unknown>[]): Ch {
 	return allDone
 }
 
+export function _go<Args extends unknown[], T = unknown>(genFn: GenFn<Args, T>, ...args: Args) {
+	const gen = genFn(...args)
+	let prc = new Prc<GenRet<typeof gen>>(gen)
+	prc.internalPrc = true
+	resume(prc)
+	return prc
+}
 
 
 /*
@@ -309,42 +284,44 @@ function _all(...chanS: Ch<unknown>[]): Ch {
 
 export function go<Args extends unknown[], T = unknown>(genFn: GenFn<Args, T>, ...args: Args) {
 	const gen = genFn(...args)
-	const prc = new Prc<GenRet<typeof gen>>(gen, genFn.name, args)
+	let prc = new Prc<GenRet<typeof gen>>(gen)
+	prc.name = genFn.name
+	prc.args = args
 
-	const parent = csp.runningPrc
-
+	let parent = csp.runningPrc
 	if (parent) {
-		prc._parent_m = parent
-		if (parent._childS_m === undefined) {
-			parent._childS_m = new Set()
+		prc.parent = parent
+		if (parent.childS === undefined) {
+			parent.childS = new Set()
 		}
-		parent._childS_m.add(prc)
+		parent.childS.add(prc)
 	}
 
-	prc._resume()
+	resume(prc)
 	return prc
 }
 
 
 export function onCancel(userOnCancel: OnCancel): void {
-	const runningPrc = csp.runningPrc
+	let runningPrc = csp.runningPrc
 	if (!runningPrc) {
 		throw Error(`ribu: can't use onCancel outside a process`)
 	}
-	if (runningPrc._onCancel_m) {
+	if (runningPrc.onCancel) {
 		throw Error(`ribu: process onCancel is already set`)
 	}
-	runningPrc._onCancel_m = userOnCancel
+	runningPrc.onCancel = userOnCancel
 }
 
+
 export function sleep(ms: number): PARK {
-	const runningPrc = getRunningPrcOrThrow(`can't sleep() outside a process.`)
+	let runningPrc = getRunningPrcOrThrow(`can't sleep() outside a process.`)
 
 	const timeoutID = setTimeout(function _sleepTimeOut() {
 		resume(runningPrc)
 	}, ms)
 
-	runningPrc._sleepTimeout_m = timeoutID
+	runningPrc.sleepTimeout = timeoutID
 	return PARK
 }
 
@@ -352,11 +329,9 @@ export function sleep(ms: number): PARK {
  * Cancel several processes concurrently
  * @todo: cancel() needs to put to prc.done PrcCancelledErr() or if err during cancellation
  */
-
-// returns Map<prc, onCancelRetVal> | onCancelRetVal
-export function* cancel(...prcS: _Prc[]) {
+export function* cancel(...prcS: Prc[]) {
 	yield cancelPrcS(prcS)
-	return ch<void>() // who resumes this?
+	return Ch<void>() // who resumes this?
 }
 
 
