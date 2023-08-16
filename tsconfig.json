@@ -6,10 +6,11 @@
       "module": "Node16",
       "target": "ES2022",
       "checkJs": true,
-      "skipDefaultLibCheck": true,
+      "skipLibCheck": true,
       "sourceMap": true,
       "outDir": "./dist/",
       "strictPropertyInitialization": true,
+      "noImplicitReturns": true,
       "noUncheckedIndexedAccess": true
    },
 }

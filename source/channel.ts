@@ -27,8 +27,6 @@ class BaseChan<V> {
 
 class _Ch<V = undefined> extends BaseChan<V> {
 
-	_resolvedVal: V | UNSET = UNSET
-
 	/**
 	 * Need to use full generator, ie, yield*, instead of just yield, because
 	 * typescript can't preserve the types between what is yielded and what is
@@ -40,12 +38,6 @@ class _Ch<V = undefined> extends BaseChan<V> {
 
 	*#rec(): Gen<V> {
 		const recPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
-
-		const { _resolvedVal } = this
-		if (_resolvedVal !== UNSET) {
-			this._resolvedVal = UNSET
-			return _resolvedVal
-		}
 
 		let putPrc = this._waitingPutters.deQ()
 
@@ -93,20 +85,6 @@ class _Ch<V = undefined> extends BaseChan<V> {
 
 	get notDone() {
 		return this._waitingPutters.isEmpty ? false : true
-	}
-
-	resumeAll(msg: V): void {
-		const {_waitingReceivers} = this
-		while (!_waitingReceivers.isEmpty) {
-			const recPrc = _waitingReceivers.deQ()!
-			resume(recPrc, msg)
-		}
-		_waitingReceivers.clear()
-	}
-
-	resolve(msg: V): this {
-		this._resolvedVal = msg
-		return this
 	}
 }
 
@@ -187,7 +165,35 @@ export class BufferedCh<V = undefined> extends BaseChan<V> {
 		return RESUME
 	}
 
-	get isNotDone() {
+	get notDone() {
 		return this.#buffer.isEmpty && this._waitingPutters.isEmpty ? false : true
 	}
+}
+
+
+
+
+
+
+
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-nocheck
+
+function* waitErr2<P extends Prc>(...prcS: P[]) {
+
+	const donePrc = anyDone(...prcS)
+
+	while (donePrc.notDone) {
+
+		const prc: Ret<donePrc> = yield* donePrc.rec
+		const res = prc.doneVal
+
+		if (e(res) && res.tag !== "Cancelled") {
+
+			yield cancel(prcS)
+			return Error()
+		}
+	}
+
+	return prcS.map(prc => prc.doneVal)
 }

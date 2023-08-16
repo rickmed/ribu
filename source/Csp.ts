@@ -1,6 +1,7 @@
 import { type Prc } from "./process.js"
 
 export class Csp {
+	deadLn = 5000
 
 	prcStack: Array<Prc> = []
 

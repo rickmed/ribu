@@ -16,30 +16,50 @@ export class Prc<Ret = unknown> {
 	args: Array<unknown> | undefined = undefined
 	state: PrcState = "RUNNING"
 
+	/**
+	 * A Set is needed since children can add/remove in arbitrary order
+	 */
 	childS: Set<Prc> | undefined = undefined
 	parent: Prc | undefined = undefined
 
 	chanPutMsg: unknown = undefined
-	doneVal: DoneVal<Ret> | UNSET = UNSET
-	doneCh: Ch<unknown> | undefined = undefined
+
+	_doneVal: DoneVal<Ret> | UNSET = UNSET
+	doneCh: BroadCastCh<unknown> | undefined = undefined
+
 	sleepTimeout: NodeJS.Timeout | undefined = undefined
 	onCancel: OnCancel | undefined = undefined
 	cancelCh: Ch | undefined = undefined
-	internalPrc: boolean = false
+	isInternalPrc: boolean = false
 
+	get rec() {
+		return this.done.rec
+	}
+
+	/**
+	 * Use .done() directly for a faster alternative to .rec() (but needs manual typing)
+	 */
 	get done() {
-		const doneCh = this.doneCh ??= Ch<Ret>()
-		const _doneVal = this.doneVal
+		let doneCh = this.doneCh
+		if (!doneCh) {
+			doneCh = new BroadCastCh<Ret>()
+		}
+		else {
+			doneCh.addReceiver()
+		}
+
+		const _doneVal = this._doneVal
 		if (_doneVal === UNSET) {
 			return doneCh
 		}
 		return doneCh.resolve(_doneVal)
 	}
 
-	// set _doneVal(_doneVal: unknown) {
-	// 	this._doneVal_m = _doneVal
-	// 	this._doneCh?.resumeAll(_doneVal)
-	// },
+
+
+	get doneVal() {
+		return this._doneVal
+	}
 
 	// ports<_P extends Ports>(ports: _P) {
 	// 	const prcApi_m = ports as WithCancel<_P>
@@ -69,7 +89,7 @@ export function resume(prc: Prc, msg?: unknown): void {
 
 		if (done === true) {
 			csp.prcStack.pop()
-			if (prc.internalPrc) {
+			if (prc.isInternalPrc) {
 				return
 			}
 			_go(finishNormalDone, prc, value)
@@ -123,7 +143,7 @@ function* handleThrownErr(prc: Prc, thrown: unknown) {
 	// should I include siblings in stack?
 
 	// this is suppose to resume ._done waiters.
-	prc.doneVal = EOther(res)  // @todo: check if ts complains when creating a prc
+	prc._doneVal = EOther(res)  // @todo: check if ts complains when creating a prc
 }
 
 // since prcS are being cancelled, the result must be available at .doneVal
@@ -192,7 +212,12 @@ function* finishNormalDone(prc: Prc, prcRetVal: unknown) {
 		const res = yield* waitErr(childS)
 	}
 	// this is suppose to resume ._done waiters.
-	prc.doneVal = prcRetVal
+	notifyDoneVal(prc, prcRetVal)
+}
+
+function notifyDoneVal(prc: Prc, doneVal: unknown) {
+	prc._doneVal = doneVal
+	prc.doneCh?.resumeReceivers(doneVal)
 }
 
 
@@ -226,12 +251,7 @@ function* cancelPrc(prc: Prc): Gen<void> {
 }
 
 function cancelPrcS(prcS: Prc[]): unknown {
-	// what should I return if there's an error cancelling a Prc?
-	// should return a collection of all errors
-	// (can't really do anything really at app layer, but log to see at Op layer)
-	// what data structure?
-	// put its result (whatever outcome) on prc._doneVal
-	// then I can inspect?
+
 	const nPrcS = prcS.length
 	const allDone = Ch()
 	let nDone = 0
@@ -250,29 +270,112 @@ function cancelPrcS(prcS: Prc[]): unknown {
 }
 
 
+function anyDone<P extends Prc>(...prcS: P[]) {
 
-function _all(...chanS: Ch<unknown>[]): Ch {
-	const nChanS = chanS.length
-	const allDone = Ch()
-	let nDone = 0
+	// need to add currentPrc as receiver to all prcS
 
-	for (const chan of chanS) {
-		go(function* __all() {
-			yield* chan.rec
-			nDone++
-			if (nDone === nChanS) {
-				yield allDone.put()
-			}
-		})
+	// return donePrc
+}
+
+
+function* $onCancel(prc: Prc) {
+
+	const $onCancel = go(prc._onCancel)
+	const res = yield race($onCancel, timeout(prc.deadline))
+	if (res !== $onCancel) {
+		hardCancel($onCancel)
 	}
 
-	return allDone
+	return done
 }
+
+
+function timeout() {}
+function race() {}  // use anyDone and cancel the rest.
+
+/**
+ * Resumes all (current) waiting receivers with the last resolved value.
+ * Caches the value for late arriving receivers, but deletes it so the
+ * next batch of receivers are resumed with a new resolved value.
+ */
+class BroadCastCh<V> {
+
+	#waitingReceivers: Array<Prc> | Prc
+	#val: V | UNSET = UNSET
+
+	constructor() {
+		const recPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
+		this.#waitingReceivers = recPrc
+	}
+
+	addReceiver() {
+		const recPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
+		let waitingReceivers = this.#waitingReceivers
+		if (waitingReceivers instanceof Prc) {
+			this.#waitingReceivers = [recPrc, waitingReceivers]
+		}
+		else {
+			waitingReceivers.push(recPrc)
+		}
+	}
+
+	get rec(): Gen<V> {
+		return this.#rec()
+	}
+
+	*#rec(): Gen<V> {
+		const recPrc = getRunningPrcOrThrow(`can't receive outside a process.`)
+
+		let putPrc = this._waitingPutters.deQ()
+
+		if (!putPrc) {
+			this._waitingReceivers.enQ(recPrc)
+			const msg = yield PARK
+			return msg as V
+		}
+
+		const {_enQueuedMsgs} = this
+		if (!_enQueuedMsgs.isEmpty) {
+			return _enQueuedMsgs.deQ()!
+		}
+		else {
+			resume(putPrc)
+			const msg = putPrc.chanPutMsg
+			return msg as V
+		}
+	}
+
+	resumeReceivers(msg: V): void {
+
+
+
+		const _val = this.#val
+		if (_val !== UNSET) {
+			this.#val = UNSET
+		}
+
+//CONTINUE HERE: what if there are no receivers when this called?
+		const {#waitingReceivers_m: waitingReceivers} = this
+		while (!waitingReceivers.isEmpty) {
+			const recPrc = waitingReceivers.deQ()!
+			resume(recPrc, msg)
+		}
+		waitingReceivers.clear()
+	}
+
+	resolve(msg: V): this {
+		this.#val = msg
+		return this
+	}
+}
+
+
+
 
 export function _go<Args extends unknown[], T = unknown>(genFn: GenFn<Args, T>, ...args: Args) {
 	const gen = genFn(...args)
 	let prc = new Prc<GenRet<typeof gen>>(gen)
-	prc.internalPrc = true
+	prc.isInternalPrc = true
 	resume(prc)
 	return prc
 }
