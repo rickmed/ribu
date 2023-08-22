@@ -1,56 +1,40 @@
-const RibuE = Symbol("RibuExc")
+type E<Name extends string = string> = NodeJS.ErrnoException & {
+	readonly name: Name
+}
 
-export const C = {
-	EActiveChildren: "ActiveChildren"
+export function E<Name extends string = string>(name: Name, ogErr: Error | NodeJS.ErrnoException): E<Name> {
+	ogErr.name = name
+	return ogErr as E<typeof name>
 }
 
 
+const CANC_OK = "CancelledOK" as const
 
-export function E<N extends string>(name: N, error: Error): E<N> {
-	return { name, error, [RibuE]: true }
+export function ECancOK() {
+	let newErr = Error()
+	newErr.name = CANC_OK
+	return newErr as E<typeof CANC_OK>
 }
 
 
-export function EOther(error: Error, ribuStack: RibuStack): Eother {
-	return { name: "Other", error, ribuStack, [RibuE]: true }
+type InOnCancel = {
+	inBody?: Error,
+	children?: Array<InOnCancel>
 }
 
-export function Ecancelled(): Ecancelled {
-	return { name: "Cancelled", [RibuE]: true }
-}
-
-export function e(x: unknown): x is Ebase {
-	return isRibuE(x)
-}
-
-export function notName<X, T extends Extract<X, E>["name"]>(x: X, name: T): x is Extract<X, E> & Exclude<X, E<T>> {
-	return isRibuE(x) && x.name !== name
+export type EUncaught = E<"UncaughtThrow"> & {
+	data: {
+		inBody?: Error,
+		inOnCancel?: InOnCancel
+	}
 }
 
 
-function isRibuE(x: unknown): x is E {
-	return typeof x === "object" && x !== null && RibuE in x && "name" in x
+export function err(x: unknown): x is E {
+	return x instanceof Error
 }
 
 
-/* ===  Types  ============================================================== */
-
-type Ebase<N extends string = string> = {
-	readonly [RibuE]: true
-	readonly name: N
+export function errIsNot<X, T extends Extract<X, E>["name"]>(x: X, name: T): x is Extract<X, E> & Exclude<X, E<T>> {
+	return err(x) && x.name !== name
 }
-
-export type E<N extends string = string> = Ebase<N> & {
-	readonly error: Error
-}
-
-type RibuStack = Array<{
-	prcName: string,
-	prcArgs: unknown[]
-}>
-
-type Eother = E<"Other"> & {
-	ribuStack: RibuStack
-}
-
-export type Ecancelled = Ebase<"Cancelled">

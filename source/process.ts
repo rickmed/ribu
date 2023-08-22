@@ -1,6 +1,6 @@
 import { csp, getRunningPrc } from "./initCsp.js"
 import { Ch, addReceiver } from "./channel.js"
-import { E, e, Ether, EPrcCancelled, C } from "./errors.js"
+import { E, err, Ether, EPrcCancelled } from "./errors.js"
 import { PARK, RESUME, UNSET, genCtor } from "./utils.js"
 
 const RESUME_WITH_VAL = 1
@@ -90,15 +90,10 @@ export class Prc<Ret = unknown> {
 				continue
 			}
 			if (value instanceof Promise) {
-				value.then(
-					(val: unknown) => {
-						this._resume(val)
-					},
-					(err: unknown) => {
-						// @todo implement errors
-						throw err
-					}
-				)
+				value
+					.then( (val: unknown) => { this._resume(val) })
+					.catch( (err: unknown) => { /* @todo */ })
+
 				break
 			}
 		}
@@ -208,22 +203,27 @@ export class Prc<Ret = unknown> {
 	}
 
 	*#waitChildS() {
+		this.#state = "DONE"  // concurrent cancelling ??
 		// cast ok. this fn is only called when childS !== undefined
 		const childS = [...this.#childS!]
 
 		const doneCh = anyVal(childS)
 
+		let doneVal
+
 		while (doneCh.notDone) {  // eslint-disable-line
 			const res = yield* doneCh.rec
 
-			if (e(res)) {
+			if (err(res)) {
 
-				yield cancel(childS)
-				return res
+				yield cancel(childS)  // this can throw if fails
+				doneVal = res
 			}
 		}
 
-		return undefined
+		this.#doneV = doneVal
+		this.#resumeReceivers()
+		return
 	}
 }
 
