@@ -3,10 +3,10 @@ import { type Prc } from "./process.js"
 
 export const csp = new Csp()
 
-export function getRunningPrcOrThrow(onErrMsg: string): Prc {
+export function getRunningPrc(): Prc {
 	const runningPrc = csp.runningPrc
 	if (!runningPrc) {
-		throw Error(`ribu: ${onErrMsg}`)
+		throw Error(`ribu: no process running`)
 	}
 	return runningPrc
 }

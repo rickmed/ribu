@@ -1,2 +1,2 @@
-export { go, sleep, cancel } from "./process.js"
-export { ch, type _Ch as Ch } from "./channel.js"
+export { go, sleep, cancel, anyPrc, anyVal } from "./process.js"
+export { Ch } from "./channel.js"

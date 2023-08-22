@@ -1,12 +1,31 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
-import { go, ch, sleep } from "../source/index.js"
-import { promSleep, range } from "./utils.mjs"
+import { go, Ch, sleep, anyPrc, anyVal } from "../source/index.js"
+import { promSleep, assertType, range } from "./utils.mjs"
 // import csp from "../source/initCsp.mjs"
 
 // @todo: change tests to make assertions inside processes when sophi is fixed
 // with failing test when no assertions are made.
+
+topic("types", () => {
+
+   go(function* main() {
+
+      const prc1 = go(function*() {
+         yield sleep(0)
+         return 4
+      })
+
+      const prc2 = go(function*() {
+         yield sleep(0)
+         return "a"
+      })
+
+      const ret = yield* anyVal(prc1, prc2).rec
+
+   })
+})
 
 
 topic("unbuffered channels", () => {
@@ -14,13 +33,13 @@ topic("unbuffered channels", () => {
    it.only("simple put() and rec", () => {
 
       go(function* main() {
-         const _ch = ch<number>()
+         const ch = Ch<number>()
 
          go(function* sub() {
-            yield _ch.put(13)
+            yield ch.put(13)
          })
 
-         const rec = yield* _ch.rec
+         const rec = yield* ch.rec
          console.log({rec})
          check(rec).with(13)
       })
@@ -32,7 +51,7 @@ topic("unbuffered channels", () => {
 
       go(async function main1() {
 
-         const ch1 = ch<number>()
+         const ch1 = Ch<number>()
 
          go(async function child1() {
             await sleep(1)
@@ -59,7 +78,7 @@ topic("unbuffered channels", () => {
 
       go(async function main2() {
 
-         const _ch = ch<string>()
+         const _ch = Ch<string>()
 
          go(async function child2() {
             await sleep(1)  // I sleep so main gets to _ch.rec first.
@@ -107,7 +126,7 @@ topic("buffered channels", () => {
 
       go(async function main() {
 
-         const ch1 = ch<number>(1)
+         const ch1 = Ch<number>(1)
 
          go(async function child() {
             for (const i of range(2)) {
@@ -132,7 +151,7 @@ topic("buffered channels", () => {
 
       go(async function main() {
 
-         const ch1 = ch<number>(1)
+         const ch1 = Ch<number>(1)
 
          go(async function child() {
             for (const i of range(2)) {
@@ -155,7 +174,7 @@ topic("buffered channels", () => {
    it("blocks when buffer is full", async () => {
 
       let opS: Array<number> = []
-      const ch1 = ch(2)
+      const ch1 = Ch(2)
 
       go(async function main() {
          for (let i = 0; i < 3; i++) {
