@@ -92,7 +92,7 @@ export class Prc<Ret = unknown> {
 			if (value instanceof Promise) {
 				value.then(
 					(val: unknown) => {
-						resume(prc, val)
+						this._resume(val)
 					},
 					(err: unknown) => {
 						// @todo implement errors
@@ -218,12 +218,12 @@ export class Prc<Ret = unknown> {
 
 			if (e(res)) {
 
-				yield cancel(childS)  // cancel is idempotent so no need to pull donePrcs
-				return Error()  // @todo return right error.
+				yield cancel(childS)
+				return res
 			}
 		}
 
-		return childS.map(child => child.#childS)
+		return undefined
 	}
 }
 
@@ -236,18 +236,7 @@ export class Prc<Ret = unknown> {
 function* handleThrownErr(prc: Prc, thrown: unknown) {
 	console.log(thrown)
 	prc.#state = "DONE"
-	// need to run own onCancel as well
-	// need to cancel children and put in prc._doneVal_m collected results. Schema:
-	// - OG stack trace.
-	// - err :: message, name, stack
-	/*
-		tag: "Unknown"
-		cause: {
-			message, name, stack
-		}
-	*/
-	// wrap the result in EUnkown ?
-	// need to contruct ribu stack trace with args
+
 
 	const res = yield* runOnCancelAndChildSCancel(prc)
 	// const ribuStackTrace = need to iterate _childS and _parent.
