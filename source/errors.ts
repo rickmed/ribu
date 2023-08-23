@@ -10,12 +10,19 @@ export function E<Name extends string = string>(name: Name, ogErr: Error | NodeJ
 
 const CANC_OK = "CancelledOK" as const
 
+export type ECancOK = E<typeof CANC_OK>
+
 export function ECancOK() {
 	let newErr = Error()
 	newErr.name = CANC_OK
-	return newErr as E<typeof CANC_OK>
+	return newErr as ECancOK
 }
 
+/*
+	tryCancel returns
+
+
+*/
 
 type InOnCancel = {
 	inBody?: Error,

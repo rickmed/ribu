@@ -1,6 +1,6 @@
 import { csp, getRunningPrc } from "./initCsp.js"
-import { Ch, addReceiver } from "./channel.js"
-import { E, err, Ether, EPrcCancelled } from "./errors.js"
+import { Ch, addRecPrcToCh, isCh } from "./channel.js"
+import { E, err, ECancOK, EUncaught } from "./errors.js"
 import { PARK, RESUME, UNSET, genCtor } from "./utils.js"
 
 const RESUME_WITH_VAL = 1
@@ -9,14 +9,15 @@ type ResumeWith = typeof RESUME_WITH_VAL | typeof RESUME_WITH_PRC | undefined
 
 const args = Symbol()
 const name = Symbol()
+export const chanPutMsg = Symbol()
 const sleepTimeout = Symbol()
 
 export class Prc<Ret = unknown> {
 
 	#gen: Gen
-	#internal: boolean = false;
-	[args]?: unknown[];
-	[name]?: string
+	#internal: boolean = false
+	;[args]?: unknown[]
+	;[name]?: string
 
 	#state: PrcState = "RUNNING"
 
@@ -26,13 +27,13 @@ export class Prc<Ret = unknown> {
 	#childS?: Set<Prc>
 	#parent?: Prc
 
-	#chanPutMsg?: unknown
+	;[chanPutMsg]?: unknown
 	#resumeWith?: ResumeWith
 
 	#waitingReceivers?: Prc | Array<Prc>
-	#doneV?: DoneVal<Ret> | UNSET = UNSET;
+	#doneV?: DoneVal<Ret> | UNSET = UNSET
 
-	[sleepTimeout]?: NodeJS.Timeout
+	;[sleepTimeout]?: NodeJS.Timeout
 	onCancel?: OnCancel
 
 	constructor(gen: Gen, internal: boolean) {
@@ -82,12 +83,14 @@ export class Prc<Ret = unknown> {
 				this.#finishNormalDone(value)
 				return
 			}
-			// @todo: implement yielding channels
 			if (value === PARK) {
 				break
 			}
 			if (value === RESUME) {
 				continue
+			}
+			if(isCh(value)) {
+				addRecPrcToCh(value, getRunningPrc())
 			}
 			if (value instanceof Promise) {
 				value
@@ -116,7 +119,7 @@ export class Prc<Ret = unknown> {
 			return doneV
 		}
 
-		this._addReceiver(undefined)
+		this._addReceiver(RESUME_WITH_VAL)
 
 		const msg = yield PARK
 		return msg as Ret
@@ -125,10 +128,10 @@ export class Prc<Ret = unknown> {
 	/**
 	 * @example
 	 * const x: Done<typeof prc> = yield prc.done
-	 * @todo
 	 */
 	get done() {
-		return true
+		this._addReceiver(RESUME_WITH_VAL)
+		return PARK
 	}
 
 	get doneVal() {
@@ -151,7 +154,7 @@ export class Prc<Ret = unknown> {
 		if (!waitingReceivers) {
 			this.#waitingReceivers = recPrc
 		}
-		else if ("_addReceiver" in waitingReceivers) {  // is Prc
+		else if (waitingReceivers instanceof Prc) {
 			this.#waitingReceivers = [waitingReceivers, recPrc]
 		}
 		else {
@@ -165,7 +168,7 @@ export class Prc<Ret = unknown> {
 		if (!waitingReceivers) {
 			return
 		}
-		else if ("_addReceiver" in waitingReceivers) {  // is Prc
+		else if (waitingReceivers instanceof Prc) {
 			this.#resumeRecPrc(waitingReceivers)
 		}
 		else {
@@ -216,7 +219,13 @@ export class Prc<Ret = unknown> {
 
 			if (err(res)) {
 
-				yield cancel(childS)  // this can throw if fails
+				// ok so a child just return an Exc
+				// if cancel returned exception I think I need to mangle all up in a "Something" Err
+
+				const cancelRes = yield tryCancel(childS)
+				if (err(cancelRes)) {
+					this.#doneV = cancelRes
+				}
 				doneVal = res
 			}
 		}
@@ -224,6 +233,73 @@ export class Prc<Ret = unknown> {
 		this.#doneV = doneVal
 		this.#resumeReceivers()
 		return
+	}
+
+
+
+	/**
+	 * should be yield prc.cancel() and const rec = yield* tryCancel()
+	 */
+	*_internalTryCancel(): Gen<true | EUncaught> {
+
+	// this needs to:
+		// 1) call this.resumeReceivers() for current waiters of .done/.rec/any
+		// return async result to caller:
+			// I think I can just delegate to a generator.
+			// but I think
+
+		const state = this.#state
+
+		if (state === "DONE") {  // late .cancel() callers.
+			// can be runn
+			// waitingCancel._addReceiver(receiverPrc)
+			// can be in process of finisNormalDone ??
+			waitingCancel.resumeAll(undefined)
+			return undefined
+		}
+
+		if (state === "CANCELLING") {
+			addReceiver(waitingCancel, callingPrc)
+			return undefined
+		}
+
+		this.#state = "CANCELLING"
+		const sleepTimeout = this[sleepTimeout]
+		if (sleepTimeout) clearTimeout(sleepTimeout)
+
+		const res = yield* runOnCancelAndChildSCancel(this)
+
+		this.#state = "DONE"
+		return
+	}
+}
+
+
+export function tryCancel(...prcS: Prc[]): true | EUncaught {
+	// need to cancel all Prcs concurrently
+
+	const nPrcS = prcS.length
+	const allDone = Ch()
+	let nDone = 0
+
+	for (const prc of prcS) {
+		go(function* _cancel() {
+			yield* cancelPrc(prc) // is it more efficient to return a chn?
+			nDone++
+			if (nDone === nPrcS) {
+				yield allDone.put()
+			}
+		})
+	}
+
+	return allDone
+}
+
+export function cancel(...prcS: Prc[]): true | EUncaught {
+	const callingPrc = getRunningPrc()
+	const res = tryCancel(prcS)
+	if (err(res)) {
+		// need to cancel callingPrc's children and resolve with err
 	}
 }
 
@@ -281,7 +357,7 @@ function* runOnCancelAndChildSCancel(prc: Prc): Gen<undefined | Error> {
 	else {  /* _$child && isGenFn(_onCancel) */
 		// @todo: maybe use wait(...) here
 		// need to put this on ._doneVal
-		yield* _all(go(onCancel as OnCancelGen).done, cancelPrcS(...childS!)).rec
+		yield* _all(go(onCancel as OnCancelGen).done, tryCancel(...childS!)).rec
 	}
 
 	// helpers
@@ -306,54 +382,9 @@ function* runOnCancelAndChildSCancel(prc: Prc): Gen<undefined | Error> {
 
 
 
-function* cancelPrc(prc: Prc): Gen<void> {
 
-	const callingPrc = getRunningPrc(`can't call cancel() outside a process.`)
 
-	const { #state: _state } = prc
-	const waitingCancel = prc.cancelCh ??= Ch()
 
-	if (_state === "DONE") {
-		// can be runn
-		// waitingCancel._addReceiver(receiverPrc)
-		// can be in process of finisNormalDone ??
-		waitingCancel.resumeAll(undefined)
-		return undefined
-	}
-
-	if (_state === "CANCELLING") {
-		addReceiver(waitingCancel, callingPrc)
-		return undefined
-	}
-
-	prc.#state = "CANCELLING"
-	const sleepTimeout = prc[sleepTimeout]
-	if (sleepTimeout) clearTimeout(sleepTimeout)
-
-	const res = yield* runOnCancelAndChildSCancel(prc)
-
-	prc.#state = "DONE"
-	return
-}
-
-function cancelPrcS(prcS: Prc[]): unknown {
-
-	const nPrcS = prcS.length
-	const allDone = Ch()
-	let nDone = 0
-
-	for (const prc of prcS) {
-		go(function* _cancel() {
-			yield* cancelPrc(prc) // is it more efficient to return a chn?
-			nDone++
-			if (nDone === nPrcS) {
-				yield allDone.put()
-			}
-		})
-	}
-
-	return allDone
-}
 
 function* $onCancel(prc: Prc) {
 
@@ -426,7 +457,7 @@ export function sleep(ms: number): PARK {
  * @todo: cancel() needs to put to prc.done PrcCancelledErr() or if err during cancellation
  */
 export function* cancel(prcS: Prc[] | Prc) {
-	yield cancelPrcS(prcS)
+	yield tryCancel(prcS)
 	return Ch<void>() // who resumes this?
 }
 

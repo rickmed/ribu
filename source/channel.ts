@@ -1,5 +1,5 @@
-import { PARK, RESUME, priv } from "./utils.js"
-import { resume, type Prc, type Gen } from "./process.js"
+import { PARK, RESUME } from "./utils.js"
+import { chanPutMsg, type Prc, type Gen } from "./process.js"
 import { getRunningPrc } from "./initCsp.js"
 import { Queue } from "./dataStructures.js"
 
@@ -8,8 +8,8 @@ export function Ch<V = undefined>(): Ch<V> {
 	return new _Ch<V>()
 }
 
-export function chBuff<V = undefined>(capacity: number) {
-	return new BufferedCh<V>(capacity)
+export function isCh(x: unknown): x is Ch {
+	return x instanceof _Ch
 }
 
 
@@ -52,8 +52,8 @@ class _Ch<V = undefined> extends BaseChan<V> {
 			return _enQueuedMsgs.deQ()!
 		}
 		else {
-			resume(putPrc, undefined)
-			const msg = putPrc.#chanPutMsg
+			putPrc._resume(undefined)
+			const msg = putPrc[chanPutMsg]
 			return msg as V
 		}
 	}
@@ -74,12 +74,12 @@ class _Ch<V = undefined> extends BaseChan<V> {
 		let recPrc = this.recQ.deQ()
 
 		if (!recPrc) {
-			putPrc.#chanPutMsg = msg
+			putPrc[chanPutMsg] = msg
 			this.putQ.enQ(putPrc)
 			return PARK
 		}
 
-		resume(recPrc, msg)
+		recPrc._resume(msg)
 		return RESUME
 	}
 
@@ -88,84 +88,89 @@ class _Ch<V = undefined> extends BaseChan<V> {
 	}
 }
 
-export function addReceiver(ch: _Ch, prc: Prc): void {
+export function addRecPrcToCh(ch: _Ch, prc: Prc): void {
 	ch.recQ.enQ(prc)
 }
 
-export class BufferedCh<V = undefined> extends BaseChan<V> {
 
-	#buffer: Queue<V>
-	isFull: boolean
+// export function chBuff<V = undefined>(capacity: number) {
+// 	return new BufferedCh<V>(capacity)
+// }
 
-	constructor(capacity: number) {
-		super()
-		const buffer = new Queue<V>(capacity)
-		this.#buffer = buffer
-		this.isFull = buffer.isFull
-	}
+// export class BufferedCh<V = undefined> extends BaseChan<V> {
 
-	get rec(): Gen<V> {
-		return this.#rec()
-	}
+// 	#buffer: Queue<V>
+// 	isFull: boolean
 
-	*#rec(): Gen<V> {
-		const recPrc = getRunningPrc()
+// 	constructor(capacity: number) {
+// 		super()
+// 		const buffer = new Queue<V>(capacity)
+// 		this.#buffer = buffer
+// 		this.isFull = buffer.isFull
+// 	}
 
-		const buffer = this.#buffer
-		const msg = buffer.deQ()
+// 	get rec(): Gen<V> {
+// 		return this.#rec()
+// 	}
 
-		if (msg === undefined) {
-			this.recQ.enQ(recPrc)
-			const msg = yield PARK
-			return msg as V
-		}
+// 	*#rec(): Gen<V> {
+// 		const recPrc = getRunningPrc()
 
-		const putPrc = this.putQ.deQ()
+// 		const buffer = this.#buffer
+// 		const msg = buffer.deQ()
 
-		if (putPrc) {
-			buffer.enQ(putPrc.#chanPutMsg as V)
-			resume(putPrc, undefined)
-		}
+// 		if (msg === undefined) {
+// 			this.recQ.enQ(recPrc)
+// 			const msg = yield PARK
+// 			return msg as V
+// 		}
 
-		return msg
-	}
+// 		const putPrc = this.putQ.deQ()
 
-	put(msg: V): PARK | RESUME {
+// 		if (putPrc) {
+// 			buffer.enQ(putPrc[chanPutMsg] as V)
+// 			putPrc._resume(undefined)
+// 		}
 
-		if (this.closed) {
-			throw Error(`ribu: can't put on a closed channel`)
-		}
+// 		return msg
+// 	}
 
-		let putPrc = getRunningPrc()
+// 	put(msg: V): PARK | RESUME {
 
-		const buffer = this.#buffer
+// 		if (this.closed) {
+// 			throw Error(`ribu: can't put on a closed channel`)
+// 		}
 
-		if (buffer.isFull) {
-			putPrc.#chanPutMsg = msg
-			this.putQ.enQ(putPrc)
-			return PARK
-		}
+// 		let putPrc = getRunningPrc()
 
-		const {recQ: _waitingReceivers} = this
-		let recPrc = _waitingReceivers.deQ()
+// 		const buffer = this.#buffer
 
-		if (!recPrc) {
-			buffer.enQ(msg as V)
-			resume(putPrc, undefined)
-			return RESUME
-		}
+// 		if (buffer.isFull) {
+// 			putPrc[chanPutMsg] = msg
+// 			this.putQ.enQ(putPrc)
+// 			return PARK
+// 		}
 
-		while (recPrc) {
-			if (recPrc.#state === "RUNNING") {
-				resume(recPrc, msg)
-				break
-			}
-			recPrc = _waitingReceivers.deQ()
-		}
-		return RESUME
-	}
+// 		const {recQ: _waitingReceivers} = this
+// 		let recPrc = _waitingReceivers.deQ()
 
-	get notDone() {
-		return this.#buffer.isEmpty && this.putQ.isEmpty ? false : true
-	}
-}
+// 		if (!recPrc) {
+// 			buffer.enQ(msg as V)
+// 			putPrc._resume(undefined)
+// 			return RESUME
+// 		}
+
+// 		while (recPrc) {
+// 			if (recPrc.#state === "RUNNING") {
+// 				recPrc._resume(msg)
+// 				break
+// 			}
+// 			recPrc = _waitingReceivers.deQ()
+// 		}
+// 		return RESUME
+// 	}
+
+// 	get notDone() {
+// 		return this.#buffer.isEmpty && this.putQ.isEmpty ? false : true
+// 	}
+// }

@@ -23,7 +23,6 @@ topic("types", () => {
       })
 
       const ret = yield* anyVal(prc1, prc2).rec
-
    })
 })
 
