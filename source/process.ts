@@ -3,6 +3,11 @@ import { Ch, addRecPrcToCh, isCh } from "./channel.js"
 import { E, err, ECancOK, EUncaught } from "./errors.js"
 import { PARK, RESUME, UNSET, genCtor } from "./utils.js"
 
+
+
+
+
+
 const RESUME_WITH_VAL = 1
 const RESUME_WITH_PRC = 2
 type ResumeWith = typeof RESUME_WITH_VAL | typeof RESUME_WITH_PRC | undefined
@@ -15,9 +20,9 @@ const sleepTimeout = Symbol()
 export class Prc<Ret = unknown> {
 
 	#gen: Gen
-	#internal: boolean = false
-	;[args]?: unknown[]
-	;[name]?: string
+	#internal: boolean = false;
+	[args]?: unknown[];
+	[name]?: string
 
 	#state: PrcState = "RUNNING"
 
@@ -25,15 +30,15 @@ export class Prc<Ret = unknown> {
 	 * A Set is needed since children can add/remove in arbitrary order
 	 */
 	#childS?: Set<Prc>
-	#parent?: Prc
+	#parent?: Prc;
 
-	;[chanPutMsg]?: unknown
+	[chanPutMsg]?: unknown
 	#resumeWith?: ResumeWith
 
 	#waitingReceivers?: Prc | Array<Prc>
-	#doneV?: DoneVal<Ret> | UNSET = UNSET
+	#doneV?: DoneVal<Ret> | UNSET = UNSET;
 
-	;[sleepTimeout]?: NodeJS.Timeout
+	[sleepTimeout]?: NodeJS.Timeout
 	onCancel?: OnCancel
 
 	constructor(gen: Gen, internal: boolean) {
@@ -61,7 +66,7 @@ export class Prc<Ret = unknown> {
 
 		csp.prcStack.push(this)
 
-		for (;;) {
+		for (; ;) {
 
 			try {
 				var { done, value } = this.#gen.next(msg)  // eslint-disable-line no-var
@@ -76,7 +81,7 @@ export class Prc<Ret = unknown> {
 				if (this.#internal) {
 					return
 				}
-				if (this.#hasActiveChildS()) {
+				if (hasActiveChildS(this)) {
 					_go(this.#waitChildS)
 					return
 				}
@@ -89,19 +94,26 @@ export class Prc<Ret = unknown> {
 			if (value === RESUME) {
 				continue
 			}
-			if(isCh(value)) {
+			if (isCh(value)) {
 				addRecPrcToCh(value, getRunningPrc())
 			}
 			if (value instanceof Promise) {
 				value
-					.then( (val: unknown) => { this._resume(val) })
-					.catch( (err: unknown) => { /* @todo */ })
+					.then((val: unknown) => { this._resume(val) })
+					.catch((err: unknown) => { /* @todo */ })
 
 				break
 			}
 		}
 
 		csp.prcStack.pop()
+
+		// helpers
+		function hasActiveChildS(this_: Prc) {
+			const childS = this_.#childS
+			if (!childS || childS.size === 0) return false
+			return true
+		}
 	}
 
 	/**
@@ -145,6 +157,62 @@ export class Prc<Ret = unknown> {
 	// 	return prcApi_m
 	// }
 
+
+	/**
+	 * If an error occurs during cancelling, the calling process is resolved
+	 * with EUncaught ()
+	 */
+
+	cancel() {
+		// return PARK
+
+		const doneCh = Ch<void>()
+		const callingPrc = getRunningPrc()
+
+		_go(function* () {
+			const res = yield this.tryCancel()
+			if (err(res)) {
+				// need to cancel callingPrc's children and resolve it with err
+				callingPrc.cancel() //??
+			}
+		})
+
+		return doneCh
+	}
+
+	/**
+	 * @example
+	 * const res = yield* prc.tryCancel(2000)
+	 * if (err(res)) {
+	 * 	...
+	 * }
+	 */
+	tryCancel(deadline?: number): true | EUncaught {
+		const state = this.#state
+
+		if (state === "DONE") {  // late .cancel() callers.
+			// can be runn
+			// waitingCancel._addReceiver(receiverPrc)
+			// can be in process of finisNormalDone ??
+			waitingCancel.resumeAll(undefined)
+			return undefined
+		}
+
+		if (state === "CANCELLING") {
+			addReceiver(waitingCancel, callingPrc)
+			return undefined
+		}
+
+		this.#state = "CANCELLING"
+		const sleepTimeout = this[sleepTimeout]
+		if (sleepTimeout) clearTimeout(sleepTimeout)
+
+		const res = yield* runOnCancelAndChildSCancel(this)
+
+		this.#state = "DONE"
+		return
+	}
+
 	_addReceiver(resumeWith: ResumeWith) {
 		let recPrc = getRunningPrc()
 		recPrc.#resumeWith = resumeWith
@@ -169,26 +237,27 @@ export class Prc<Ret = unknown> {
 			return
 		}
 		else if (waitingReceivers instanceof Prc) {
-			this.#resumeRecPrc(waitingReceivers)
+			resumeRecPrc(waitingReceivers, this)
 		}
 		else {
 			for (const recPrc of waitingReceivers) {
-				this.#resumeRecPrc(recPrc)
+				resumeRecPrc(recPrc, this)
 			}
 		}
 
 		this.#waitingReceivers = undefined
-	}
 
-	#resumeRecPrc(recPrc: Prc) {
-		const resumeRecPrcWith = recPrc.#resumeWith
+		// helpers
+		function resumeRecPrc(recPrc: Prc, this_: Prc) {
+			const resumeRecPrcWith = recPrc.#resumeWith
 
-		const msg =
-			resumeRecPrcWith === RESUME_WITH_VAL ? this.#doneV :
-			resumeRecPrcWith === RESUME_WITH_PRC ? this :
-			undefined
+			const msg =
+				resumeRecPrcWith === RESUME_WITH_VAL ? this_.#doneV :
+				resumeRecPrcWith === RESUME_WITH_PRC ? this_ :
+				undefined
 
-		recPrc._resume(msg)
+			recPrc._resume(msg)
+		}
 	}
 
 	#finishNormalDone(doneVal: unknown) {
@@ -199,11 +268,7 @@ export class Prc<Ret = unknown> {
 		this.#resumeReceivers()
 	}
 
-	#hasActiveChildS() {
-		const childS = this.#childS
-		if (!childS || childS.size === 0) return false
-		return true
-	}
+
 
 	*#waitChildS() {
 		this.#state = "DONE"  // concurrent cancelling ??
@@ -234,74 +299,12 @@ export class Prc<Ret = unknown> {
 		this.#resumeReceivers()
 		return
 	}
-
-
-
-	/**
-	 * should be yield prc.cancel() and const rec = yield* tryCancel()
-	 */
-	*_internalTryCancel(): Gen<true | EUncaught> {
-
-	// this needs to:
-		// 1) call this.resumeReceivers() for current waiters of .done/.rec/any
-		// return async result to caller:
-			// I think I can just delegate to a generator.
-			// but I think
-
-		const state = this.#state
-
-		if (state === "DONE") {  // late .cancel() callers.
-			// can be runn
-			// waitingCancel._addReceiver(receiverPrc)
-			// can be in process of finisNormalDone ??
-			waitingCancel.resumeAll(undefined)
-			return undefined
-		}
-
-		if (state === "CANCELLING") {
-			addReceiver(waitingCancel, callingPrc)
-			return undefined
-		}
-
-		this.#state = "CANCELLING"
-		const sleepTimeout = this[sleepTimeout]
-		if (sleepTimeout) clearTimeout(sleepTimeout)
-
-		const res = yield* runOnCancelAndChildSCancel(this)
-
-		this.#state = "DONE"
-		return
-	}
 }
 
 
-export function tryCancel(...prcS: Prc[]): true | EUncaught {
-	// need to cancel all Prcs concurrently
 
-	const nPrcS = prcS.length
-	const allDone = Ch()
-	let nDone = 0
 
-	for (const prc of prcS) {
-		go(function* _cancel() {
-			yield* cancelPrc(prc) // is it more efficient to return a chn?
-			nDone++
-			if (nDone === nPrcS) {
-				yield allDone.put()
-			}
-		})
-	}
 
-	return allDone
-}
-
-export function cancel(...prcS: Prc[]): true | EUncaught {
-	const callingPrc = getRunningPrc()
-	const res = tryCancel(prcS)
-	if (err(res)) {
-		// need to cancel callingPrc's children and resolve with err
-	}
-}
 
 
 
@@ -389,8 +392,8 @@ function* runOnCancelAndChildSCancel(prc: Prc): Gen<undefined | Error> {
 function* $onCancel(prc: Prc) {
 
 	const $onCancel = go(prc._onCancel)
-	const wonPrc: Prc = yield* anyPrc($onCancel, timeout(prc.deadline)).rec
-	if (wonPrc !== $onCancel) {
+	const wonPrc: Prc = yield* any($onCancel, Timeout.new(prc.deadline)).rec
+	if (wonPrc === Timeout) {
 		// @todo $onCancel can fail, need to check p
 		hardCancel($onCancel)
 	}
@@ -469,10 +472,10 @@ export function anyPrc<PrcS extends Prc[]>(prcS: PrcS): AnyCh<(PrcS)[number]> {
 }
 
 
-type PrcTypeUnion<T> = T extends Prc<infer U>[] ? U : never
+type PrcRetUnion<T> = T extends Prc<infer U>[] ? U : never
 
-export function anyVal<PrcS extends Prc[]>(prcS: PrcS): AnyCh<PrcTypeUnion<PrcS>> {
-	return any<PrcTypeUnion<PrcS>>(prcS, RESUME_WITH_VAL)
+export function anyVal<PrcS extends Prc[]>(prcS: PrcS): AnyCh<PrcRetUnion<PrcS>> {
+	return any<PrcRetUnion<PrcS>>(prcS, RESUME_WITH_VAL)
 }
 
 
