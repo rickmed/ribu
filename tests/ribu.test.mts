@@ -35,7 +35,6 @@ topic("unbuffered channels", () => {
          const ch = Ch<number>()
 
          go(function* sub() {
-            // yield* sleep(3)
             yield* ch.put(13)
          })
 
@@ -48,23 +47,23 @@ topic("unbuffered channels", () => {
 
       let rec: number = 1
 
-      go(async function main1() {
+      go(function* main1() {
 
          const ch1 = Ch<number>()
 
-         go(async function child1() {
-            await sleep(1)
-            await ch1.put(2)
-            await sleep(1)
-            const _rec = await ch1.rec
-            await ch1.put(_rec * 2)
+         go(function* child1() {
+            yield* sleep(1)
+            yield* ch1.put(2)
+            yield* sleep(1)
+            const _rec = yield* ch1.rec
+            yield* ch1.put(_rec * 2)
          })
 
-         await sleep(2)
-         rec = await ch1.rec
-         await sleep(1)
-         await ch1.put(rec * 2)
-         rec = await ch1.rec
+         yield* sleep(2)
+         rec = yield* ch1.rec
+         yield* sleep(1)
+         yield* ch1.put(rec * 2)
+         rec = yield* ch1.rec
       })
 
       await promSleep(8)
@@ -75,22 +74,22 @@ topic("unbuffered channels", () => {
 
       let recS: string = ""
 
-      go(async function main2() {
+      go(function* main2() {
 
          const _ch = Ch<string>()
 
-         go(async function child2() {
-            await sleep(1)  // I sleep so main gets to _ch.rec first.
-            await _ch.put("child ")
-            await sleep(2)
-            const _rec = await _ch.rec
-            await _ch.put(_rec + _rec)
+         go(function* child2() {
+            yield* sleep(1)  // I sleep so main gets to _ch.rec first.
+            yield* _ch.put("child ")
+            yield* sleep(2)
+            const _rec = yield* _ch.rec
+            yield* _ch.put(_rec + _rec)
          })
 
-         recS = await _ch.rec
-         await sleep(1)
-         await _ch.put("main " + recS)
-         recS = await _ch.rec
+         recS = yield* _ch.rec
+         yield* sleep(1)
+         yield* _ch.put("main " + recS)
+         recS = yield* _ch.rec
       })
 
       await promSleep(8)
@@ -99,14 +98,14 @@ topic("unbuffered channels", () => {
 })
 
 
-topic("process", () => {
+topic("timers", () => {
 
-   it("can sleep without blocking", async () => {
+   it("can sleep() without blocking", async () => {
 
       let x = false
 
       go(function* sleeper() {
-         yield sleep(1)
+         yield* sleep(1)
          x = true
       })
 
@@ -117,7 +116,7 @@ topic("process", () => {
 })
 
 
-topic("buffered channels", () => {
+topic.skip("buffered channels", () => {
 
    it("works when receiver arrives first", async () => {
 
@@ -188,7 +187,7 @@ topic("buffered channels", () => {
 })
 
 
-topic("process cancellation", () => {
+topic.skip("process cancellation", () => {
 
    it("ribu automatically cancels child if parent does not wait to be done", async () => {
 

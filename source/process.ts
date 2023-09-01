@@ -1,8 +1,8 @@
 import { Ch, addRecPrcToCh, isCh } from "./channel.js"
 import { E, err, ECancOK, EUncaught } from "./errors.js"
-import { sys } from "./initSystem.js"
+import { TheIterable, getRunningPrc, sys, theIterable } from "./initSystem.js"
 
-const UNSET = Symbol()
+const UNSET = Symbol("UNSET")
 
 export const status = Symbol()
 type Status =
@@ -12,10 +12,10 @@ type Status =
 	"PARK" |
 	"CANCELLING" |
 	"DONE"
-export const IOmsg = Symbol()
-const args = Symbol()
-const name = Symbol()
-const sleepTimeout = Symbol()
+export const IOmsg = Symbol("IOmsg")
+const args = Symbol("args")
+const name = Symbol("name")
+export const sleepTimeout = Symbol("sleepTO")
 
 export class Prc<Ret = unknown> {
 
@@ -431,18 +431,6 @@ export function onCancel(userOnCancel: OnCancel): void {
 		throw Error(`ribu: process onCancel is already set`)
 	}
 	runningPrc.onCancel = userOnCancel
-}
-
-
-export function sleep(ms: number): PARK {
-	let runningPrc = sys.runningPrc
-
-	const timeoutID = setTimeout(function _sleep() {
-		runningPrc._resume(undefined)
-	}, ms)
-
-	runningPrc[sleepTimeout] = timeoutID
-	return PARK
 }
 
 

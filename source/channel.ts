@@ -1,5 +1,5 @@
 import { IOmsg, type Prc } from "./process.js"
-import { sys, TheIterable, theIterable } from "./initSystem.js"
+import { TheIterable, theIterable, getRunningPrc } from "./initSystem.js"
 import { Queue } from "./dataStructures.js"
 
 
@@ -29,7 +29,7 @@ class BaseChan<V> {
 export class _Ch<V = undefined> extends BaseChan<V> {
 
 	get rec() {
-		let recPrc = sys.runningPrc
+		let recPrc = getRunningPrc()
 		let putPrc = this.puttersQ.deQ()
 
 		if (!putPrc) {
@@ -37,9 +37,8 @@ export class _Ch<V = undefined> extends BaseChan<V> {
 			recPrc._park(undefined)
 		}
 		else {
-			const msg = putPrc[IOmsg]
+			recPrc[IOmsg] = putPrc[IOmsg]
 			putPrc.resume(undefined)
-			recPrc.resume(msg)
 		}
 		return theIterable as TheIterable<V>
 	}
@@ -52,7 +51,7 @@ export class _Ch<V = undefined> extends BaseChan<V> {
 		// 	throw Error(`can't put() on a closed channel`)
 		// }
 
-		let putPrc = sys.runningPrc
+		let putPrc = getRunningPrc()
 		let recPrc = this.receiversQ.deQ()
 
 		if (!recPrc) {
@@ -60,8 +59,8 @@ export class _Ch<V = undefined> extends BaseChan<V> {
 			putPrc._park(msg)
 		}
 		else {
+			putPrc[IOmsg] = undefined
 			recPrc.resume(msg)
-			putPrc.resume(undefined)
 		}
 		return theIterable as TheIterable<V>
 	}

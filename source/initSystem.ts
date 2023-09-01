@@ -28,7 +28,7 @@ let iterRes = {
 
 const iterator = {
 	next(): IteratorResult<unknown> {
-		const runningPrc = sys.runningPrc
+		const runningPrc = getRunningPrc()
 		if (runningPrc[status] === "PARK") {
 			iterRes.done = false
 			// same iterRes.value bc will be ignored by yield*
