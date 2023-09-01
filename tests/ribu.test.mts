@@ -35,11 +35,11 @@ topic("unbuffered channels", () => {
          const ch = Ch<number>()
 
          go(function* sub() {
+            // yield* sleep(3)
             yield* ch.put(13)
          })
 
          const rec = yield* ch.rec
-         console.log({rec})
          check(rec).with(13)
       })
    })

@@ -1,42 +1,41 @@
-import { csp, getRunningPrc } from "./initCsp.js"
 import { Ch, addRecPrcToCh, isCh } from "./channel.js"
 import { E, err, ECancOK, EUncaught } from "./errors.js"
-import { PARK, RESUME, UNSET, genCtor } from "./utils.js"
+import { sys } from "./initSystem.js"
 
+const UNSET = Symbol()
 
-
-
-const RESUME_WITH_VAL = 1
-const RESUME_WITH_PRC = 2
-type ResumeWith = typeof RESUME_WITH_VAL | typeof RESUME_WITH_PRC | undefined
-
+export const status = Symbol()
+type Status =
+	"INIT" |
+	"RESUME_WITH_VAL" |
+	"RESUME_WITH_PRC" |
+	"PARK" |
+	"CANCELLING" |
+	"DONE"
+export const IOmsg = Symbol()
 const args = Symbol()
 const name = Symbol()
-export const IOmsg = Symbol()
 const sleepTimeout = Symbol()
 
 export class Prc<Ret = unknown> {
 
 	#gen: Gen
-	#internal: boolean = false;
-	[args]?: unknown[];
-	[name]?: string
-
-	#state: PrcState = "RUNNING"
+	#internal: boolean = false
+	;[status]: Status = "INIT"
+	;[IOmsg]?: unknown
+	;[args]?: unknown[]
+	;[name]?: string
 
 	/**
 	 * A Set is needed since children can add/remove in arbitrary order
 	 */
 	#childS?: Set<Prc>
-	#parent?: Prc;
-
-	[IOmsg]?: unknown
-	#resumeWith?: ResumeWith
+	#parent?: Prc
 
 	#waitingReceivers?: Prc | Array<Prc>
-	#doneV?: DoneVal<Ret> | UNSET = UNSET;
+	#doneV?: DoneVal<Ret> | typeof UNSET = UNSET
 
-	[sleepTimeout]?: NodeJS.Timeout
+	;[sleepTimeout]?: NodeJS.Timeout
 	onCancel?: OnCancel
 
 	constructor(gen: Gen, internal: boolean) {
@@ -44,7 +43,7 @@ export class Prc<Ret = unknown> {
 		this.#internal = internal
 
 		if (!internal) {
-			let parent = csp.runningPrc
+			let parent = sys.runningPrc
 			if (parent) {
 				this.#parent = parent
 				if (parent.#childS === undefined) {
@@ -55,14 +54,16 @@ export class Prc<Ret = unknown> {
 		}
 	}
 
+	resume(msg: unknown): void {
 
-	_resume(): void {
-
-		if (this.#state !== "RUNNING") {
+		if (this[status] === "DONE") {
 			return
 		}
 
-		csp.prcStack.push(this)
+		this[status] = "RESUME_WITH_VAL"
+		this[IOmsg] = msg
+
+		sys.prcStack.push(this)
 
 		for (; ;) {
 
@@ -75,7 +76,7 @@ export class Prc<Ret = unknown> {
 				return
 			}
 
-			csp.prcStack.pop()
+			sys.prcStack.pop()
 			if (done === true) {
 				if (this.#internal) {
 					return
@@ -101,6 +102,11 @@ export class Prc<Ret = unknown> {
 		}
 	}
 
+	_park(msg: unknown) {
+		this[status] = "PARK"
+		this[IOmsg] = msg
+	}
+
 	/**
 	 * Optionally, use .done getter a for faster alternative
 	 * @example
@@ -116,7 +122,7 @@ export class Prc<Ret = unknown> {
 			return doneV
 		}
 
-		this._addReceiver(RESUME_WITH_VAL)
+		this._addReceiver("RESUME_WITH_VAL")
 
 		const msg = yield PARK
 		return msg as Ret
@@ -127,7 +133,7 @@ export class Prc<Ret = unknown> {
 	 * const x: Done<typeof prc> = yield prc.done
 	 */
 	get done() {
-		this._addReceiver(RESUME_WITH_VAL)
+		this._addReceiver("RESUME_WITH_VAL")
 		return PARK
 	}
 
@@ -152,7 +158,7 @@ export class Prc<Ret = unknown> {
 		// return PARK
 
 		const doneCh = Ch<void>()
-		const callingPrc = getRunningPrc()
+		const callingPrc = sys.runningPrc
 
 		_go(function* () {
 			const res = yield this.tryCancel()
@@ -173,9 +179,9 @@ export class Prc<Ret = unknown> {
 	 * }
 	 */
 	*tryCancel(deadline?: number): true | EUncaught {
-		const state = this.#state
+		const _status = this[status]
 
-		if (state === "DONE") {  // late .cancel() callers.
+		if (_status === "DONE") {  // late .cancel() callers.
 			// can be runn
 			// waitingCancel._addReceiver(receiverPrc)
 			// can be in process of finisNormalDone ??
@@ -183,24 +189,24 @@ export class Prc<Ret = unknown> {
 			return undefined
 		}
 
-		if (state === "CANCELLING") {
+		if (_status === "CANCELLING") {
 			addReceiver(waitingCancel, callingPrc)
 			return undefined
 		}
 
-		this.#state = "CANCELLING"
+		this[status] = "CANCELLING"
 		const sleepTimeout = this[sleepTimeout]
 		if (sleepTimeout) clearTimeout(sleepTimeout)
 
 		const res = yield* runOnCancelAndChildSCancel(this)
 
-		this.#state = "DONE"
+		this[status] = "DONE"
 		return
 	}
 
-	_addReceiver(resumeWith: ResumeWith) {
-		let recPrc = getRunningPrc()
-		recPrc.#resumeWith = resumeWith
+	_addReceiver(resumeWith: Status) {
+		let recPrc = sys.runningPrc
+		recPrc[status] = resumeWith
 
 		let waitingReceivers = this.#waitingReceivers
 
@@ -234,33 +240,35 @@ export class Prc<Ret = unknown> {
 
 		// helpers
 		function resumeRecPrc(recPrc: Prc, this_: Prc) {
-			const resumeRecPrcWith = recPrc.#resumeWith
+			const resumeRecPrcWith = recPrc[status]
 
 			const msg =
-				resumeRecPrcWith === RESUME_WITH_VAL ? this_.#doneV :
-					resumeRecPrcWith === RESUME_WITH_PRC ? this_ :
-						undefined
+				resumeRecPrcWith === "RESUME_WITH_VAL" ? this_.#doneV :
+				resumeRecPrcWith === "RESUME_WITH_PRC" ? this_ :
+				undefined
 
-			recPrc._resume(msg)
+			recPrc.resume(msg)
 		}
 	}
 
 	#finishNormalDone(doneVal: unknown) {
-		this.#state = "DONE"
+
+		this[status] = "DONE"
 		this.#doneV = doneVal
+		if (this.#parent) {
+			this.#parent.#childS?.delete(this)
+		}
 		this.#parent = undefined
 		// no need to prc.childS = undefined since this function is called when no active children
 		this.#resumeReceivers()
 	}
 
-
-
 	*#waitChildS() {
-		this.#state = "DONE"  // concurrent cancelling ??
+		this[status] = "DONE" // concurrent cancelling ??
 		// cast ok. this fn is only called when childS !== undefined
 		const childS = [...this.#childS!]
 
-		const doneCh = anyVal(childS)
+		const doneCh = any(childS)
 
 		let doneVal
 
@@ -286,11 +294,11 @@ export class Prc<Ret = unknown> {
 	}
 
 	/**
-* If a prc throws anywhere, its onCancel is ran (tried) and children are cancelled.
-* The result of that operation is placed in its done channel
-*/
+	* If a prc throws anywhere, its onCancel is ran (tried) and children are cancelled.
+	* The result of that operation is placed in its done channel
+	*/
 	*#handleThrownErr(prc: Prc, thrown: unknown) {
-		prc.#state = "DONE"
+		prc[status] = "DONE"
 
 
 		const res = yield* runOnCancelAndChildSCancel(prc)
@@ -301,9 +309,6 @@ export class Prc<Ret = unknown> {
 		// prc._doneVal = EOther(res)  // @todo: check if ts complains when creating a prc
 	}
 }
-
-
-
 
 
 
@@ -378,7 +383,7 @@ export class Prc<Ret = unknown> {
 function* $onCancel(prc: Prc) {
 
 	const $onCancel = go(prc._onCancel)
-	const wonPrc: Prc = yield* any($onCancel, Timeout.new(prc.deadline)).rec
+	const wonPrc: Prc = yield* _any($onCancel, Timeout.new(prc.deadline)).rec
 	if (wonPrc === Timeout) {
 		// @todo $onCancel can fail, need to check p
 		hardCancel($onCancel)
@@ -398,7 +403,7 @@ function timeout(ms: number): Prc<void> {
 export function _go<Args extends unknown[], T>(genFn: GenFn<T, Args>, ...args: Args) {
 	const gen = genFn(...args)
 	let prc = new Prc<GenFnRet<typeof genFn>>(gen, true)
-	prc._resume(undefined)
+	prc.resume(undefined)
 	return prc
 }
 
@@ -412,13 +417,13 @@ export function go<Args extends unknown[], T>(genFn: GenFn<T, Args>, ...args_: A
 	let prc = new Prc<GenFnRet<typeof genFn>>(gen, false)
 	prc[args] = args_
 	prc[name] = genFn.name
-	prc._resume(undefined)
+	prc.resume(undefined)
 	return prc
 }
 
 
 export function onCancel(userOnCancel: OnCancel): void {
-	let runningPrc = csp.runningPrc
+	let runningPrc = sys.runningPrc
 	if (!runningPrc) {
 		throw Error(`ribu: can't use onCancel outside a process`)
 	}
@@ -430,7 +435,7 @@ export function onCancel(userOnCancel: OnCancel): void {
 
 
 export function sleep(ms: number): PARK {
-	let runningPrc = getRunningPrc()
+	let runningPrc = sys.runningPrc
 
 	const timeoutID = setTimeout(function _sleep() {
 		runningPrc._resume(undefined)
@@ -461,19 +466,18 @@ export function* cancel(prcS: Prc[] | Prc) {
 
 /* ====  any  ==== */
 
-export function anyPrc<PrcS extends Prc[]>(prcS: PrcS): AnyCh<(PrcS)[number]> {
-	return any<(PrcS)[number]>(prcS, RESUME_WITH_PRC)
-}
-
-
 type PrcRetUnion<T> = T extends Prc<infer U>[] ? U : never
 
-export function anyVal<PrcS extends Prc[]>(prcS: PrcS): AnyCh<PrcRetUnion<PrcS>> {
-	return any<PrcRetUnion<PrcS>>(prcS, RESUME_WITH_VAL)
+export function any<PrcS extends Prc[]>(prcS: PrcS): AnyCh<PrcRetUnion<PrcS>> {
+	return _any<PrcRetUnion<PrcS>>(prcS, "RESUME_WITH_VAL")
+}
+
+export function anyPrc<PrcS extends Prc[]>(prcS: PrcS): AnyCh<(PrcS)[number]> {
+	return _any<(PrcS)[number]>(prcS, "RESUME_WITH_PRC")
 }
 
 
-function any<ResumeType>(toWatchPrcS: Array<Prc>, resumeWith: ResumeWith) {
+function _any<ResumeType>(toWatchPrcS: Array<Prc>, resumeWith: "RESUME_WITH_VAL" | "RESUME_WITH_PRC") {
 	for (const toWatchPrc of toWatchPrcS) {
 		toWatchPrc._addReceiver(resumeWith)
 	}
@@ -545,7 +549,6 @@ type OnCancelGen = () => Gen
 type RegFn<Args extends unknown[] = unknown[]> =
 	(...args: Args) => unknown
 
-type PrcState = "RUNNING" | "CANCELLING" | "DONE"
 
 
 type PrcRet<Prc_> = Prc_ extends Prc<infer Ret> ? Ret : never
