@@ -6,15 +6,13 @@ import { PARK, RESUME, UNSET, genCtor } from "./utils.js"
 
 
 
-
-
 const RESUME_WITH_VAL = 1
 const RESUME_WITH_PRC = 2
 type ResumeWith = typeof RESUME_WITH_VAL | typeof RESUME_WITH_PRC | undefined
 
 const args = Symbol()
 const name = Symbol()
-export const chanPutMsg = Symbol()
+export const IOmsg = Symbol()
 const sleepTimeout = Symbol()
 
 export class Prc<Ret = unknown> {
@@ -32,7 +30,7 @@ export class Prc<Ret = unknown> {
 	#childS?: Set<Prc>
 	#parent?: Prc;
 
-	[chanPutMsg]?: unknown
+	[IOmsg]?: unknown
 	#resumeWith?: ResumeWith
 
 	#waitingReceivers?: Prc | Array<Prc>
@@ -58,7 +56,7 @@ export class Prc<Ret = unknown> {
 	}
 
 
-	_resume(msg: unknown): void {
+	_resume(): void {
 
 		if (this.#state !== "RUNNING") {
 			return
@@ -69,44 +67,31 @@ export class Prc<Ret = unknown> {
 		for (; ;) {
 
 			try {
-				var { done, value } = this.#gen.next(msg)  // eslint-disable-line no-var
+				var { done, value } = this.#gen.next()  // eslint-disable-line no-var
 			}
 			catch (thrown) {
+				console.log({thrown})
 				_go(this.#handleThrownErr, thrown)
 				return
 			}
 
+			csp.prcStack.pop()
 			if (done === true) {
-				csp.prcStack.pop()
 				if (this.#internal) {
 					return
 				}
-				if (hasActiveChildS(this)) {
-					_go(this.#waitChildS)
-					return
-				}
+				// if (hasActiveChildS(this)) {
+				// 	_go(this.#waitChildS)
+				// 	return
+				// }
 				this.#finishNormalDone(value)
 				return
 			}
-			if (value === PARK) {
-				break
-			}
-			if (value === RESUME) {
-				continue
-			}
-			if (isCh(value)) {
-				addRecPrcToCh(value, getRunningPrc())
-			}
-			if (value instanceof Promise) {
-				value
-					.then((val: unknown) => { this._resume(val) })
-					.catch((err: unknown) => { /* @todo */ })
 
-				break
-			}
+			// done === false, ie, park
+			return
 		}
 
-		csp.prcStack.pop()
 
 		// helpers
 		function hasActiveChildS(this_: Prc) {
@@ -187,7 +172,7 @@ export class Prc<Ret = unknown> {
 	 * 	...
 	 * }
 	 */
-	tryCancel(deadline?: number): true | EUncaught {
+	*tryCancel(deadline?: number): true | EUncaught {
 		const state = this.#state
 
 		if (state === "DONE") {  // late .cancel() callers.
@@ -253,8 +238,8 @@ export class Prc<Ret = unknown> {
 
 			const msg =
 				resumeRecPrcWith === RESUME_WITH_VAL ? this_.#doneV :
-				resumeRecPrcWith === RESUME_WITH_PRC ? this_ :
-				undefined
+					resumeRecPrcWith === RESUME_WITH_PRC ? this_ :
+						undefined
 
 			recPrc._resume(msg)
 		}
@@ -299,31 +284,32 @@ export class Prc<Ret = unknown> {
 		this.#resumeReceivers()
 		return
 	}
-}
 
-
-
-
-
-
-
-
-/**
+	/**
 * If a prc throws anywhere, its onCancel is ran (tried) and children are cancelled.
 * The result of that operation is placed in its done channel
 */
-function* handleThrownErr(prc: Prc, thrown: unknown) {
-	console.log(thrown)
-	prc.#state = "DONE"
+	*#handleThrownErr(prc: Prc, thrown: unknown) {
+		prc.#state = "DONE"
 
 
-	const res = yield* runOnCancelAndChildSCancel(prc)
-	// const ribuStackTrace = need to iterate _childS and _parent.
-	// should I include siblings in stack?
+		const res = yield* runOnCancelAndChildSCancel(prc)
+		// const ribuStackTrace = need to iterate _childS and _parent.
+		// should I include siblings in stack?
 
-	// this is suppose to resume ._done waiters.
-	// prc._doneVal = EOther(res)  // @todo: check if ts complains when creating a prc
+		// this is suppose to resume ._done waiters.
+		// prc._doneVal = EOther(res)  // @todo: check if ts complains when creating a prc
+	}
 }
+
+
+
+
+
+
+
+
+
 
 
 // since prcS are being cancelled, the result must be available at .doneVal
@@ -331,56 +317,56 @@ function* handleThrownErr(prc: Prc, thrown: unknown) {
 // return thing?
 // is it likely that user handles errors in onCancelFns?
 // maybe cancel(prcS) should return "ok" | Error
-function* runOnCancelAndChildSCancel(prc: Prc): Gen<undefined | Error> {
+// function* runOnCancelAndChildSCancel(prc: Prc): Gen<undefined | Error> {
 
-	const onCancel = prc.onCancel
-	const childS = prc.#childS
+// 	const onCancel = prc.onCancel
+// 	const childS = prc.#childS
 
-	if (!childS && !onCancel) {
-		return undefined
-	}
+// 	if (!childS && !onCancel) {
+// 		return undefined
+// 	}
 
-	else if (!childS && isRegFn(onCancel)) {
-		return try_(onCancel)
-	}
+// 	else if (!childS && isRegFn(onCancel)) {
+// 		return try_(onCancel)
+// 	}
 
-	else if (!childS && isGenFn(onCancel)) {
-		yield* go(onCancel).done.rec
-	}
+// 	else if (!childS && isGenFn(onCancel)) {
+// 		yield* go(onCancel).done.rec
+// 	}
 
-	else if (childS && onCancel === undefined) {
-		yield* cancel(...childS).rec
-	}
+// 	else if (childS && onCancel === undefined) {
+// 		yield* cancel(...childS).rec
+// 	}
 
-	else if (childS && isRegFn(onCancel)) {
-		const res = try_(onCancel)
-		yield* cancel(...childS).rec
-	}
+// 	else if (childS && isRegFn(onCancel)) {
+// 		const res = try_(onCancel)
+// 		yield* cancel(...childS).rec
+// 	}
 
-	else {  /* _$child && isGenFn(_onCancel) */
-		// @todo: maybe use wait(...) here
-		// need to put this on ._doneVal
-		yield* _all(go(onCancel as OnCancelGen).done, tryCancel(...childS!)).rec
-	}
+// 	else {  /* _$child && isGenFn(_onCancel) */
+// 		// @todo: maybe use wait(...) here
+// 		// need to put this on ._doneVal
+// 		yield* _all(go(onCancel as OnCancelGen).done, tryCancel(...childS!)).rec
+// 	}
 
-	// helpers
-	function try_(fn: RegFn) {
-		try {
-			fn()
-			return undefined
-		}
-		catch (err) {
-			return err as Error
-		}
-	}
+// 	// helpers
+// 	function try_(fn: RegFn) {
+// 		try {
+// 			fn()
+// 			return undefined
+// 		}
+// 		catch (err) {
+// 			return err as Error
+// 		}
+// 	}
 
-	function isRegFn(fn?: OnCancel): fn is RegFn {
-		return fn?.constructor.name === "Function"
-	}
-	function isGenFn(x: unknown): x is GenFn {
-		return x instanceof genCtor
-	}
-}
+// 	function isRegFn(fn?: OnCancel): fn is RegFn {
+// 		return fn?.constructor.name === "Function"
+// 	}
+// 	function isGenFn(x: unknown): x is GenFn {
+// 		return x instanceof genCtor
+// 	}
+// }
 
 
 
@@ -453,6 +439,14 @@ export function sleep(ms: number): PARK {
 	runningPrc[sleepTimeout] = timeoutID
 	return PARK
 }
+
+
+// @todo
+// function fromProm(prom) {
+// 	prom
+// 		.then((val: unknown) => { this._resume(val) })
+// 		.catch((err: unknown) => { /* @todo */ })
+// }
 
 
 /**

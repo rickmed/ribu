@@ -1,6 +1,6 @@
 import { PARK, RESUME } from "./utils.js"
-import { chanPutMsg, type Prc, type Gen } from "./process.js"
-import { getRunningPrc } from "./initCsp.js"
+import { IOmsg, type Prc, type Gen } from "./process.js"
+import { csp } from "./initCsp.js"
 import { Queue } from "./dataStructures.js"
 
 export type Ch<V = undefined> = _Ch<V>
@@ -15,8 +15,8 @@ export function isCh(x: unknown): x is Ch {
 
 class BaseChan<V> {
 
-	putQ = new Queue<Prc>()
-	recQ = new Queue<Prc>()
+	puttersQ = new Queue<Prc>()
+	receiversQ = new Queue<Prc>()
 	_enQueuedMsgs = new Queue<V>()  // @todo: ???
 	closed = false
 
@@ -25,71 +25,118 @@ class BaseChan<V> {
 	}
 }
 
-class _Ch<V = undefined> extends BaseChan<V> {
 
-	/**
-	 * Need to use full generator (ie, yield*) instead of just yield, because
-	 * typescript can't preserve the types between what is yielded and what is
-	 * returned at gen.next()
-	 */
-	get rec(): Gen<V> {
-		return this.#rec()
-	}
+/* this iterator object can be shared by all yield ops (need to convert to yield*)
+	- so that {done, value} obj is shared.
+	sleep, put, etc...
+*/
 
-	*#rec(): Gen<V> {
-		const recPrc = getRunningPrc()
+// msg in iterator.next(msg) is _resume(msg) -> gen.next(msg)
+// except when yield* is first called, then the arg will NOT be forwarded.
+// if iterator.next() returns {done: true}, is "consumed" by yield* (only uses .value prop)
+// ie, interpreter will not see it never.
 
-		let putPrc = this.putQ.deQ()
+// State machine instead of communicating by yielded values
 
-		if (!putPrc) {
-			this.recQ.enQ(recPrc)
-			const msg = yield PARK
-			return msg as V
+let iterRes = {
+	done: false,
+	value: 0 as unknown,
+}
+
+type IterRes = typeof iterRes
+type X = Iterable<boolean>
+
+const iterator = {
+	next(): IterRes {
+		const currentOp = csp.currentOp
+		const opVal = csp.currentOpV
+		switch (currentOp) {
+			case "chRec": return chRec(opVal as Ch)
+			case "chPut": return chPut(opVal as Ch)
+			default: throw new Error(`${currentOp satisfies never} is not known`)
 		}
-
-		const {_enQueuedMsgs} = this  //@todo: ??
-		if (!_enQueuedMsgs.isEmpty) {
-			return _enQueuedMsgs.deQ()!
-		}
-		else {
-			putPrc._resume(undefined)
-			const msg = putPrc[chanPutMsg]
-			return msg as V
-		}
-	}
-
-	/**
-	 * No need to pay the cost of using yield* because put() returns nothing
-	 * within a process, so no type preserving needed.
-	 */
-	put(msg: V): PARK | RESUME
-	put(...msg: V extends undefined ? [] : [V]): PARK | RESUME
-   put(msg?: V): PARK | RESUME {
-
-		if (this.closed) {
-			throw Error(`can't put() on a closed channel`)
-		}
-
-		let putPrc = getRunningPrc()
-		let recPrc = this.recQ.deQ()
-
-		if (!recPrc) {
-			putPrc[chanPutMsg] = msg
-			this.putQ.enQ(putPrc)
-			return PARK
-		}
-
-		recPrc._resume(msg)
-		return RESUME
-	}
-
-	get notDone() {
-		return this.putQ.isEmpty ? false : true
 	}
 }
 
+
+const iterable = {
+	[Symbol.iterator](): Iterator<V> {
+		return iterator
+	}
+}
+
+
+type _Iterable<V> = {
+	[Symbol.iterator](): Iterator<V>
+}
+
+export class _Ch<V = undefined> extends BaseChan<V> {
+
+	get rec() {
+		csp.currentOp = "chRec"
+		csp.currentOpV = this
+		return iterable as _Iterable<V>
+	}
+
+	put(msg: V): _Iterable<V>
+	put(...msg: V extends undefined ? [] : [V]): _Iterable<V>
+	put(msg?: V): _Iterable<V> {
+		csp.currentOp = "chPut"
+		csp.currentOpV = this
+		csp.runningPrc[IOmsg] = msg
+		return iterable as _Iterable<V>
+	}
+
+	get notDone() {
+		return this.puttersQ.isEmpty ? false : true
+	}
+}
+
+function chRec(ch: Ch): IterRes {
+	const recPrc = csp.runningPrc
+
+	let putPrc = ch.puttersQ.deQ()
+
+	if (!putPrc) {
+		ch.receiversQ.enQ(recPrc)
+		// .value doesn't matter because it's ignored by yield* and _resume(),
+		// ie, prc will be parked.
+		iterRes.done = false
+		return iterRes
+	}
+
+	const msg = putPrc[IOmsg]
+	csp.currentOp = "chPut"  // since this.next() will be called on _resume()
+	putPrc._resume()
+	iterRes.done = true
+	iterRes.value = msg
+	return iterRes
+}
+
+function chPut(ch: Ch): IterRes {
+	if (ch.closed) {  // @todo
+		throw Error(`can't put() on a closed channel`)
+	}
+
+	// I can be called directly from prc or resumed by chRec()
+		// maybe a state in ch ?
+
+	let putPrc = getRunningPrc()
+	let recPrc = ch.receiversQ.deQ()
+
+	if (!recPrc) {
+		putPrc[IOmsg] = msg
+		ch.puttersQ.enQ(putPrc)
+		return PARK
+	}
+
+	recPrc._resume(msg)
+	return RESUME
+}
+
+
 export function addRecPrcToCh(ch: _Ch, prc: Prc): void {
-	ch.recQ.enQ(prc)
+	ch.receiversQ.enQ(prc)
 }
 
 

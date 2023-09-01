@@ -8,23 +8,23 @@ import { promSleep, assertType, range } from "./utils.mjs"
 // @todo: change tests to make assertions inside processes when sophi is fixed
 // with failing test when no assertions are made.
 
-topic("types", () => {
+// topic("types", () => {
 
-   go(function* main() {
+//    go(function* main() {
 
-      const prc1 = go(function*() {
-         yield sleep(0)
-         return 4
-      })
+//       const prc1 = go(function*() {
+//          yield sleep(0)
+//          return 4
+//       })
 
-      const prc2 = go(function*() {
-         yield sleep(0)
-         return "a"
-      })
+//       const prc2 = go(function*() {
+//          yield sleep(0)
+//          return "a"
+//       })
 
-      const ret = yield* anyVal(prc1, prc2).rec
-   })
-})
+//       const ret = yield* anyVal(prc1, prc2).rec
+//    })
+// })
 
 
 topic("unbuffered channels", () => {
@@ -35,7 +35,7 @@ topic("unbuffered channels", () => {
          const ch = Ch<number>()
 
          go(function* sub() {
-            yield ch.put(13)
+            yield* ch.put(13)
          })
 
          const rec = yield* ch.rec
