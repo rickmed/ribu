@@ -22,27 +22,19 @@ const thePrcIterator = {
 	}
 }
 
-
-const UNSET = Symbol("UNSET")
-
 export const status = Symbol()
-type Status =
-	"INIT" |
-	"RESUME_WITH_VAL" |
-	"RESUME_WITH_PRC" |
-	"PARK" |
-	"CANCELLING" |
-	"DONE"
+type Status = "RESUME_WITH_VAL" | "RESUME_WITH_PRC" | "PARK" | "CANCELLING" | "DONE"
 export const IOmsg = Symbol("IOmsg")
 const args = Symbol("args")
 const name = Symbol("name")
+const onCancelK = Symbol("onCancel")
 export const sleepTimeout = Symbol("sleepTO")
 
 export class Prc<Ret = unknown> {
 
 	#gen: Gen
-	#internal: boolean = false
-	;[status]: Status = "INIT"
+	#internal?: true
+	;[status]?: Status
 	;[IOmsg]?: unknown
 	;[args]?: unknown[]
 	;[name]?: string
@@ -54,14 +46,13 @@ export class Prc<Ret = unknown> {
 	#parent?: Prc
 
 	#waitingReceivers?: Prc | Array<Prc>
-	#doneV?: DoneVal<Ret> | typeof UNSET = UNSET
 
+	;[onCancelK]?: OnCancel
 	;[sleepTimeout]?: NodeJS.Timeout
-	onCancel?: OnCancel
 
-	constructor(gen: Gen, internal: boolean) {
+	constructor(gen: Gen, internal?: true) {
 		this.#gen = gen
-		this.#internal = internal
+		if (internal) this.#internal = true
 
 		if (!internal) {
 			let parent = sys.runningPrc
@@ -134,38 +125,8 @@ export class Prc<Ret = unknown> {
 		this[IOmsg] = msg
 	}
 
-	/**
-	 * Optionally, use .done getter a for faster alternative
-	 * @example
-	 * const x = yield* prc.rec
-	 */
-	get rec() {
-		return this.#_rec()
-	}
-
-	*#_rec<Ret>(): Gen<Ret> {
-		const doneV = this.#doneV
-		if (doneV !== UNSET) {
-			return doneV
-		}
-
-		this._addReceiver("RESUME_WITH_VAL")
-
-		const msg = yield PARK
-		return msg as Ret
-	}
-
-	/**
-	 * @example
-	 * const x: Done<typeof prc> = yield prc.done
-	 */
-	get done() {
-		this._addReceiver("RESUME_WITH_VAL")
-		return PARK
-	}
-
 	get doneVal() {
-		return this[IOmsg]
+		return this[IOmsg] as Ret
 	}
 
 	// ports<_P extends Ports>(ports: _P) {
