@@ -1,6 +1,27 @@
 import { Ch, addRecPrcToCh, isCh } from "./channel.js"
 import { E, err, ECancOK, EUncaught } from "./errors.js"
-import { TheIterable, getRunningPrc, sys, theIterable } from "./initSystem.js"
+import { sys, getRunningPrc, iterRes } from "./initSystem.js"
+
+type PrcIterator<PrcRet> = {
+	next(): IteratorResult<unknown, PrcRet>
+}
+
+let yieldedPrc: Prc
+
+const thePrcIterator = {
+	next(): IteratorResult<unknown> {
+		// @todo: need to add runningPrc as waiter to thisPrc
+		if (yieldedPrc[status] !== "DONE") {
+			iterRes.done = false
+			// same iterRes.value bc will be ignored by yield*
+			return iterRes
+		}
+		iterRes.done = true
+		iterRes.value = yieldedPrc.doneVal
+		return iterRes
+	}
+}
+
 
 const UNSET = Symbol("UNSET")
 
@@ -52,6 +73,12 @@ export class Prc<Ret = unknown> {
 				parent.#childS.add(this)
 			}
 		}
+	}
+
+	[Symbol.iterator]() {
+		// eslint-disable-next-line @typescript-eslint/no-this-alias
+		yieldedPrc = this
+		return thePrcIterator as PrcIterator<Ret>
 	}
 
 	resume(msg: unknown): void {
@@ -138,7 +165,7 @@ export class Prc<Ret = unknown> {
 	}
 
 	get doneVal() {
-		return this.#doneV
+		return this[IOmsg]
 	}
 
 	// ports<_P extends Ports>(ports: _P) {
@@ -158,7 +185,7 @@ export class Prc<Ret = unknown> {
 		// return PARK
 
 		const doneCh = Ch<void>()
-		const callingPrc = sys.runningPrc
+		const callingPrc = getRunningPrc()
 
 		_go(function* () {
 			const res = yield this.tryCancel()
@@ -205,7 +232,7 @@ export class Prc<Ret = unknown> {
 	}
 
 	_addReceiver(resumeWith: Status) {
-		let recPrc = sys.runningPrc
+		let recPrc = getRunningPrc()
 		recPrc[status] = resumeWith
 
 		let waitingReceivers = this.#waitingReceivers
@@ -423,10 +450,7 @@ export function go<Args extends unknown[], T>(genFn: GenFn<T, Args>, ...args_: A
 
 
 export function onCancel(userOnCancel: OnCancel): void {
-	let runningPrc = sys.runningPrc
-	if (!runningPrc) {
-		throw Error(`ribu: can't use onCancel outside a process`)
-	}
+	let runningPrc = getRunningPrc()
 	if (runningPrc.onCancel) {
 		throw Error(`ribu: process onCancel is already set`)
 	}

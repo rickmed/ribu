@@ -29,7 +29,7 @@ import { promSleep, assertType, range } from "./utils.mjs"
 
 topic("unbuffered channels", () => {
 
-   it.only("simple put() and rec", () => {
+   it("simple put() and rec", () => {
 
       go(function* main() {
          const ch = Ch<number>()
@@ -97,7 +97,6 @@ topic("unbuffered channels", () => {
    })
 })
 
-
 topic("timers", () => {
 
    it("can sleep() without blocking", async () => {
@@ -115,6 +114,103 @@ topic("timers", () => {
    })
 })
 
+topic("process: can wait for children", () => {
+
+   it("explicit waiting with wait(...Procs). No return values", async () => {
+      const doneV = "done!"
+      let res
+
+      go(function* main() {
+
+         const child = go(function* sleeper() {
+            yield* sleep(1)
+            return doneV
+         })
+
+         res = yield* child
+      })
+
+      await promSleep(2)
+
+      check(res).with(doneV)
+   })
+
+   it.todo("parent auto waits for running children to finish", async () => {
+
+   })
+})
+
+topic.skip("process cancellation", () => {
+
+   it("ribu automatically cancels child if parent does not wait to be done", async () => {
+
+      let mutated = false
+
+      go(async function main3() {
+
+         go(async function sleeper() {
+            await sleep(3)
+            mutated = true
+         })
+
+         await sleep(1)
+      })
+
+      await promSleep(2)
+      check(mutated).with(false)
+   })
+})
+
+topic.skip("race()", () => {
+
+   it("when all processes finish succesfully", async () => {
+
+      let won = ""
+
+      go(async () => {
+
+         async function one() {
+            await sleep(2)
+            won = "one"
+         }
+
+         async function two() {
+            await sleep(1)
+            won = "two"
+         }
+
+         await race(go(one), go(two)).rec
+      })
+
+      await promSleep(3)
+      check(won).with("two")
+   })
+
+
+   // it("when all processes finish succesfully using the return value", async () => {
+
+   //    let won = ""
+
+   //    go(function* main() {
+
+   //       const one = go(function* one() {
+   //          yield sleep(2)
+   //          yield this.done.put("one")
+   //       })
+
+   //       const two = go(function* two() {
+   //          yield sleep(1)
+   //          yield this.done.put("two")
+   //       })
+
+   //       won = (yield race(one, two))   as string
+   //    })
+
+   //    await promSleep(3)
+
+   //    check(won).with("two")
+   // })
+})
 
 topic.skip("buffered channels", () => {
 
@@ -184,121 +280,4 @@ topic.skip("buffered channels", () => {
       await promSleep(2)
       check(opS).with([0, 1])
    })
-})
-
-
-topic.skip("process cancellation", () => {
-
-   it("ribu automatically cancels child if parent does not wait to be done", async () => {
-
-      let mutated = false
-
-      go(async function main3() {
-
-         go(async function sleeper() {
-            await sleep(3)
-            mutated = true
-         })
-
-         await sleep(1)
-      })
-
-      await promSleep(2)
-      check(mutated).with(false)
-   })
-})
-
-
-topic.skip("process can wait for children processes", () => {
-
-   it("explicit waiting with wait(...Procs). No return values", async () => {
-
-      let mutated = false
-
-      go(async function main() {
-
-         const child = go(async function sleeper() {
-            await sleep(1)
-            mutated = true
-         })
-
-         await wait(child).rec
-      })
-
-      await promSleep(2)
-
-      check(mutated).with(true)
-   })
-
-
-   it("implicit waiting with wait(). No return values", async () => {
-
-      let mutated = false
-
-      go(async function main() {
-
-         go(async function sleeper() {
-            await sleep(1)
-            mutated = true
-         })
-
-         await wait().rec
-      })
-
-      await promSleep(2)
-
-      check(mutated).with(true)
-   })
-})
-
-
-topic.skip("race()", () => {
-
-   it("when all processes finish succesfully", async () => {
-
-      let won = ""
-
-      go(async () => {
-
-         async function one() {
-            await sleep(2)
-            won = "one"
-         }
-
-         async function two() {
-            await sleep(1)
-            won = "two"
-         }
-
-         await race(go(one), go(two)).rec
-      })
-
-      await promSleep(3)
-      check(won).with("two")
-   })
-
-
-   // it("when all processes finish succesfully using the return value", async () => {
-
-   //    let won = ""
-
-   //    go(function* main() {
-
-   //       const one = go(function* one() {
-   //          yield sleep(2)
-   //          yield this.done.put("one")
-   //       })
-
-   //       const two = go(function* two() {
-   //          yield sleep(1)
-   //          yield this.done.put("two")
-   //       })
-
-   //       won = (yield race(one, two))   as string
-   //    })
-
-   //    await promSleep(3)
-
-   //    check(won).with("two")
-   // })
 })

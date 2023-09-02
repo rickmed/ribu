@@ -1,4 +1,4 @@
-import { status, IOmsg, type Prc } from "./process.js"
+import { status, type Prc } from "./process.js"
 
 
 export class System {
@@ -21,7 +21,7 @@ export function getRunningPrc() {
 }
 
 
-let iterRes = {
+export let iterRes = {
 	done: false,
 	value: 0 as unknown,
 }
@@ -35,7 +35,7 @@ const iterator = {
 			return iterRes
 		}
 		iterRes.done = true
-		iterRes.value = runningPrc[IOmsg]
+		iterRes.value = runningPrc.doneVal
 		return iterRes
 	}
 }
