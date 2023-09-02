@@ -183,8 +183,8 @@ export class Prc<Ret = unknown> {
 		}
 
 		this[status] = "CANCELLING"
-		const sleepTimeout = this[sleepTimeout]
-		if (sleepTimeout) clearTimeout(sleepTimeout)
+		const sleepTO = this[sleepTimeout]
+		if (sleepTO) clearTimeout(sleepTO)
 
 		const res = yield* runOnCancelAndChildSCancel(this)
 
@@ -231,7 +231,7 @@ export class Prc<Ret = unknown> {
 			const resumeRecPrcWith = recPrc[status]
 
 			const msg =
-				resumeRecPrcWith === "RESUME_WITH_VAL" ? this_.#doneV :
+				resumeRecPrcWith === "RESUME_WITH_VAL" ? this_[IOmsg] :
 				resumeRecPrcWith === "RESUME_WITH_PRC" ? this_ :
 				undefined
 
@@ -242,7 +242,7 @@ export class Prc<Ret = unknown> {
 	#finishNormalDone(doneVal: unknown) {
 
 		this[status] = "DONE"
-		this.#doneV = doneVal
+		this[IOmsg] = doneVal
 		if (this.#parent) {
 			this.#parent.#childS?.delete(this)
 		}
@@ -270,13 +270,13 @@ export class Prc<Ret = unknown> {
 
 				const cancelRes = yield tryCancel(childS)
 				if (err(cancelRes)) {
-					this.#doneV = cancelRes
+					this[IOmsg] = cancelRes
 				}
 				doneVal = res
 			}
 		}
 
-		this.#doneV = doneVal
+		this[IOmsg] = doneVal
 		this.#resumeReceivers()
 		return
 	}
