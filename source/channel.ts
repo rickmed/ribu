@@ -1,4 +1,4 @@
-import { IOmsg, type Prc } from "./process.js"
+import { IOmsg, status, type Prc } from "./process.js"
 import { TheIterable, theIterable, getRunningPrc } from "./initSystem.js"
 import { Queue } from "./dataStructures.js"
 
@@ -34,11 +34,12 @@ export class _Ch<V = undefined> extends BaseChan<V> {
 
 		if (!putPrc) {
 			this.receiversQ.enQ(recPrc)
-			recPrc._park(undefined)
+			recPrc._setPark()
 		}
 		else {
-			recPrc[IOmsg] = putPrc[IOmsg]
-			putPrc.resume(undefined)
+			const putMsg = putPrc[IOmsg]
+			putPrc.resume()
+			recPrc._setResume(putMsg)
 		}
 		return theIterable as TheIterable<V>
 	}
@@ -56,11 +57,11 @@ export class _Ch<V = undefined> extends BaseChan<V> {
 
 		if (!recPrc) {
 			this.puttersQ.enQ(putPrc)
-			putPrc._park(msg)
+			putPrc._setPark(msg)
 		}
 		else {
-			putPrc[IOmsg] = undefined
 			recPrc.resume(msg)
+			putPrc._setResume()
 		}
 		return theIterable as TheIterable<V>
 	}

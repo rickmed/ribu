@@ -114,25 +114,24 @@ topic("timers", () => {
    })
 })
 
-topic("process: can wait for children", () => {
+topic("prc: can wait for other prcS to finish", () => {
 
-   it("explicit waiting with wait(...Procs). No return values", async () => {
-      const doneV = "done!"
-      let res
+   it("yield* waits for a prc to finish", async () => {
+      let done: boolean = false
 
       go(function* main() {
 
-         const child = go(function* sleeper() {
+         const prc = go(function* sleeper() {
             yield* sleep(1)
-            return doneV
+            return true
          })
 
-         res = yield* child
+         done = yield* prc
       })
 
       await promSleep(2)
 
-      check(res).with(doneV)
+      check(done).with(true)
    })
 
    it.todo("parent auto waits for running children to finish", async () => {

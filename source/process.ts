@@ -1,33 +1,14 @@
 import { Ch, addRecPrcToCh, isCh } from "./channel.js"
 import { E, err, ECancOK, EUncaught } from "./errors.js"
-import { sys, getRunningPrc, iterRes } from "./initSystem.js"
+import { sys, getRunningPrc, theIterable, type TheIterable, theIterator } from "./initSystem.js"
 
-type PrcIterator<PrcRet> = {
-	next(): IteratorResult<unknown, PrcRet>
-}
 
-let yieldedPrc: Prc
-
-const thePrcIterator = {
-	next(): IteratorResult<unknown> {
-		// @todo: need to add runningPrc as waiter to thisPrc
-		if (yieldedPrc[status] !== "DONE") {
-			iterRes.done = false
-			// same iterRes.value bc will be ignored by yield*
-			return iterRes
-		}
-		iterRes.done = true
-		iterRes.value = yieldedPrc.doneVal
-		return iterRes
-	}
-}
-
-export const status = Symbol()
-type Status = "RESUME_WITH_VAL" | "RESUME_WITH_PRC" | "PARK" | "CANCELLING" | "DONE"
+type Status = "PARK" | "RESUME" | "CANCELLING" | "DONE"
+export const status = Symbol("status")
 export const IOmsg = Symbol("IOmsg")
 const args = Symbol("args")
 const name = Symbol("name")
-const onCancelK = Symbol("onCancel")
+const oncancel = Symbol("onCancel")
 export const sleepTimeout = Symbol("sleepTO")
 
 export class Prc<Ret = unknown> {
@@ -45,9 +26,9 @@ export class Prc<Ret = unknown> {
 	#childS?: Set<Prc>
 	#parent?: Prc
 
-	#waitingReceivers?: Prc | Array<Prc>
+	#observers?: Prc | Array<Prc>
 
-	;[onCancelK]?: OnCancel
+	;[oncancel]?: OnCancel
 	;[sleepTimeout]?: NodeJS.Timeout
 
 	constructor(gen: Gen, internal?: true) {
@@ -67,35 +48,49 @@ export class Prc<Ret = unknown> {
 	}
 
 	[Symbol.iterator]() {
-		// eslint-disable-next-line @typescript-eslint/no-this-alias
-		yieldedPrc = this
-		return thePrcIterator as PrcIterator<Ret>
+		const status_ = this[status]
+		if (status_ === "DONE") {
+			return theIterator as Iterator<Ret>
+		}
+		this._subscribeRunning()
+		getRunningPrc()._setPark()
+		return theIterator as Iterator<Ret>
 	}
 
-	resume(msg: unknown): void {
+	_subscribeRunning() {
+		let observer = getRunningPrc()
+		let observers = this.#observers
+		if (!observers) {
+			this.#observers = observer
+		}
+		else if (observers instanceof Prc) {
+			this.#observers = [observers, observer]
+		}
+		else {
+			observers.push(observer)
+		}
+	}
 
+	resume(IOmsg?: unknown): void {
 		if (this[status] === "DONE") {
 			return
 		}
 
-		this[status] = "RESUME_WITH_VAL"
-		this[IOmsg] = msg
-
 		sys.prcStack.push(this)
 
 		for (; ;) {
-
-			try {
-				var { done, value } = this.#gen.next()  // eslint-disable-line no-var
-			}
-			catch (thrown) {
-				console.log({thrown})
-				_go(this.#handleThrownErr, thrown)
-				return
-			}
+			this._setResume(IOmsg)
+			var y = this.#gen.next()  // eslint-disable-line no-var
+			// try {
+			// }
+			// catch (thrown) {
+			// 	console.log({thrown})
+			// 	_go(this.#handleThrownErr, thrown)
+			// 	return
+			// }
 
 			sys.prcStack.pop()
-			if (done === true) {
+			if (y.done === true) {
 				if (this.#internal) {
 					return
 				}
@@ -103,7 +98,7 @@ export class Prc<Ret = unknown> {
 				// 	_go(this.#waitChildS)
 				// 	return
 				// }
-				this.#finishNormalDone(value)
+				this.#finishNormalDone(y.value)
 				return
 			}
 
@@ -120,9 +115,14 @@ export class Prc<Ret = unknown> {
 		}
 	}
 
-	_park(msg: unknown) {
+	_setPark(_IOmsg?: unknown) {
 		this[status] = "PARK"
-		this[IOmsg] = msg
+		this[IOmsg] = _IOmsg
+	}
+
+	_setResume(_IOmsg?: unknown) {
+		this[status] = "RESUME"
+		this[IOmsg] = _IOmsg
 	}
 
 	get doneVal() {
@@ -143,7 +143,6 @@ export class Prc<Ret = unknown> {
 	 */
 
 	cancel() {
-		// return PARK
 
 		const doneCh = Ch<void>()
 		const callingPrc = getRunningPrc()
@@ -192,55 +191,27 @@ export class Prc<Ret = unknown> {
 		return
 	}
 
-	_addReceiver(resumeWith: Status) {
-		let recPrc = getRunningPrc()
-		recPrc[status] = resumeWith
-
-		let waitingReceivers = this.#waitingReceivers
-
-		if (!waitingReceivers) {
-			this.#waitingReceivers = recPrc
-		}
-		else if (waitingReceivers instanceof Prc) {
-			this.#waitingReceivers = [waitingReceivers, recPrc]
-		}
-		else {
-			waitingReceivers.push(recPrc)
-		}
-	}
-
-	#resumeReceivers() {
-		const waitingReceivers = this.#waitingReceivers
-
-		if (!waitingReceivers) {
+	/* Called when prc is normal done, or done cancelling */
+	#resumeObservers() {
+		const observers = this.#observers
+		if (!observers) {
 			return
 		}
-		else if (waitingReceivers instanceof Prc) {
-			resumeRecPrc(waitingReceivers, this)
+		else if (observers instanceof Prc) {
+			const msg = observers instanceof _Group ? this : this[IOmsg]
+			observers.resume(msg)
 		}
 		else {
-			for (const recPrc of waitingReceivers) {
-				resumeRecPrc(recPrc, this)
+			for (const observer of observers) {
+				const msg = observer instanceof _Group ? this : this[IOmsg]
+				observer.resume(msg)
 			}
 		}
 
-		this.#waitingReceivers = undefined
-
-		// helpers
-		function resumeRecPrc(recPrc: Prc, this_: Prc) {
-			const resumeRecPrcWith = recPrc[status]
-
-			const msg =
-				resumeRecPrcWith === "RESUME_WITH_VAL" ? this_[IOmsg] :
-				resumeRecPrcWith === "RESUME_WITH_PRC" ? this_ :
-				undefined
-
-			recPrc.resume(msg)
-		}
+		this.#observers = undefined
 	}
 
 	#finishNormalDone(doneVal: unknown) {
-
 		this[status] = "DONE"
 		this[IOmsg] = doneVal
 		if (this.#parent) {
@@ -248,7 +219,7 @@ export class Prc<Ret = unknown> {
 		}
 		this.#parent = undefined
 		// no need to prc.childS = undefined since this function is called when no active children
-		this.#resumeReceivers()
+		this.#resumeObservers()
 	}
 
 	*#waitChildS() {
@@ -277,7 +248,7 @@ export class Prc<Ret = unknown> {
 		}
 
 		this[IOmsg] = doneVal
-		this.#resumeReceivers()
+		this.#resumeObservers()
 		return
 	}
 
@@ -371,7 +342,7 @@ export class Prc<Ret = unknown> {
 function* $onCancel(prc: Prc) {
 
 	const $onCancel = go(prc._onCancel)
-	const wonPrc: Prc = yield* _any($onCancel, Timeout.new(prc.deadline)).rec
+	const wonPrc: Prc = yield* Group($onCancel, Timeout.new(prc.deadline)).rec
 	if (wonPrc === Timeout) {
 		// @todo $onCancel can fail, need to check p
 		hardCancel($onCancel)
@@ -402,10 +373,10 @@ export function _go<Args extends unknown[], T>(genFn: GenFn<T, Args>, ...args: A
 
 export function go<Args extends unknown[], T>(genFn: GenFn<T, Args>, ...args_: Args) {
 	const gen = genFn(...args_)
-	let prc = new Prc<GenFnRet<typeof genFn>>(gen, false)
+	let prc = new Prc<GenFnRet<typeof genFn>>(gen)
 	prc[args] = args_
 	prc[name] = genFn.name
-	prc.resume(undefined)
+	prc.resume()
 	return prc
 }
 
@@ -437,48 +408,73 @@ export function* cancel(prcS: Prc[] | Prc) {
 }
 
 
-/* ====  any  ==== */
+/* ====  Group  ==== */
 
 type PrcRetUnion<T> = T extends Prc<infer U>[] ? U : never
 
-export function any<PrcS extends Prc[]>(prcS: PrcS): AnyCh<PrcRetUnion<PrcS>> {
-	return _any<PrcRetUnion<PrcS>>(prcS, "RESUME_WITH_VAL")
+export function Group<PrcS extends Prc[]>(prcS?: PrcS): _Group<PrcRetUnion<PrcS>> {
+	return new _Group<PrcRetUnion<PrcS>>(prcS)
 }
 
-export function anyPrc<PrcS extends Prc[]>(prcS: PrcS): AnyCh<(PrcS)[number]> {
-	return _any<(PrcS)[number]>(prcS, "RESUME_WITH_PRC")
+export function GroupPrc<PrcS extends Prc[]>(prcS: PrcS): _Group<(PrcS)[number]> {
+	return new _Group<(PrcS)[number]>(prcS, true)
 }
 
+/* Group could inspect the value that the observed resume the observer with
+	so it does not resume the observer if observed resolves with ECancOK
+	Also, in GroupPrc I can have a flag to resume observers with Prc or prc.doneVal.
+	_Group can subscribe to all observables and retransmit msg
 
-function _any<ResumeType>(toWatchPrcS: Array<Prc>, resumeWith: "RESUME_WITH_VAL" | "RESUME_WITH_PRC") {
-	for (const toWatchPrc of toWatchPrcS) {
-		toWatchPrc._addReceiver(resumeWith)
+*/
+
+/**
+ * @todo: provide a more effient #observed data structure
+ */
+class _Group<V> {
+
+	#observed = new Set<Prc>()
+	#observer: Prc
+	#resumeObserverWithPrc?: boolean
+
+	constructor(toObserveS?: Prc[], resumeWithPrc?: true) {
+		this.#observer = getRunningPrc()
+		if (toObserveS) {
+			for (const prc of toObserveS) {
+				this.#observed.add(prc)
+			}
+		}
+		if (resumeWithPrc) this.#resumeObserverWithPrc = resumeWithPrc
 	}
-	return new AnyCh<ResumeType>(toWatchPrcS.length)
-}
 
-
-class AnyCh<V> {
-
-	#nWatchedPrcsDone: number
-
-	constructor(nWatchedPrcs: number) {
-		this.#nWatchedPrcsDone = nWatchedPrcs
+	go(prc: Prc) {
+		this.#observed.add(prc)
+		// ...
 	}
 
-	get rec(): Gen<V> {
-		return this.#rec()
+	cancel() {
+		//...
 	}
 
-	*#rec(): Gen<V> {
-		const msg = yield PARK  // this will be a prc or a prc._doneVal
-		this.#nWatchedPrcsDone -= 1
-		return msg as V
+	get rec() {
+		return theIterable as TheIterable<V>
 	}
 
-	notDone() {
-		if (this.#nWatchedPrcsDone === 0) return false
+	get count() {
+		return this.#observed.size
+	}
+
+	get notDone() {
+		if (this.#observed.size === 0) return false
 		return true
+	}
+
+	resume(observed: Prc) {
+		if (this.#resumeObserverWithPrc === undefined) {
+			this.#observer.resume(observed)
+		}
+		else {
+			this.#observer.resume(observed[IOmsg])
+		}
 	}
 }
 
