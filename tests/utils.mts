@@ -2,7 +2,8 @@ export function promSleep(ms: number): Promise<void> {
 	return new Promise(res => setTimeout(res, ms))
 }
 
-export function assertType<T> (x: T) { return x}
+export function assertType<T>(x: T) { return x}
+// someVal satisfies someType;
 
 export function* range(start: number, end?: number) {
 	if (end === undefined) {

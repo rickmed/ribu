@@ -1,5 +1,4 @@
-import { TheIterable, getRunningPrc, theIterable } from "./initSystem.js"
-import { IOmsg, sleepTimeout, status } from "./process.js"
+import { TheIterable, getRunningPrc, theIterable } from "./system.js"
 
 export function sleep(ms: number) {
 	let runningPrc = getRunningPrc()
@@ -8,7 +7,7 @@ export function sleep(ms: number) {
 		runningPrc.resume()
 	}, ms)
 
-	runningPrc[sleepTimeout] = timeoutID
+	runningPrc._sleepTimeout = timeoutID
 	runningPrc._setPark()
 	return theIterable as TheIterable<void>
 }

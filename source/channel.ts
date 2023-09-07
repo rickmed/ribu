@@ -1,5 +1,5 @@
-import { IOmsg, status, type Prc } from "./process.js"
-import { TheIterable, theIterable, getRunningPrc } from "./initSystem.js"
+import { type Prc } from "./process.js"
+import { TheIterable, theIterable, getRunningPrc } from "./system.js"
 import { Queue } from "./dataStructures.js"
 
 
@@ -37,7 +37,7 @@ export class _Ch<V = undefined> extends BaseChan<V> {
 			recPrc._setPark()
 		}
 		else {
-			const putMsg = putPrc[IOmsg]
+			const putMsg = putPrc._IOmsg
 			putPrc.resume()
 			recPrc._setResume(putMsg)
 		}

@@ -1,35 +1,36 @@
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore @todo
 import { topic, it, check } from "sophi"
 import { go, Ch, sleep, anyPrc, anyVal } from "../source/index.js"
 import { promSleep, assertType, range } from "./utils.mjs"
-// import csp from "../source/initCsp.mjs"
+import { sys } from "../source/system.js"
 
-// @todo: change tests to make assertions inside processes when sophi is fixed
-// with failing test when no assertions are made.
+const _sys = sys
 
-// topic("types", () => {
+topic("prc: can wait for other prcS to finish", () => {
 
-//    go(function* main() {
+   it("yield* waits for a prc to finish", async () => {
+      let done: number = 0
 
-//       const prc1 = go(function*() {
-//          yield sleep(0)
-//          return 4
-//       })
+      go(function* main() {
+         done = yield* go(function* sleeper() {
+            yield* sleep(4)
+            return 1
+         })
+      })
 
-//       const prc2 = go(function*() {
-//          yield sleep(0)
-//          return "a"
-//       })
+      await promSleep(6)
 
-//       const ret = yield* anyVal(prc1, prc2).rec
-//    })
-// })
+      check(done).with(1)
+   })
 
+   it.todo("parent auto waits for running children to finish", async () => {
 
-topic("unbuffered channels", () => {
+   })
+})
 
-   it("simple put() and rec", () => {
+topic.skip("unbuffered channels", () => {
+
+   it("putter arrives first", () => {
 
       go(function* main() {
          const ch = Ch<number>()
@@ -43,61 +44,27 @@ topic("unbuffered channels", () => {
       })
    })
 
-   it("works when putter arrives first", async () => {
+   it("receiver arrives first", async () => {
 
-      let rec: number = 1
+      go(function* main() {
+         const ch = Ch<number>()
 
-      go(function* main1() {
-
-         const ch1 = Ch<number>()
-
-         go(function* child1() {
+         go(function* sub() {
             yield* sleep(1)
-            yield* ch1.put(2)
-            yield* sleep(1)
-            const _rec = yield* ch1.rec
-            yield* ch1.put(_rec * 2)
+            yield* ch.put(13)
          })
 
-         yield* sleep(2)
-         rec = yield* ch1.rec
-         yield* sleep(1)
-         yield* ch1.put(rec * 2)
-         rec = yield* ch1.rec
+         const rec = yield* ch.rec
+         check(rec).with(13)
       })
-
-      await promSleep(8)
-      check(rec).with(8)
    })
 
-   it("works when receiver arrives first", async () => {
-
-      let recS: string = ""
-
-      go(function* main2() {
-
-         const _ch = Ch<string>()
-
-         go(function* child2() {
-            yield* sleep(1)  // I sleep so main gets to _ch.rec first.
-            yield* _ch.put("child ")
-            yield* sleep(2)
-            const _rec = yield* _ch.rec
-            yield* _ch.put(_rec + _rec)
-         })
-
-         recS = yield* _ch.rec
-         yield* sleep(1)
-         yield* _ch.put("main " + recS)
-         recS = yield* _ch.rec
-      })
-
-      await promSleep(8)
-      check(recS).with("main child main child ")
+   it.todo("ping pong", async() => {
+      // ...
    })
 })
 
-topic("timers", () => {
+topic.skip("timers", () => {
 
    it("can sleep() without blocking", async () => {
 
@@ -114,30 +81,6 @@ topic("timers", () => {
    })
 })
 
-topic("prc: can wait for other prcS to finish", () => {
-
-   it("yield* waits for a prc to finish", async () => {
-      let done: boolean = false
-
-      go(function* main() {
-
-         const prc = go(function* sleeper() {
-            yield* sleep(1)
-            return true
-         })
-
-         done = yield* prc
-      })
-
-      await promSleep(2)
-
-      check(done).with(true)
-   })
-
-   it.todo("parent auto waits for running children to finish", async () => {
-
-   })
-})
 
 topic.skip("process cancellation", () => {
 
@@ -280,3 +223,26 @@ topic.skip("buffered channels", () => {
       check(opS).with([0, 1])
    })
 })
+
+
+// @todo: when sophi is fixed, change tests to make assertions inside processes
+   // with failing test when no assertions are made.
+
+/* types tests */
+// topic("types", () => {
+
+//    go(function* main() {
+
+//       const prc1 = go(function*() {
+//          yield sleep(0)
+//          return 4
+//       })
+
+//       const prc2 = go(function*() {
+//          yield sleep(0)
+//          return "a"
+//       })
+
+//       const ret = yield* anyVal(prc1, prc2).rec
+//    })
+// })

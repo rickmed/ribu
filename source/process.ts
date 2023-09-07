@@ -1,78 +1,51 @@
 import { Ch, addRecPrcToCh, isCh } from "./channel.js"
-import { E, err, ECancOK, EUncaught } from "./errors.js"
-import { sys, getRunningPrc, theIterable, type TheIterable, theIterator } from "./initSystem.js"
+// import { Name, err, ECancOK, EUncaught } from "./errors.js"
+import { sys, getRunningPrc, theIterable, type TheIterable, theIterator, type TheIterator } from "./system.js"
+import { ArraySet } from "./dataStructures.js"
 
+type Status = "PARK" | "RESUME" | "FINISHING" | "DONE"
 
-type Status = "PARK" | "RESUME" | "CANCELLING" | "DONE"
-export const status = Symbol("status")
-export const IOmsg = Symbol("IOmsg")
-const args = Symbol("args")
-const name = Symbol("name")
-const oncancel = Symbol("onCancel")
-export const sleepTimeout = Symbol("sleepTO")
-
+/**
+ * A prc can be resolved with: genFnReturnType | ECancOK
+ */
 export class Prc<Ret = unknown> {
 
-	#gen: Gen
-	#internal?: true
-	;[status]?: Status
-	;[IOmsg]?: unknown
-	;[args]?: unknown[]
-	;[name]?: string
+	_gen: Gen
+	_isInternal?: true
+	_status?: Status
+	_IOmsg?: unknown
+	_args?: unknown[]
+	_name?: string
 
 	/**
-	 * A Set is needed since children can add/remove in arbitrary order
+	 * A Set since children can be added/removed in arbitrary order
 	 */
-	#childS?: Set<Prc>
-	#parent?: Prc
+	_childS?: ArraySet<Prc>
+	_parent?: Prc
 
-	#observers?: Prc | Array<Prc>
+	_observers?: Prc | Prc[]
 
-	;[oncancel]?: OnCancel
-	;[sleepTimeout]?: NodeJS.Timeout
+	_onCancel?: OnCancel
+	_sleepTimeout?: NodeJS.Timeout
 
 	constructor(gen: Gen, internal?: true) {
-		this.#gen = gen
-		if (internal) this.#internal = true
+		this._gen = gen
+		if (internal) this._isInternal = true
 
 		if (!internal) {
 			let parent = sys.runningPrc
 			if (parent) {
-				this.#parent = parent
-				if (parent.#childS === undefined) {
-					parent.#childS = new Set()
+				this._parent = parent
+				if (parent._childS === undefined) {
+					parent._childS = new ArraySet()
 				}
-				parent.#childS.add(this)
+				parent._childS.add(this)
 			}
 		}
 	}
 
-	[Symbol.iterator]() {
-		const status_ = this[status]
-		if (status_ === "DONE") {
-			return theIterator as Iterator<Ret>
-		}
-		this._subscribeRunning()
-		getRunningPrc()._setPark()
-		return theIterator as Iterator<Ret>
-	}
-
-	_subscribeRunning() {
-		let observer = getRunningPrc()
-		let observers = this.#observers
-		if (!observers) {
-			this.#observers = observer
-		}
-		else if (observers instanceof Prc) {
-			this.#observers = [observers, observer]
-		}
-		else {
-			observers.push(observer)
-		}
-	}
-
 	resume(IOmsg?: unknown): void {
-		if (this[status] === "DONE") {
+		if (this._status === "DONE") {
 			return
 		}
 
@@ -80,8 +53,8 @@ export class Prc<Ret = unknown> {
 
 		for (; ;) {
 			this._setResume(IOmsg)
-			var y = this.#gen.next()  // eslint-disable-line no-var
 			// try {
+				var yielded = this._gen.next()  // eslint-disable-line no-var
 			// }
 			// catch (thrown) {
 			// 	console.log({thrown})
@@ -90,15 +63,15 @@ export class Prc<Ret = unknown> {
 			// }
 
 			sys.prcStack.pop()
-			if (y.done === true) {
-				if (this.#internal) {
+			if (yielded.done === true) {
+				if (this._isInternal) {
 					return
 				}
-				// if (hasActiveChildS(this)) {
-				// 	_go(this.#waitChildS)
-				// 	return
-				// }
-				this.#finishNormalDone(y.value)
+				if (hasActiveChildS(this)) {
+					_go(this._waitChildS.bind(this))
+					return
+				}
+				this.#finishNormalDone(yielded.value)
 				return
 			}
 
@@ -106,27 +79,72 @@ export class Prc<Ret = unknown> {
 			return
 		}
 
-
-		// helpers
-		function hasActiveChildS(this_: Prc) {
-			const childS = this_.#childS
-			if (!childS || childS.size === 0) return false
-			return true
+		//
+		function hasActiveChildS(prc: Prc) {
+			const childS = prc._childS
+			if (childS && childS.length > 0) return true
+			return false
 		}
 	}
 
+	[Symbol.iterator](): TheIterator<Ret> {
+		const runningPrc = getRunningPrc()
+		// need to add this as child of runningPrc
+		// in case parent is cancelled.
+		const myStatus = this._status
+		if (myStatus === "DONE") {
+			runningPrc._setResume(this._IOmsg)
+		}
+		else {
+			runningPrc._setPark()
+			this._addObserver(runningPrc)
+		}
+		return theIterator
+	}
+
+	_addObserver(prc: Prc) {
+		let observers = this._observers
+		if (!observers) {
+			this._observers = prc
+		}
+		else if (observers instanceof Prc) {
+			this._observers = [observers, prc]
+		}
+		else {
+			observers.push(prc)
+		}
+	}
+
+	_resumeObservers() {
+		const observers = this._observers
+		if (!observers) {
+			return
+		}
+		const msg = observers instanceof _Group ? this : this._IOmsg
+		if (observers instanceof Prc) {
+			observers.resume(msg)
+		}
+		else {
+			for (const observer of observers) {
+				observer.resume(msg)
+			}
+		}
+
+		this._observers = undefined
+	}
+
 	_setPark(_IOmsg?: unknown) {
-		this[status] = "PARK"
-		this[IOmsg] = _IOmsg
+		this._status = "PARK"
+		this._IOmsg = _IOmsg
 	}
 
 	_setResume(_IOmsg?: unknown) {
-		this[status] = "RESUME"
-		this[IOmsg] = _IOmsg
+		this._status = "RESUME"
+		this._IOmsg = _IOmsg
 	}
 
-	get doneVal() {
-		return this[IOmsg] as Ret
+	get val() {
+		return this._IOmsg as Ret
 	}
 
 	// ports<_P extends Ports>(ports: _P) {
@@ -143,19 +161,18 @@ export class Prc<Ret = unknown> {
 	 */
 
 	cancel() {
+		// needs to returns theIterable
+		// add caller-runningPrc as observer
+		// if I'm resolved, return the value (wether I'm cancelled or done already)
+		const runningPrc = getRunningPrc()
+		const myStatus = this._status
+		if (myStatus === "DONE") {
+			runningPrc._setResume(this._IOmsg)
+		}
 
-		const doneCh = Ch<void>()
-		const callingPrc = getRunningPrc()
+		// else, need to cancel my children in parallel
 
-		_go(function* () {
-			const res = yield this.tryCancel()
-			if (err(res)) {
-				// need to cancel callingPrc's children and resolve it with err
-				callingPrc.cancel() //??
-			}
-		})
-
-		return doneCh
+		return theIterator as Iterator<Ret>
 	}
 
 	/**
@@ -166,7 +183,7 @@ export class Prc<Ret = unknown> {
 	 * }
 	 */
 	*tryCancel(deadline?: number): true | EUncaught {
-		const _status = this[status]
+		const {_status} = this
 
 		if (_status === "DONE") {  // late .cancel() callers.
 			// can be runn
@@ -181,75 +198,72 @@ export class Prc<Ret = unknown> {
 			return undefined
 		}
 
-		this[status] = "CANCELLING"
+		this._status = "CANCELLING"
 		const sleepTO = this[sleepTimeout]
 		if (sleepTO) clearTimeout(sleepTO)
 
 		const res = yield* runOnCancelAndChildSCancel(this)
 
-		this[status] = "DONE"
+		this._status = "DONE"
 		return
 	}
 
-	/* Called when prc is normal done, or done cancelling */
-	#resumeObservers() {
-		const observers = this.#observers
-		if (!observers) {
-			return
-		}
-		else if (observers instanceof Prc) {
-			const msg = observers instanceof _Group ? this : this[IOmsg]
-			observers.resume(msg)
-		}
-		else {
-			for (const observer of observers) {
-				const msg = observer instanceof _Group ? this : this[IOmsg]
-				observer.resume(msg)
-			}
-		}
-
-		this.#observers = undefined
+	#removeChild(prc: Prc) {
+		this._childS?.delete(prc)
 	}
 
 	#finishNormalDone(doneVal: unknown) {
-		this[status] = "DONE"
-		this[IOmsg] = doneVal
-		if (this.#parent) {
-			this.#parent.#childS?.delete(this)
+		this._status = "DONE"
+		this._IOmsg = doneVal
+		if (this._parent) {
+			this._parent.#removeChild(this)
+			this._parent = undefined
 		}
-		this.#parent = undefined
-		// no need to prc.childS = undefined since this function is called when no active children
-		this.#resumeObservers()
+		// no need to nil prc.childS since this function is called when no active children
+		this._resumeObservers()
 	}
 
-	*#waitChildS() {
-		this[status] = "DONE" // concurrent cancelling ??
-		// cast ok. this fn is only called when childS !== undefined
-		const childS = [...this.#childS!]
-
-		const doneCh = any(childS)
-
-		let doneVal
-
-		while (doneCh.notDone) {  // eslint-disable-line
-			const res = yield* doneCh.rec
-
+	// @todo
+	// should return
+	/**
+	 * (?) => do i need Group to concurrently wait for any of children to be done
+	 *	 I'd need to subscribe to all of them
+	 * Also, how to handle if a child throws while waitChildS* ?
+	 * 	- maybe an additional state in prc? ie, when "WAITING_FOR_CHILDS",
+	 *
+	 */
+	_waitChildS() {
+	/* 	this._status = "FINISHING"
+		const inFlight = new _Group(this._childS!)  // cast ok since this method is only called when childS
+		while (inFlight.count) {
+			const res = yield* inFlight.rec
 			if (err(res)) {
-
-				// ok so a child just return an Exc
+				// this err can be a natural return value by childPrc, threw in body or was cancelled
 				// if cancel returned exception I think I need to mangle all up in a "Something" Err
-
-				const cancelRes = yield tryCancel(childS)
+				const cancelRes = yield* inFlight.tryCancel()
 				if (err(cancelRes)) {
-					this[IOmsg] = cancelRes
+					this._IOmsg = cancelRes
 				}
 				doneVal = res
 			}
 		}
 
-		this[IOmsg] = doneVal
-		this.#resumeObservers()
+		this._IOmsg = doneVal
+		this._resumeObservers()
 		return
+
+	*/
+
+		const childS = this._childS!  // cast ok since this method is only called when childS
+
+		for (const child of childS) {
+			child._addObserver(this)
+		}
+
+		// when child is done it will call this.resume()
+		// when all childS are done, need to call this._resumeObservers()
+			// and clean-up, I think
+
 	}
 
 	/**
@@ -257,7 +271,7 @@ export class Prc<Ret = unknown> {
 	* The result of that operation is placed in its done channel
 	*/
 	*#handleThrownErr(prc: Prc, thrown: unknown) {
-		prc[status] = "DONE"
+		prc._status = "DONE"
 
 
 		const res = yield* runOnCancelAndChildSCancel(prc)
@@ -284,8 +298,8 @@ export class Prc<Ret = unknown> {
 // function* runOnCancelAndChildSCancel(prc: Prc): Gen<undefined | Error> {
 
 // 	const onCancel = prc.onCancel
-// 	const childS = prc.#childS
 
+// 	const childS = prc.#childS
 // 	if (!childS && !onCancel) {
 // 		return undefined
 // 	}
@@ -374,8 +388,8 @@ export function _go<Args extends unknown[], T>(genFn: GenFn<T, Args>, ...args: A
 export function go<Args extends unknown[], T>(genFn: GenFn<T, Args>, ...args_: Args) {
 	const gen = genFn(...args_)
 	let prc = new Prc<GenFnRet<typeof genFn>>(gen)
-	prc[args] = args_
-	prc[name] = genFn.name
+	prc._args = args_
+	prc._name = genFn.name
 	prc.resume()
 	return prc
 }
@@ -383,10 +397,10 @@ export function go<Args extends unknown[], T>(genFn: GenFn<T, Args>, ...args_: A
 
 export function onCancel(userOnCancel: OnCancel): void {
 	let runningPrc = getRunningPrc()
-	if (runningPrc.onCancel) {
+	if (runningPrc._onCancel) {
 		throw Error(`ribu: process onCancel is already set`)
 	}
-	runningPrc.onCancel = userOnCancel
+	runningPrc._onCancel = userOnCancel
 }
 
 
@@ -410,49 +424,73 @@ export function* cancel(prcS: Prc[] | Prc) {
 
 /* ====  Group  ==== */
 
-type PrcRetUnion<T> = T extends Prc<infer U>[] ? U : never
-
-export function Group<PrcS extends Prc[]>(prcS?: PrcS): _Group<PrcRetUnion<PrcS>> {
-	return new _Group<PrcRetUnion<PrcS>>(prcS)
+export function Group<PrcS extends Set<Prc>>(prcS: PrcS): _Group<(PrcS)[number]> {
+	return new _Group<(PrcS)[number]>(prcS)
 }
-
-export function GroupPrc<PrcS extends Prc[]>(prcS: PrcS): _Group<(PrcS)[number]> {
-	return new _Group<(PrcS)[number]>(prcS, true)
-}
-
-/* Group could inspect the value that the observed resume the observer with
-	so it does not resume the observer if observed resolves with ECancOK
-	Also, in GroupPrc I can have a flag to resume observers with Prc or prc.doneVal.
-	_Group can subscribe to all observables and retransmit msg
-
-*/
 
 /**
- * @todo: provide a more effient #observed data structure
+ * @todo: consider a more effient #observed data structure
  */
 class _Group<V> {
 
-	#observed = new Set<Prc>()
-	#observer: Prc
-	#resumeObserverWithPrc?: boolean
+	_observed: Set<Prc>
+	_observer: Prc
 
-	constructor(toObserveS?: Prc[], resumeWithPrc?: true) {
-		this.#observer = getRunningPrc()
-		if (toObserveS) {
-			for (const prc of toObserveS) {
-				this.#observed.add(prc)
+	constructor(toObserve?: Set<Prc>) {
+		const observer = getRunningPrc()
+		if (toObserve === undefined) {
+			this._observed = new Set()
+			return
+		}
+		this._observer = observer
+		if (toObserve instanceof Set) {
+			this._observed = toObserve
+		}
+		else {
+			for (const prc of toObserve) {
+				this._observed.add(prc)
 			}
 		}
-		if (resumeWithPrc) this.#resumeObserverWithPrc = resumeWithPrc
+		for (const prc of toObserve) {
+			prc._addObserver(observer)
+		}
 	}
 
-	go(prc: Prc) {
-		this.#observed.add(prc)
-		// ...
+	go(...args: Parameters<typeof go>) {
+		const prc = go(...args)
+		this._observed.add(prc)
+		return this
+	}
+
+	add(prc: Prc) {
+		// need to add thisGroup as obs
+		this._observed.add(prc)
+		return this
 	}
 
 	cancel() {
-		//...
+		const observed = this._observed
+		// need to cancel observed in parallel
+		// would need to
+
+	}
+
+	tryCancel() {
+
+	}
+
+	pluck(prcOrFn: Prc | ((prc: Prc) => boolean)): Prc | Prc[] | undefined {
+		const observed = this._observed
+		if (typeof prcOrFn === "function") {
+			let prcArr = []
+			for (const prc of observed) {
+				if (prcOrFn(prc)) prcArr.push(prc)
+			}
+			return prcArr
+		}
+		const hadPrc = this._observed.delete(prcOrFn)
+		if (hadPrc) return prcOrFn
+		return undefined
 	}
 
 	get rec() {
@@ -460,20 +498,17 @@ class _Group<V> {
 	}
 
 	get count() {
-		return this.#observed.size
-	}
-
-	get notDone() {
-		if (this.#observed.size === 0) return false
-		return true
+		return this._observed.size
 	}
 
 	resume(observed: Prc) {
-		if (this.#resumeObserverWithPrc === undefined) {
-			this.#observer.resume(observed)
+		// ignore if observed resolved with ECancOK
+		this._observed.delete(observed)
+		if (this._resumeObserverWithPrc === true) {
+			this._observer.resume(observed)
 		}
 		else {
-			this.#observer.resume(observed[IOmsg])
+			this._observer.resume(observed[IOmsg])
 		}
 	}
 }
