@@ -1,7 +1,8 @@
-import { type Prc } from "./process.js"
-import { TheIterable, theIterable, getRunningPrc } from "./system.js"
-import { Queue } from "./dataStructures.js"
+import { type Job } from "./job.mjs"
+import { TheIterable, theIterable, runningJob } from "./system.mjs"
+import { Queue } from "./dataStructures.mjs"
 
+// todo: if job is done, skip (out of queue).
 
 export type Ch<V = undefined> = _Ch<V>
 export function Ch<V = undefined>(): Ch<V> {
@@ -15,8 +16,8 @@ export function isCh(x: unknown): x is Ch {
 
 class BaseChan<V> {
 
-	puttersQ = new Queue<Prc>()
-	receiversQ = new Queue<Prc>()
+	puttersQ = new Queue<Job>()
+	receiversQ = new Queue<Job>()
 	_enQueuedMsgs = new Queue<V>()  // @todo: ???
 	closed = false
 
@@ -25,11 +26,10 @@ class BaseChan<V> {
 	}
 }
 
-
 export class _Ch<V = undefined> extends BaseChan<V> {
 
 	get rec() {
-		let recPrc = getRunningPrc()
+		let recPrc = runningJob()
 		let putPrc = this.puttersQ.deQ()
 
 		if (!putPrc) {
@@ -37,7 +37,7 @@ export class _Ch<V = undefined> extends BaseChan<V> {
 			recPrc._setPark()
 		}
 		else {
-			const putMsg = putPrc._IOmsg
+			const putMsg = putPrc._val_m
 			putPrc.resume()
 			recPrc._setResume(putMsg)
 		}
@@ -52,7 +52,7 @@ export class _Ch<V = undefined> extends BaseChan<V> {
 		// 	throw Error(`can't put() on a closed channel`)
 		// }
 
-		let putPrc = getRunningPrc()
+		let putPrc = runningJob()
 		let recPrc = this.receiversQ.deQ()
 
 		if (!recPrc) {
@@ -71,7 +71,7 @@ export class _Ch<V = undefined> extends BaseChan<V> {
 	}
 }
 
-export function addRecPrcToCh(ch: _Ch, prc: Prc): void {
+export function addRecPrcToCh(ch: _Ch, prc: Job): void {
 	ch.receiversQ.enQ(prc)
 }
 

@@ -29,7 +29,6 @@
     "@typescript-eslint/no-this-alias": ["error", {
       "allowedNames": ["self"]
     }],
-    "@typescript-eslint/strict-boolean-expressions": "error",
     "@typescript-eslint/await-thenable": "error",
     "@typescript-eslint/ban-ts-comment": "off"
   },

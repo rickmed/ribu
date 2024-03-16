@@ -1,32 +1,240 @@
 // @ts-ignore @todo
-import { topic, it, check } from "sophi"
-import { go, Ch, sleep, anyPrc, anyVal } from "../source/index.js"
-import { promSleep, assertType, range } from "./utils.mjs"
-import { sys } from "../source/system.js"
+import { topic, it, check, check_ThrowsAsync, lossy, strict, satisfies } from "sophi"
+import { go, Ch, sleep } from "../source/index.mjs"
+import { promSleep, eqType, range } from "./utils.mjs"
+import { E, ECancOK, Err, isE } from "../source/errors.mjs"
 
-const _sys = sys
 
-topic("prc: can wait for other prcS to finish", () => {
+topic("Types", () => {
 
-   it("yield* waits for a prc to finish", async () => {
-      let done: number = 0
+   function* checkTypes() {  // eslint-disable-line @typescript-eslint/no-unused-vars
+
+      const job = go(function* fn(x?: number) {
+         yield sleep(1)
+         if (!x) return E("NoNumber")
+         if (x < 5) return E("TooLow")
+         if (x < 10) return "ok"
+         return 1
+      })
+
+      const x1 = yield* job.$
+      eqType<"ok" | 1>(x1)
+
+      const x2 = yield* job.cont
+      eqType<"ok" | 1 | E<"NoNumber"> | E<"TooLow"> | ECancOK | Err>(x2)
+
+      const x3 = yield* job.cancel()
+      eqType<undefined>(x3)
+
+      const x4 = yield* job.cancelHandle()
+      eqType<Err | undefined>(x4)
+   }
+})
+
+
+topic("job timers", () => {
+
+   it("can sleep() without blocking", async () => {
+
+      let x = false
+
+      go(function* sleeper() {
+         yield sleep(1)
+         x = true
+      })
+
+      check(x, false)
+      await promSleep(2)
+      check(x, true)
+   })
+})
+
+
+topic("jobs can wait for other jobs to finish", () => {
+
+   it("using .$", async () => {
+
+      let done: boolean = false
 
       go(function* main() {
          done = yield* go(function* sleeper() {
-            yield* sleep(4)
-            return 1
-         })
+            yield sleep(1)
+            return true
+         }).$
       })
 
-      await promSleep(6)
-
-      check(done).with(1)
+      await promSleep(2)
+      check(done).with(true)
    })
 
-   it.todo("parent auto waits for running children to finish", async () => {
+   it("using .cont", async () => {
 
+      let done: boolean = false
+
+      go(function* main() {
+
+         const res = yield* go(function* sleeper() {
+            yield sleep(1)
+            return true
+         }).cont
+
+         if (res instanceof Error) return res
+         else return done = res
+      })
+
+      await promSleep(2)
+      check(done).with(true)
+   })
+
+   it("parent auto waits for running children to finish", async () => {
+
+      let done = 0
+      let testSuccess = false
+
+      go(function* main() {
+
+         yield* go(function* parent() {  // eslint-disable-line require-yield
+            go(function* child1() {
+               yield sleep(1)
+               done++
+            })
+            go(function* child1() {
+               yield sleep(1)
+               done++
+            })
+         }).$
+
+         if (done === 2) testSuccess = true
+      })
+
+      await promSleep(2)
+      check(testSuccess).with(true)
    })
 })
+
+// if job "fails" (ie, settles with ::Error) promise rejects (await throws)
+
+topic("job is thenable", () => {
+
+   it("returns correct awaited value when job is successful", async () => {
+      const job = go(function* other() {
+         yield sleep(1)
+         return "ok"
+      })
+
+      const res = await job
+      check(res).with("ok")
+   })
+
+   it("rejects on await when job failed", async () => {
+
+      async function test() {
+         const job = go(function* other() {
+            yield sleep(1)
+            throw Error("kapow")
+         })
+
+         await job
+      }
+
+      await check_ThrowsAsync(test)
+   })
+})
+
+
+topic("job cancellation", () => {
+
+   it("job can cancel other job with", async () => {
+
+      let mutated = false
+
+      go(function* main() {
+
+         const job = go(function* other() {
+            yield sleep(3)
+            mutated = true
+         })
+
+         yield sleep(1)
+         yield* job.cancel()
+      })
+
+      await promSleep(5)
+      check(mutated).with(false)
+   })
+})
+
+
+topic("job errors", () => {
+
+   it("throws the right error when waiting using .$", async () => {
+
+		// todo: change to use sophi.check_throwsJob when ready
+		const rec = await check_ThrowsAwait(async () => {
+			const job = go(function* main() {
+				yield* go(function* inner() {
+					yield sleep(1)
+					throw Error("bad")
+				}).$
+			})
+
+			await job
+		})
+
+		const nativeErr = rec.cause?.cause as Error
+		delete rec.cause?.cause
+
+		check(nativeErr.stack).satisfies(function hasCorrectStrings(s: string) {
+			return s.includes(`Error: bad`) && s.includes(`at inner`)
+		})
+
+		const exp = {
+			name: "Err",
+			_op: "main",
+			message: "",
+			cause: {
+				name: "Err",
+				_op: "inner",
+				message: "",
+			}
+		}
+
+		check(rec).with(exp)
+   })
+
+   // it.only("mock test delete this", async () => {
+
+   //    const rec = {
+   //       name: "Err",
+   //       _op: "main",
+   //       message: "hola",
+   //       cause: {
+   //          name: "Err",
+   //          _op: "inner",
+   //          message: "",
+   //       }
+   //    }
+
+   //    function isGood(a: unknown, v: string) {
+   //       return [v === "hola", ``]
+   //    }
+
+   //    const exp = {
+   //       name: "Err",
+   //       _op: "main",
+   //       message: satisfies(isGood, {}),
+   //       cause: {
+   //          name: "Err",
+   //          _op: "inner",
+   //          message: "",
+   //       }
+   //    }
+
+   //    check(rec).with(exp)
+   // })
+
+})
+
 
 topic.skip("unbuffered channels", () => {
 
@@ -50,7 +258,7 @@ topic.skip("unbuffered channels", () => {
          const ch = Ch<number>()
 
          go(function* sub() {
-            yield* sleep(1)
+            yield* wait(1)
             yield* ch.put(13)
          })
 
@@ -59,49 +267,11 @@ topic.skip("unbuffered channels", () => {
       })
    })
 
-   it.todo("ping pong", async() => {
+   it.todo("ping pong", async () => {
       // ...
    })
 })
 
-topic.skip("timers", () => {
-
-   it("can sleep() without blocking", async () => {
-
-      let x = false
-
-      go(function* sleeper() {
-         yield* sleep(1)
-         x = true
-      })
-
-      check(x).with(false)
-      await promSleep(2)
-      check(x).with(true)
-   })
-})
-
-
-topic.skip("process cancellation", () => {
-
-   it("ribu automatically cancels child if parent does not wait to be done", async () => {
-
-      let mutated = false
-
-      go(async function main3() {
-
-         go(async function sleeper() {
-            await sleep(3)
-            mutated = true
-         })
-
-         await sleep(1)
-      })
-
-      await promSleep(2)
-      check(mutated).with(false)
-   })
-})
 
 topic.skip("race()", () => {
 
@@ -112,12 +282,12 @@ topic.skip("race()", () => {
       go(async () => {
 
          async function one() {
-            await sleep(2)
+            await wait(2)
             won = "one"
          }
 
          async function two() {
-            await sleep(1)
+            await wait(1)
             won = "two"
          }
 
@@ -196,7 +366,7 @@ topic.skip("buffered channels", () => {
             ch1.close()
          })
 
-         await sleep(1)
+         await wait(1)
          while (ch1.notDone) {
             const rec = await ch1.rec
             recS.push(rec)
@@ -223,26 +393,3 @@ topic.skip("buffered channels", () => {
       check(opS).with([0, 1])
    })
 })
-
-
-// @todo: when sophi is fixed, change tests to make assertions inside processes
-   // with failing test when no assertions are made.
-
-/* types tests */
-// topic("types", () => {
-
-//    go(function* main() {
-
-//       const prc1 = go(function*() {
-//          yield sleep(0)
-//          return 4
-//       })
-
-//       const prc2 = go(function*() {
-//          yield sleep(0)
-//          return "a"
-//       })
-
-//       const ret = yield* anyVal(prc1, prc2).rec
-//    })
-// })
