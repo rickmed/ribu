@@ -31,7 +31,8 @@
     "eslint-plugin-functional": "^6.0.0",
     "sophi": "^0.1.1",
     "tsx": "^3.12.7",
-    "typescript": "^5.1.6"
+    "typescript": "^5.1.6",
+    "vitest": "^1.6.0"
   },
   "repository": {
     "type": "git",
