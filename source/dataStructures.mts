@@ -109,7 +109,7 @@ export class Events {
 		}
 	}
 
-	_offAll(name: string) {
+	_removeEvCBs(name: string) {
 		this.#store_m[name] = undefined
 	}
 

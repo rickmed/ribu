@@ -3,7 +3,7 @@ import { type Job } from "./job.mjs"
 class System {
 	deadline = 5000
 	stack: Array<Job> = []
-	targetJ!: Job
+	targetJob!: Job
 
 	get running(): Job | undefined {
 		return this.stack.at(-1)
@@ -31,7 +31,7 @@ export const theIterator = {
 			return theIterResult
 		}
 		theIterResult.done = true
-		theIterResult.value = j._val_m
+		theIterResult.value = j._io
 		return theIterResult
 	}
 }
@@ -47,7 +47,7 @@ export const theIterable = {
 /* Types */
 
 export type TheIterable<V> = {
-	[Symbol.iterator](): Iterator<unknown, V>
+	[Symbol.iterator]: () => Iterator<unknown, V>
 }
 
 export type TheIterator<V> = Iterator<unknown, V>

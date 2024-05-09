@@ -37,7 +37,7 @@ export class _Ch<V = undefined> extends BaseChan<V> {
 			recPrc._setPark()
 		}
 		else {
-			const putMsg = putPrc._val_m
+			const putMsg = putPrc._io
 			putPrc.resume()
 			recPrc._setResume(putMsg)
 		}

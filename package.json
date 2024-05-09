@@ -16,22 +16,22 @@
   },
   "type": "module",
   "scripts": {
-    "test": "clear; tsx --enable-source-maps tsx ./tests/runTests.mts",
-    "test:watch": "clear; tsx --watch --no-warnings --enable-source-maps ./tests/runTests.mts",
+    "test": "clear; vitest --reporter=basic --watch=false",
+    "test:watch": "clear; vitest -w --reporter=basic",
     "test:cov": "cross-env 'NODE_OPTIONS=--import @istanbuljs/esm-loader-hook --no-warnings' nyc npm test",
     "type-check": "tsc --noEmit",
     "build": "rm -rf dist; tsc"
   },
   "engines": {},
   "devDependencies": {
+    "@eslint/js": "^9.2.0",
+    "@types/eslint__js": "^8.42.3",
     "@types/node": "^20.4.1",
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.1.0",
-    "eslint": "^8.45.0",
-    "eslint-plugin-functional": "^6.0.0",
-    "sophi": "^0.1.1",
+    "eslint": "^8.57.0",
+    "eslint-plugin-functional": "^6.5.1",
     "tsx": "^3.12.7",
-    "typescript": "^5.1.6",
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^7.8.0",
     "vitest": "^1.6.0"
   },
   "repository": {
