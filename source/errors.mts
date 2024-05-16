@@ -15,11 +15,11 @@ _op: the name of the job's generator function or the name of the function if
 // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 type CauseErr = RibuE | Error | unknown
 
-const ERR_TAG = "{err!}"
+export const ERR_TAG = "{err!}"
 
 export class RibuE<Name extends string = string> implements Error {
 
-	[ERR_TAG] = ERR_TAG
+	[ERR_TAG] = 1 as const
 	declare onEndErrors?: Error[]
 	declare cause?: CauseErr
 
@@ -50,7 +50,7 @@ export class RibuE<Name extends string = string> implements Error {
 // make "instanceof Error" work
 Object.setPrototypeOf(RibuE.prototype, Error.prototype)
 
-
+// todo: ??
 export type E<Name extends string = string> = Error & RibuE<Name>
 
 export function E<Name extends string>(name: Name, op = "", msg = "", cause?: RibuE): E<Name> {

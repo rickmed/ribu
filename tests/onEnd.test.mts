@@ -1,0 +1,41 @@
+import { describe, it } from "vitest"
+import { go, sleep, onEnd } from "../source/index.mjs"
+import { assertRibuErr, checkErrSpec } from "./utils.mjs"
+
+describe("non cancellation scenarios", () => {
+
+	it("user returns a type Error and an onEnd fails", async () => {
+
+		const exp = {
+			_op: "main",
+			cause: {
+				_op: "child",
+				cause: {
+					name: "Error",
+					message: "Fail path",
+				},
+				onEndErrors: [{
+					name: "Error",
+					message: "while cleaning",
+				}],
+			},
+		}
+
+		function* main() {
+			function* child() {
+				onEnd(() => {
+					throw Error("while cleaning")
+				})
+				yield sleep(1)
+				return Error("Fail path")
+			}
+
+			yield* go(child).$
+		}
+
+		const rec = await go(main).promfyCont
+
+		assertRibuErr(rec)
+		checkErrSpec(rec, exp)
+	})
+})

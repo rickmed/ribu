@@ -18,27 +18,28 @@ function* dummyToUseYield() {
 		return 1
 	})
 
-	/* When using .$, the returned type exclude RibuE types */
-	type HappyPath = false | 1
-	const x1 = yield* job.$
 
-	check_Eq<HappyPath>()(x1)
+	/* When using .$, the returned type exclude Error types */
+	type Exp1 = false | 1
+	const rec1 = yield* job.$
+	check_Eq<Exp1>()(rec1)
 
 
-	/* When using .ret, the returned type is the natural type returned from the
+	/* When using .cont, the returned type is the type returned from the
 		generator function, plus ECancOK (in case the job was cancelled) and the
-		generic Ribu Error from unexpected thrown values.
+		generic Ribu Error from thrown values.
 	*/
 	// todo: I don't like Err, change to E<"E"> for consistency
-	type ReturnTypeAndRibuErrs = E<"NoNumber"> | E<"TooLow"> | E<"CancOK"> | Err | false | 1
-	const x2 = yield* job.err
+	type Exp2 = E<"NoNumber"> | E<"TooLow"> | E<"CancOK"> | E<"Err"> | false | 1
+	const x2 = yield* job.cont
+	check_Eq<Exp2>()(x2)
 
 
-	check_Eq<ReturnTypeAndRibuErrs>()(x2)
-
-
-	const x3 = yield* job.cancel()
-	check_Eq<undefined>()(x3)
+	// todo: check this returns never.
+	// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+	const x3 = yield job.cancel()
+	// eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+	check_Eq<any>()(x3)
 
 	// todo
 	// const x4 = yield* job.cancelHandle()

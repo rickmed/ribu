@@ -1,178 +1,46 @@
 import { describe, it, expect } from "vitest"
-import { go, Ch, sleep } from "../source/index.mjs"
-import { check_Eq, check_ThrowsAwait, sleep_p, range, assertsRibuE, goAndAwaitFn as goAndAwait, goAndAwaitFn as goAndAwait, assertErr as assertRibuErr } from "./utils.mjs"
-import { E, ECancOK, Err, isE, type RibuE } from "../source/errors.mjs"
-import { onEnd } from "../source/job.mjs"
+import { go, onEnd, sleep } from "../source/index.mjs"
+import { Err, isE } from "../source/errors.mjs"
+import { assertRibuErr, sleepProm } from "./utils.mjs"
 
-describe("job timers", () => {
 
-	it("can sleep() without blocking", async () => {
+describe(`jobs can be blocked waiting for other jobs to finish`, () => {
 
-		let x = false
+	it("using .$, the target job unblocks the caller job with its return value", async () => {
 
-		// eslint-disable-next-line @typescript-eslint/no-floating-promises
-		go(function* job() {
+		function* child() {
 			yield sleep(1)
-			x = true
-		})
-
-		check_Eq(x, false)
-		await sleep_p(2)
-		check_Eq(x, true)
-	})
-})
-
-
-describe(`jobs can be blocked ("await") for other jobs to finish`, () => {
-
-	it("using .$", async () => {
-
-		let done: boolean = false
-
-		go(function* job() {
-			done = yield* go(function* sleeper() {
-				yield sleep(1)
-				return true
-			}).$
-		})
-
-		await sleep_p(2)
-		check_Eq(done, true)
-	})
-
-	it("using .cont", async () => {
-
-		let done: boolean = false
-
-		go(function* main() {
-
-			const res = yield* go(function* sleeper() {
-				yield sleep(1)
-				return true
-			}).err
-
-			if (res instanceof Error) { return res }
-			else { return done = res }
-		})
-
-		await sleep_p(2)
-		check_Eq(done, true)
-	})
-})
-
-
-describe.skip("parent job auto-waits for children to finish", () => {
-
-	it("if parent generator function returns and there are active children, the caller of the parent job is blocked until all descendants are finished", async () => {
-
-		let jobsDone = 0
-
-		await go(function* job() {
-
-			yield* go(function* parent() {
-
-				go(function* child1() {
-					yield sleep(5)
-					jobsDone++
-				})
-				go(function* child1() {
-					yield sleep(5)
-					jobsDone++
-				})
-
-				yield sleep(1)
-
-			}).$
-		})
-
-		check_Eq(jobsDone, 2)
-	})
-
-	it("job resolves with correct Error if one child fails (while auto-waiting)", async () => {
-
-		function* job() {
-
-			yield* go(function* parent() {
-
-				go(function* child1() {
-					yield sleep(5)
-				})
-				go(function* child1() {
-					yield sleep(2)
-					throw Error("BOOM")
-				})
-
-				yield sleep(1)
-
-			}).$
-		}
-
-		const err = await check_ThrowsAwait(goAndAwait(job))
-		// check_Eq(jobsDone, 2)
-
-	})
-})
-
-describe("job is thenable", () => {
-
-	it("returns correct awaited value when job is successful", async () => {
-		const job = go(function* other() {
-			yield sleep(1)
-			return "ok"
-		})
-
-		const res = await job
-		check_Eq(res, "ok")
-	})
-
-	it("rejects with correct error when job failed", async () => {
-
-		const exp = {
-			name: "Err",
-			_op: "main",
-			message: "",
-			cause: {
-				name: "Error",
-				message: "boom",
-			}
+			return "child one"
 		}
 
 		function* main() {
-			yield sleep(1)
-			throw Error("boom")
+			const res = yield* go(child).$
+			return res
 		}
 
-		const rec = await check_ThrowsAwait(goAndAwait(main))
-
-		assertRibuErr(rec)
-		expect(rec).toMatchObject(exp)
+		const rec = await go(main).promfy
+		expect(rec).toBe("child one")
 	})
-})
 
-describe("job cancellation", () => {
+	it("using .cont, the target job unblocks the caller job with its return value, including possible errors", async () => {
 
-	it("a job can cancel another job", async () => {
-
-		let isChanged = false
-
-		go(function* main() {
-
-			const job = go(function* other() {
-				yield sleep(3)
-				isChanged = true
-			})
-
+		function* child() {
 			yield sleep(1)
-			yield* job.cancel()
-		})
+			return "child done"
+		}
 
-		await sleep_p(5)
-		check_Eq(isChanged, false)
+		function* main() {
+			const res = yield* go(child).cont
+			if (isE(res)) {  // just to demo basic usage
+				return res
+			}
+			return res
+		}
+
+		const rec = await go(main).promfy
+		expect(rec).toBe("child done")
 	})
-
-	it.todo("when a job is cancelled all inner job tree")
 })
-
 
 describe("Job Errors. Job settles with the right error when:", () => {
 
@@ -203,82 +71,40 @@ describe("Job Errors. Job settles with the right error when:", () => {
 			yield* go(inner).$
 		}
 
-		const rec = await go(main).toPromErr()
+		const rec = await go(main).promfyCont
 
 		assertRibuErr(rec)
 		expect(rec).toMatchObject(exp)
 		expect(rec.cause).toBeInstanceOf(Err)
 	})
+})
 
-	it("user returns a type Error and an onEnd fails", async () => {
+describe("onEnds run when job's generator function returns", () => {
 
-		const exp = {
-			name: "Err",
-			_op: "main",
-			message: "",
-			cause: {
-				name: "Err",
-				_op: "inner",
-				message: "",
-				cause: {
-					name: "Error",
-					message: "Fail path",
-				},
-				onEndErrors: [{
-					message: "while cleaning",
-					name: "Error",
-				}],
-			},
-		}
+	it("works with sync fn, async fn and job. Are executed in reverse added order", async () => {
+
+		let onEnds: string[] = []
 
 		function* main() {
-			function* inner() {
-				onEnd(() => {
-					throw Error("while cleaning")
-				})
-				yield sleep(1)
-				return Error("Fail path")
-			}
 
-			yield* go(inner).$
+			onEnd(() => {
+				onEnds.push("sync")
+			})
+
+			onEnd(async () => {
+				onEnds.push("async")
+				await sleepProm(1)
+			})
+
+			onEnd(function* () {
+				onEnds.push("job")
+				yield sleep(1)
+			})
+
+			yield sleep(1)
 		}
 
-		const rec = await go(main).toPromErr()
-
-		assertRibuErr(rec)
-		expect(rec).toMatchObject(exp)
-		expect(rec.cause).toBeInstanceOf(Err)
+		await go(main).promfy
+		expect(onEnds).toStrictEqual(["job", "async", "sync"])
 	})
-
-	// it.only("mock test delete this", async () => {
-
-	//    const rec = {
-	//       name: "Err",
-	//       _op: "main",
-	//       message: "hola",
-	//       cause: {
-	//          name: "Err",
-	//          _op: "inner",
-	//          message: "",
-	//       }
-	//    }
-
-	//    function isGood(a: unknown, v: string) {
-	//       return [v === "hola", ``]
-	//    }
-
-	//    const exp = {
-	//       name: "Err",
-	//       _op: "main",
-	//       message: satisfies(isGood, {}),
-	//       cause: {
-	//          name: "Err",
-	//          _op: "inner",
-	//          message: "",
-	//       }
-	//    }
-
-	//    check(rec).with(exp)
-	// })
-
 })

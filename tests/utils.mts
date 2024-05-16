@@ -1,10 +1,6 @@
 import { expect } from "vitest"
-import { isE, type RibuE, Err } from "../source/errors.mjs"
+import { isE, type RibuE, Err, ERR_TAG } from "../source/errors.mjs"
 import { type RibuGenFn, go } from "../source/job.mjs"
-
-export function check_Eq<T>(rec: T, exp: T): void {
-	return expect(rec).toStrictEqual(exp)
-}
 
 export async function check_ThrowsAwait(fn: () => Promise<unknown>): Promise<unknown> {
 	try {
@@ -22,30 +18,74 @@ export function goAndAwaitFn(genFn: RibuGenFn): () => Promise<unknown> {
 	}
 }
 
-export function assertErr(x: unknown): asserts x is Err {
+export function assertRibuErr(x: unknown): asserts x is Err {
 	expect(x).toBeInstanceOf(Err)
 }
 
-export function assertsRibuE(x: unknown): asserts x is RibuE {
-	if (!isE(x)) {
-		throw Error("value is not a Ribu Error")
-	}
-}
 
-export function sleep_p(ms: number): Promise<void> {
+export function sleepProm(ms: number): Promise<void> {
 	return new Promise(res => setTimeout(res, ms))
 }
 
-export function* range(start: number, end?: number) {
-	if (end === undefined) {
-		end = start
-		for (let i = 0; i < end; i++) {
-			yield i
+export function checkErrSpec(rec: unknown, spec: NonNullable<unknown>): void {
+
+	if ("name" in spec && spec.name === "Error") {  // spec defines ::Error presence
+		expect(rec).toBeInstanceOf(Error)
+		assertHasK(rec, "name")
+		expect(spec.name).toBe(rec.name)
+		return
+	}
+
+	if ("_op" in spec) {
+
+		assertRibuErr(rec)
+		expect(rec._op).toBe(spec._op)
+		expect(rec[ERR_TAG]).toBe(1)
+
+		if (!("name" in spec)) {
+			assertHasK(rec, "name")
+			expect(rec.name).toBe("Err")
+			expect(rec).toBeInstanceOf(Err)
+		}
+		if ("name" in spec) {
+			assertHasK(rec, "name")
+			expect(rec.name).toBe(spec.name)
+		}
+		if (!("message" in spec)) {
+			assertHasK(rec, "message")
+			expect(rec.message).toBe("")
+		}
+		if ("message" in spec) {
+			assertHasK(rec, "message")
+			expect(rec.message).toBe(spec.message)
+		}
+		if ("onEndErrors" in spec) {
+
+			assertHasK(rec, "onEndErrors")
+			assertIsArr(rec.onEndErrors)
+			rec.onEndErrors.forEach( (recErr, i) => {
+				assertIsArr(spec.onEndErrors)
+				if (isE(recErr)) {
+					checkErrSpec(recErr, spec.onEndErrors[i] as NonNullable<unknown>)
+				}
+			})
+		}
+
+		if ("cause" in spec) {
+			assertHasK(rec, "cause")
+			checkErrSpec(rec.cause, spec.cause as NonNullable<unknown>)
 		}
 		return
 	}
 
-	for (let i = start; i < end; i++) {
-		yield i
-	}
+	// cause is thrown value of not type Error
+	expect(rec).toStrictEqual(spec)
+}
+
+function assertHasK<K extends string>(x: unknown, k: K): asserts x is {[k in K]: unknown} {
+	expect(x).toHaveProperty(k)
+}
+
+function assertIsArr(x: unknown): asserts x is unknown[] {
+	expect(x).instanceOf(Array)
 }

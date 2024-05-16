@@ -4,6 +4,7 @@ class System {
 	deadline = 5000
 	stack: Array<Job> = []
 	targetJob!: Job
+	callerJob!: Job
 
 	get running(): Job | undefined {
 		return this.stack.at(-1)
@@ -26,12 +27,13 @@ export let theIterResult = {
 export const theIterator = {
 	next() {
 		const j = runningJob()
-		if (j._state === "PARK") {
-			theIterResult.done = false
-			return theIterResult
+		if (j._state === "RUNNING") {
+			theIterResult.done = true
+			theIterResult.value = j._io
 		}
-		theIterResult.done = true
-		theIterResult.value = j._io
+		else {
+			theIterResult.done = false
+		}
 		return theIterResult
 	}
 }
