@@ -20,7 +20,7 @@ export const ERR_TAG = "{err!}"
 export class RibuE<Name extends string = string> implements Error {
 
 	[ERR_TAG] = 1 as const
-	declare onEndErrors?: Error[]
+	declare errors?: Error[]
 	declare cause?: CauseErr
 
 	constructor(
@@ -28,13 +28,13 @@ export class RibuE<Name extends string = string> implements Error {
 		readonly message: string,
 		readonly _op: string,
 		cause?: CauseErr,
-		onEndErrors?: Error[],
+		errors?: Error[],
 	) {
 		if (cause) {
 			this.cause = cause
 		}
-		if (onEndErrors) {
-			this.onEndErrors = onEndErrors
+		if (errors) {
+			this.errors = errors
 		}
 	}
 
@@ -64,8 +64,14 @@ export class ECancOK extends RibuE<"CancOK"> {
 }
 
 export class Err extends RibuE<"Err"> {
-	constructor(cause?: CauseErr, jobName = "", onEndErrs?: Error[], msg = "") {
-		super("Err", msg, jobName, cause, onEndErrs)
+	constructor(cause?: CauseErr, jobName = "", errors?: Error[], msg = "") {
+		super("Err", msg, jobName, cause, errors)
+	}
+}
+
+export class ETimedOut extends RibuE<"TimedOut"> {
+	constructor(op: string) {
+		super("TimedOut", "", op)
 	}
 }
 

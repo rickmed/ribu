@@ -13,7 +13,7 @@ export async function check_ThrowsAwait(fn: () => Promise<unknown>): Promise<unk
 }
 
 export function goAndAwaitFn(genFn: RibuGenFn): () => Promise<unknown> {
-	return async function() {
+	return async function () {
 		await go(genFn)
 	}
 }
@@ -29,10 +29,20 @@ export function sleepProm(ms: number): Promise<void> {
 
 export function checkErrSpec(rec: unknown, spec: NonNullable<unknown>): void {
 
-	if ("name" in spec && spec.name === "Error") {  // spec defines ::Error presence
+	if (!("message" in spec)) {
+		assertHasK(rec, "message")
+		expect(rec.message).toBe("")
+	}
+	if ("message" in spec) {
+		assertHasK(rec, "message")
+		expect(rec.message).toBe(spec.message)
+	}
+
+	if ("name" in spec && spec.name === "Error") {
 		expect(rec).toBeInstanceOf(Error)
 		assertHasK(rec, "name")
 		expect(spec.name).toBe(rec.name)
+		expect(rec).not.toHaveProperty("errors")
 		return
 	}
 
@@ -51,23 +61,12 @@ export function checkErrSpec(rec: unknown, spec: NonNullable<unknown>): void {
 			assertHasK(rec, "name")
 			expect(rec.name).toBe(spec.name)
 		}
-		if (!("message" in spec)) {
-			assertHasK(rec, "message")
-			expect(rec.message).toBe("")
-		}
-		if ("message" in spec) {
-			assertHasK(rec, "message")
-			expect(rec.message).toBe(spec.message)
-		}
-		if ("onEndErrors" in spec) {
-
-			assertHasK(rec, "onEndErrors")
-			assertIsArr(rec.onEndErrors)
-			rec.onEndErrors.forEach( (recErr, i) => {
-				assertIsArr(spec.onEndErrors)
-				if (isE(recErr)) {
-					checkErrSpec(recErr, spec.onEndErrors[i] as NonNullable<unknown>)
-				}
+		if ("errors" in spec) {
+			assertHasK(rec, "errors")
+			assertIsArr(rec.errors)
+			rec.errors.forEach((recErr, i) => {
+				assertIsArr(spec.errors)
+				checkErrSpec(recErr, spec.errors[i] as NonNullable<unknown>)
 			})
 		}
 
@@ -78,11 +77,11 @@ export function checkErrSpec(rec: unknown, spec: NonNullable<unknown>): void {
 		return
 	}
 
-	// cause is thrown value of not type Error
+	// .cause is thrown value of not type Error
 	expect(rec).toStrictEqual(spec)
 }
 
-function assertHasK<K extends string>(x: unknown, k: K): asserts x is {[k in K]: unknown} {
+function assertHasK<K extends string>(x: unknown, k: K): asserts x is { [k in K]: unknown } {
 	expect(x).toHaveProperty(k)
 }
 

@@ -2,7 +2,7 @@ import { describe, it } from "vitest"
 import { go, sleep, onEnd } from "../source/index.mjs"
 import { assertRibuErr, checkErrSpec } from "./utils.mjs"
 
-describe("non cancellation scenarios", () => {
+describe("non-cancellation scenarios", () => {
 
 	it("user returns a type Error and an onEnd fails", async () => {
 
@@ -14,7 +14,7 @@ describe("non cancellation scenarios", () => {
 					name: "Error",
 					message: "Fail path",
 				},
-				onEndErrors: [{
+				errors: [{
 					name: "Error",
 					message: "while cleaning",
 				}],

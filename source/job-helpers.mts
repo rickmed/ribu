@@ -4,29 +4,54 @@ import { go } from "./job.mjs"
 
 /* ownership is a PITA.
 
-	So the general idea is that you have a function that runs the computation when called
-
 	So the idea is that you could use continue using (for nice error handling)
 		const res = yield* raceJob().$
+	ie, racejob() needs to return a new job
 */
 
 // Provide these helpers (other helpers can be made natively for faster)
-function userMadeRace(...jobs: Job[]) {
-	// errors?
+function first(...jobs: Job[]) {
 	return go(function* () {
 		me().steal(jobs)
+		// errors?
 		const res = yield* anyDone(jobs)  // res :: Union of jobs.res
-		yield cancellAll(jobs)
+		yield cancel(jobs)
 		return res
 	})
 }
 
 const res = race(file1Job, file2Job).val
 
+// first(): first done  (cancel rest)
+// firstOK(): first succesful  (cancel rest)
+// allDone(): waits for all to be done  (collect results)
+// all(): if one fails, rest are cancelled.
 
+function allDone(jobs: Job[]) {
+	return go(function _allDone() {
+		me().steal(jobs)
+		const res = yield anyDone(jobs)   // PROBLEM: ::res ??
+		const nDoneJobs = jobs.length
+		let results = []
+		while (nDoneJobs > 0) {
 
+		}
+	})
+}
 
+function allDone(jobs: Job[]): Job[] {   // returns same job array
+	const allDoneJob = new Job()  // need to type new Job
+	allDoneJob.steal(jobs)
+	const nDoneJobs = jobs.length
+	let results = []
+	for (const j of jobs) {
+		j.onDone(doneJob => {
+			nDoneJobs--
 
+		})
+	}
+	return allDoneJob
+}
 
 /*** race(): returns the first resolved (cancel the others)  ********************
 
@@ -54,7 +79,7 @@ function race(jobs: Job[]) {
 
 	const raceJob = new Job()
 
-	raceJob.seize(jobs)
+	raceJob.steal(jobs)
 
 	for (const j of jobs) {
 		j.onDone(j => {
@@ -88,26 +113,6 @@ function all(pool: Pool<Job>) {
 	})
 }
 
-
-
-
-function cancellAll(jobs: Job[], cb: (res: "OK" | Error[]) => void) {
-	let nJobs = jobs.length
-	let errors: undefined | Error[]
-	for (const j of jobs) {
-		j.cancelCB(jb => {
-			--nJobs
-			if (err(jb.val)) {
-				if (!errors) {errors = []}
-				errors.push(jb.val)
-			}
-			if (nJobs === 0) {
-				if (errors) {cb(errors)}
-				else {cb("OK")}
-			}
-		})
-	}
-}
 
 
 

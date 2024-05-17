@@ -1,6 +1,6 @@
 import { type Job } from "./job.mjs"
 import { TheIterable, theIterable, runningJob } from "./system.mjs"
-import { Queue } from "./dataStructures.mjs"
+import { Queue } from "./data-structures.mjs"
 
 // todo: if job is done, skip (out of queue).
 

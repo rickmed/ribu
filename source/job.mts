@@ -1,5 +1,5 @@
-import { ArrSet, Events } from "./dataStructures.mjs"
-import { RibuE, ECancOK, Err, isRibuE } from "./errors.mjs"
+import { ArrSet, Events } from "./data-structures.mjs"
+import { RibuE, ETimedOut, Err, isRibuE, ECancOK } from "./errors.mjs"
 import { runningJob, sys, theIterator } from "./system.mjs"
 
 /* Helpers */
@@ -11,7 +11,8 @@ function isGenFn(x: unknown): x is RibuGenFn {
 
 // todo: maybe change to symbol
 export const PARKED = "PARKED"
-const YIELD_CANCEL = Symbol("c")
+const CANCEL = Symbol("c")
+const CANCEL_JOBS = Symbol("c_j")
 
 /* observe-resume model:
 
@@ -52,7 +53,7 @@ type OnlyErrs<Ret> = Extract<Ret, Error>
 
 export function go<Args extends unknown[], Ret>(genFn: RibuGenFn<Ret, Args>, ...args: Args) {
 	const gen = genFn(...args)
-	return new Job<NotErrs<Ret>, OnlyErrs<Ret> | ECancOK | Err>(gen, genFn.name, true)
+	return new Job<NotErrs<Ret>, OnlyErrs<Ret> | ECancOK | ETimedOut | Err>(gen, genFn.name, true)._run()
 }
 
 
@@ -68,7 +69,8 @@ const EV = {
 /* Types */
 type Yieldable =
 	typeof PARKED |
-	typeof YIELD_CANCEL |
+	typeof CANCEL |
+	typeof CANCEL_JOBS |
 	Promise<unknown>
 
 export type Gen<Ret = unknown, Rec = unknown> =
@@ -81,18 +83,20 @@ type OnEnd =
 	(() => unknown) | (() => Promise<unknown>) |
 	Disposable | AsyncDisposable | RibuGenFn
 
-type State = "RUNNING" | "PARKED" | "BLOCKED_$" | "BLOCKED_cont" | "WAITING_CHILDS" | "CANCELLING" | "DONE"
+type State = "PARKED" | "RUNNING" | "BLOCKED_$" | "BLOCKED_cont" | "WAITING_CHILDS" | "CANCELLING" | "TIMED_OUT" | "DONE"
 
 export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 	_io: Ret | Errs = "$dummy" as (Ret | Errs)
 	_gen: Gen
 	_name: string
-	_state: State = "RUNNING"
+	_state: State = "PARKED"
+	_failed = false
 	_childs?: ArrSet<Job<Ret>>
 	_parent?: Job
 	_sleepTO?: NodeJS.Timeout
 	_onEnds?: OnEnd | OnEnd[]
+	_jobTimeout?: NodeJS.Timeout
 
 	constructor(gen: Gen, genFnName: string, withParent?: boolean) {
 		super()
@@ -101,11 +105,11 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		if (withParent) {
 			this.#addAsChild()
 		}
-		this._resume()
 	}
 
-	get val() {
-		return this._io
+	_run() {
+		this._resume()
+		return this
 	}
 
 	#addAsChild() {
@@ -146,16 +150,17 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 		if (yielded.value === PARKED) {
 			this._state = PARKED
-			return
 		}
-
-		if (yielded.value === YIELD_CANCEL) {
+		else if (yielded.value === CANCEL) {
 			execCancel()
 		}
-
-		if (yielded.done) {
+		else if (yielded.value === CANCEL_JOBS) {
+			execCancelJobs()
+		}
+		else if (yielded.done) {
 			this.#genFnReturned(yielded.value as Ret)
 		}
+		// job resumed uneventfully
 	}
 
 	_setResume(IOval?: unknown) {
@@ -171,7 +176,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 	#genFnReturned(yieldedVal: Ret) {
 		const settleVal = this._io = yieldedVal
 		if (isRibuE(settleVal) && settleVal._op === "") {
-			// @ts-ignore ._op readonly
+			// @ts-ignore (._op readonly)
 			settleVal._op = this._name
 			this._endProtocol()
 			return
@@ -207,7 +212,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 		function cb(childDone: Job) {
 			++nChildsDone
-			if (childDone.val instanceof Error) {
+			if (childDone._failed) {
 				me._removeWaitChildsCBs()
 				me._io = new Err(childDone.val, me._name) as Ret
 				me._endProtocol()
@@ -241,35 +246,38 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 	get $() {
 		this.#prepSystem("BLOCKED_$")
-		return waitJobIterable as RibuIterable<Ret>
+		return blockJobIterable as RibuIterable<Ret>
 	}
 
 	get cont() {
 		this.#prepSystem("BLOCKED_cont")
-		return waitJobIterable as RibuIterable<typeof this._io>
+		return blockJobIterable as RibuIterable<typeof this._io>
 	}
 
-	#prepSystem(state: "BLOCKED_$" | "BLOCKED_cont") {
+	#prepSystem(state: "BLOCKED_cont" | "BLOCKED_$"): void {
 		runningJob()._state = state
-		sys.callerJob = runningJob()
 		sys.targetJob = this
 	}
 
 	/**
 	 * Fails caller if result is other than ECancOK
 	 */
-	cancel(): typeof YIELD_CANCEL {
-		sys.callerJob = runningJob()
+	cancel(): typeof CANCEL {
 		sys.targetJob = this
-		return YIELD_CANCEL
+		sys.cancelCallerJob = runningJob()
+		return CANCEL
 	}
 
-	_endProtocol() {
-		const { _childs, _sleepTO, _onEnds } = this
-		let onEndErrs: Error[] | undefined
+	_endProtocol(errors_?: Error[]) {
+		const { _childs, _sleepTO, _onEnds, _jobTimeout } = this
+		let errors: Error[] | undefined = errors_
 
 		if (_sleepTO) {
 			clearTimeout(_sleepTO)
+		}
+
+		if (_jobTimeout) {
+			clearTimeout(_jobTimeout)
 		}
 
 		if (!(_onEnds || (_childs && _childs.size > 0))) {
@@ -281,7 +289,6 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		let nWaiting = 0
 		let nDone = 0
 
-		// cancel active children
 		if (_childs) {
 			nWaiting += _childs.size
 			const { arr_m } = _childs
@@ -290,7 +297,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 				const childJob = arr_m[i]
 				if (childJob) {
 					childJob._endProtocol()
-					childJob._on(EV.JOB_DONE, _onJobDone)
+					childJob._on(EV.JOB_DONE, onJobDone)
 				}
 			}
 		}
@@ -299,18 +306,18 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 			if (Array.isArray(_onEnds)) {
 				const len = _onEnds.length
 				for (let i = len - 1; i >= 0; i--) {  // last set, first called.
-					execEnd(_onEnds[i]!)
+					execOnEnd(_onEnds[i]!)
 				}
 			}
 			else {
-				execEnd(_onEnds)
+				execOnEnd(_onEnds)
 			}
 		}
 
-		function execEnd(x: OnEnd): void {
+		function execOnEnd(x: OnEnd): void {
 			++nWaiting
 			if (isGenFn(x)) {
-				new Job(x(), x.name)._on(EV.JOB_DONE, _onJobDone)
+				new Job(x(), x.name)._run()._onDone(onJobDone)
 			}
 			else if (x instanceof Function) {
 				const ret = tryFn(x)
@@ -318,8 +325,11 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 					ret.then(() => onDone(), e => onDone(wrapIfNotError(e)))
 					return
 				}
-				// todo
-				onDone(ret)
+				if (ret instanceof Job) {
+					ret._onDone(onJobDone)
+					return
+				}
+				onDone(ret instanceof Error ? ret : undefined)
 			}
 			else if (Symbol.dispose in x) {
 				const disposeFn = x[Symbol.dispose].bind(x)
@@ -335,51 +345,48 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 				return fn()
 			}
 			catch (e) {
-				return wrapIfNotError(e)
+				return e
 			}
 		}
 
 		function onDone(err?: Error) {
 			++nDone
 			if (err) {
-				if (!onEndErrs) {
-					onEndErrs = []
+				if (!errors) {
+					errors = []
 				}
-				onEndErrs.push(err)
+				errors.push(err)
 			}
 			if (nDone === nWaiting) {
-				me.#settle(onEndErrs)
+				me.#settle(errors)
 			}
 		}
 
-		function _onJobDone(j: Job) {
+		function onJobDone(j: Job) {
 			onDone(j._io instanceof Error ? j._io : undefined)
 		}
 	}
 
-	#settle(onEndErrs?: Error[]) {
-		if (this._state === "CANCELLING") {
-			const msg = this._io as string   // hacky, I know
-
-			this._io = onEndErrs ?
-				new Err(undefined, this._name, onEndErrs, msg) as Ret :
-				new ECancOK(this._name, msg) as Ret
-
+	#settle(errors?: Error[]) {
+		if (this._state === "CANCELLING" && errors) {
+			const eCancOK = this._io as ECancOK
+			this._io = new Err(undefined, this._name, errors, eCancOK.message) as Ret
 			this.#completeSettle()
 			return
 		}
-
-		if (onEndErrs) {
+		if (errors) {
 			if (this._io instanceof Err) {
-				this._io.onEndErrors = onEndErrs
+				this._io.errors = errors
 			}
 		}
-
 		this.#completeSettle()
 	}
 
 	#completeSettle() {
-		// console.log("SETT:", this._name, this._io)
+		const finalVal = this._io
+		if (finalVal instanceof Error && !(finalVal instanceof ECancOK)) {
+			this._failed = true
+		}
 		this._state = "DONE"
 		this._parent?._childs!.delete(this)
 		this._parent = undefined
@@ -408,12 +415,12 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 	get promfy() {
 		return new Promise<Ret>((res, rej) => {
-			this._on(EV.JOB_DONE, ({ val }: Job) => {
-				if (val instanceof Error) {
-					rej(val)
+			this._onDone(jobDone => {
+				if (jobDone._failed) {
+					rej(jobDone.val)
 				}
 				else {
-					res(val as Ret)
+					res(jobDone.val as Ret)
 				}
 			})
 		})
@@ -421,10 +428,32 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 	get promfyCont() {
 		return new Promise<typeof this._io>(res => {
-			this._on(EV.JOB_DONE, (j: Job) => {
-				res(j.val as Ret)
+			this._onDone(job => {
+				res(job.val as Ret)
 			})
 		})
+	}
+
+	// if timed-out this job needs to end in
+	timeout(ms: number): this {
+		this._jobTimeout = setTimeout(() => {
+			if (this._state !== "DONE") {
+				this._io = new ETimedOut(this._name) as Ret
+				if (this._state === "WAITING_CHILDS") {
+					this._removeWaitChildsCBs()
+				}
+				this._endProtocol()
+			}
+		}, ms)
+		return this
+	}
+
+	get val() {
+		return this._io
+	}
+
+	get failed(): boolean {
+		return this._failed
 	}
 
 	// todo: remove in a commit.
@@ -460,8 +489,26 @@ type RibuIterable<V> = {
 	[Symbol.iterator]: () => Iterator<Yieldable, V>
 }
 
+const blockJobIterable = {
+	[Symbol.iterator]() {
+		const { targetJob } = sys
+		const callerJob = runningJob()
+		if (targetJob._state !== "DONE") {
+			targetJob._onDone(doneJob => onJobDone(doneJob, callerJob))
+			return theIterator
+		}
+
+		// else, targetJob is already settled...
+		if (callerJob._state === "BLOCKED_$" && targetJob._failed) {
+			callerJob._endProtocol()
+		}
+		callerJob._setResume(targetJob.val)
+		return theIterator
+	}
+}
+
 function onJobDone(doneJob: Job, callerJob: Job) {
-	if (callerJob._state === "BLOCKED_$" && doneJob.val instanceof Error) {
+	if (callerJob._state === "BLOCKED_$" && doneJob._failed) {
 		// eslint-disable-next-line functional/immutable-data
 		callerJob._io = new Err(doneJob.val, callerJob._name)
 		callerJob._endProtocol()
@@ -471,38 +518,21 @@ function onJobDone(doneJob: Job, callerJob: Job) {
 	}
 }
 
-const waitJobIterable = {
-	[Symbol.iterator]() {
-		const { callerJob, targetJob } = sys
-
-		if (targetJob._state !== "DONE") {
-			targetJob._onDone(doneJob => onJobDone(doneJob, callerJob))
-			return theIterator
-		}
-
-		if (callerJob._state === "BLOCKED_$" && targetJob.val instanceof Error) {
-			// todo: throw??
-			throw targetJob.val
-		}
-
-		callerJob._setResume(targetJob.val)
-		return theIterator
-	}
-}
 
 
+//* **********  Cancel logic  ********** *//
 
-//* **********  Cancel logic  ********** */
-
-function execCancel(): void {
-	const { callerJob, targetJob } = sys
+function execCancel(callCB = true): void {
+	const { cancelCallerJob: callerJob, targetJob } = sys
 	const targetJState = targetJob._state
-
 	if (targetJState === "DONE") {
-		completeCancel(callerJob, targetJob)
+		onCancelJobIsDone(callerJob, targetJob)
+		return
 	}
 
-	targetJob._onDone(doneJob => completeCancel(callerJob, doneJob))
+	if (callCB) {
+		targetJob._onDone(doneJob => onCancelJobIsDone(callerJob, doneJob))
+	}
 
 	if (targetJState === "WAITING_CHILDS") {
 		targetJob._removeWaitChildsCBs()
@@ -510,13 +540,13 @@ function execCancel(): void {
 	if (targetJState === "CANCELLING") {
 		return
 	}
-	targetJob._state === "CANCELLING"
-	targetJob._io = `Cancelled by ${callerJob._name}`   // hacky, I know
+	targetJob._state = "CANCELLING"
+	targetJob._io = new ECancOK(targetJob._name, `Cancelled by ${callerJob._name}`)
 	targetJob._endProtocol()
 }
 
-function completeCancel(callerJob: Job, targetJob: Job) {
-	if (targetJob.val instanceof Error && !(targetJob instanceof ECancOK)) {
+function onCancelJobIsDone(callerJob: Job, targetJob: Job): void {
+	if (targetJob._failed) {
 		// eslint-disable-next-line functional/immutable-data
 		callerJob._io = new Err(targetJob.val, callerJob._name)
 		callerJob._endProtocol()
@@ -526,12 +556,51 @@ function completeCancel(callerJob: Job, targetJob: Job) {
 	}
 }
 
+export function cancel(jobs: Job[]): typeof CANCEL_JOBS {
+	sys.cancelCallerJob = runningJob()
+	sys.cancelTargetJobs = jobs
+	return CANCEL_JOBS
+}
+
+function execCancelJobs(): void {
+	const { cancelCallerJob: callerJob, cancelTargetJobs: jobs } = sys
+
+	const jobsLen = jobs.length
+	let targetJobsErrors: Err[] | undefined
+	let nJobsCancelling = jobsLen
+
+	for (let i = 0; i < jobsLen; i++) {
+		const job = jobs[i]!
+		job._onDone(onCancelJobsDone)
+		sys.targetJob = job
+		execCancel(false)
+	}
+
+	function onCancelJobsDone(jobDone: Job) {
+		nJobsCancelling--
+		if (jobDone._failed) {
+			if (!targetJobsErrors) {
+				targetJobsErrors = []
+			}
+			targetJobsErrors.push(jobDone.val as Err)
+		}
+		if (nJobsCancelling === 0) {
+			if (targetJobsErrors) {
+				callerJob._io = new Err(undefined, callerJob._name)
+				callerJob._endProtocol(targetJobsErrors)
+			}
+			else {
+				callerJob._resume()
+			}
+		}
+	}
+}
 
 
 
-//* **********  Utils  ********** */
 
 
+//* **********  Utils  ********** *//
 
 function wrapIfNotError(x: unknown): Error {
 	return x instanceof Error ? x : {

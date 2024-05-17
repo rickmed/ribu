@@ -4,7 +4,8 @@ class System {
 	deadline = 5000
 	stack: Array<Job> = []
 	targetJob!: Job
-	callerJob!: Job
+	cancelCallerJob!: Job
+	cancelTargetJobs!: Job[]
 
 	get running(): Job | undefined {
 		return this.stack.at(-1)
@@ -26,10 +27,10 @@ export let theIterResult = {
 
 export const theIterator = {
 	next() {
-		const j = runningJob()
-		if (j._state === "RUNNING") {
+		const job = runningJob()
+		if (job._state === "RUNNING") {
 			theIterResult.done = true
-			theIterResult.value = j._io
+			theIterResult.value = job._io
 		}
 		else {
 			theIterResult.done = false

@@ -16,8 +16,8 @@
   },
   "type": "module",
   "scripts": {
-    "test": "clear; vitest --reporter=basic --watch=false",
-    "test:watch": "clear; vitest -w --reporter=basic",
+    "test": "clear; vitest --reporter=basic --no-cache --watch=false",
+    "test:watch": "clear; vitest -w --no-cache --reporter=basic",
     "test:cov": "cross-env 'NODE_OPTIONS=--import @istanbuljs/esm-loader-hook --no-warnings' nyc npm test",
     "type-check": "tsc --noEmit",
     "build": "rm -rf dist; tsc"
