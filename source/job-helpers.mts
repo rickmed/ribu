@@ -1,153 +1,145 @@
-// @ts-nocheck
-/* eslint-disable */
-import { go } from "./job.mjs"
+import { RibuE } from "./errors.mjs"
+import { type Job, me, PARKED, cancel, go, type NotErrs } from "./job.mjs"
+import { runningJob } from "./system.mjs"
 
-/* ownership is a PITA.
+/*
+- Returns an array of the settled values of the passed-in jobs.
+- If one job fails, the remaining jobs are cancelled and the job fails.
+- Returns an empty array if the passed-in array in empty
+ */
+export function allOneFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 
-	So the idea is that you could use continue using (for nice error handling)
-		const res = yield* raceJob().$
-	ie, racejob() needs to return a new job
-*/
+	return go(function* _a1f() {
 
-// Provide these helpers (other helpers can be made natively for faster)
-function first(...jobs: Job[]) {
-	return go(function* () {
+		let results: Array<NotErrs<Jobs[number]["val"]>> = []
+
+		if (jobs.length === 0) {
+			return results
+		}
+
 		me().steal(jobs)
-		// errors?
-		const res = yield* anyDone(jobs)  // res :: Union of jobs.res
-		yield cancel(jobs)
-		return res
-	})
-}
-
-const res = race(file1Job, file2Job).val
-
-// first(): first done  (cancel rest)
-// firstOK(): first succesful  (cancel rest)
-// allDone(): waits for all to be done  (collect results)
-// all(): if one fails, rest are cancelled.
-
-function allDone(jobs: Job[]) {
-	return go(function _allDone() {
-		me().steal(jobs)
-		const res = yield anyDone(jobs)   // PROBLEM: ::res ??
-		const nDoneJobs = jobs.length
-		let results = []
-		while (nDoneJobs > 0) {
-
+		const ev = new Ev()
+		for (const j of jobs) {
+			j._onDone(j => ev.emit(j))
 		}
-	})
-}
 
-function allDone(jobs: Job[]): Job[] {   // returns same job array
-	const allDoneJob = new Job()  // need to type new Job
-	allDoneJob.steal(jobs)
-	const nDoneJobs = jobs.length
-	let results = []
-	for (const j of jobs) {
-		j.onDone(doneJob => {
-			nDoneJobs--
-
-		})
-	}
-	return allDoneJob
-}
-
-/*** race(): returns the first resolved (cancel the others)  ********************
-
-### jobs OWNERSHIP:
-
-- race() needs to take ownership of passed jobs, otherwise it breaks composition.
-Since both passed jobs and the job created/returned by race(jobs) are all equal childs of
-the caller, if you race(jobs).cancel(), it wouldn't cancel the passed jobs
-
-For example, race(race(...jobs1), race(...jobs2))
-
-- race() needs to take ownership of the passed jobs so when you cancel
-race(), the passed jobs are cancelled automatically. Works well bc no jobs
-should be active after race() is done, regardless.
-
-
-### todo: maybe put in Job class so: job1.race(job2)
-
-### What if race1 is cancelled while cancelling losing jobs?
-	childs will have 2 concurrent cancellation requests; in the one below, childs
-	will notify when cancelling is done and raceJ.resolve(j.val) will run, but
-	since raceJ is !parked, then nothing will happen after that.
-*/
-function race(jobs: Job[]) {
-
-	const raceJob = new Job()
-
-	raceJob.steal(jobs)
-
-	for (const j of jobs) {
-		j.onDone(j => {
-			cancelAll(jobs, res => {
-				raceJob.resolve(j.val)
-			})
-		})
-	}
-	return raceJob
-}
-
-
-
-/* ** HELPER FNs ***********************************/
-
-/*** all(): waits for all to settle  *******************************************
-
-Usage:
-	const jobsArr = yield* all(MyJobs())).$
-	then can filter the ones that errored|success|whatever
-
-todo: improve types
-*/
-function all(pool: Pool<Job>) {
-	let res = []
-	return go(function* () {
-		while (pool.count) {
-			res.push(yield* pool.rec)
-		}
-		return res
-	})
-}
-
-
-
-
-// CON: needs to instantiate jobDone(): +1 callback and classObj
-function race3(jobs: Job[]) {
-	return go(function* _race() {
-		const done = jobDone(jobs)
-		const winner = yield* done
-		yield* cancel(jobs)  // cancelling a done job is noop
-		// // todo: test if this is faster:
-		// const inFlight = jobs.splice(jobs.indexOf(winner), 1)
-		// yield* cancel(inFlight)
-		return winner
-	})
-}
-
-
-/* any(): returns the first succesful (cancel in-flight). If no succesfull,
-	collect errors of failed ones.
-*/
-function any(pool: Pool<Job>) {
-	return pool().go(function* () {
-		if (!pool.count) {
-			return Error("Some error")
-		}
-		let errors
-		while (pool.count) {
-			const winJob = yield* pool.rec
-			if (!err(winJob.val)) {
-				yield* pool.cancel().$
-				return winJob
+		let inFlight = jobs.length
+		while (inFlight--) {
+			const job = (yield ev.wait) as Job
+			if (job.failed) {
+				yield cancel(jobs)
+				return new RibuE("AllOneFail", "", "", job.val)
 			}
-			if (!errors) {errors = []}
-			errors.push(winJob)
+			results.push(job.val as typeof results[number])
 		}
-		return errors
+		return results
 	})
 }
+
+
+/*
+- Returns an array of the resolved values of the passed jobs.
+- Waits for all to settle.
+- Returns an empty array if the passed-in array in empty.
+ */
+export function allDone<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
+
+	return go(function* _ad() {
+
+		let results: Array<NotErrs<Jobs[number]["val"]>> = []
+
+		if (jobs.length === 0) {
+			return results
+		}
+
+		me().steal(jobs)
+		const ev = new Ev()
+		for (const j of jobs) {
+			j._onDone(j => ev.emit(j))
+		}
+
+		let inFlight = jobs.length
+		while (inFlight--) {
+			const job = (yield ev.wait) as Job
+			results.push(job.val as typeof results[number])
+		}
+		return results
+	})
+}
+
+
+/*
+- Returns the settled value of the first job that settles.
+- The rest are cancelled.
+- Settles with Error if passed-in array is empty.
+ */
+export function first<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
+
+	return go(function* _fst() {
+
+		if (jobs.length === 0) {
+			return new RibuE("First", "Empty arguments", "")
+		}
+
+		me().steal(jobs)
+		const ev = new Ev()
+		for (const j of jobs) {
+			j._onDone(j => ev.emit(j))
+		}
+
+		const job = (yield ev.wait) as Job
+		yield cancel(jobs)
+		return job.val as NotErrs<Jobs[number]["val"]>
+	})
+}
+/* race()
+	- resolves on first resolved: fulfills if first fulfills, rejects if first rejects.
+ */
+
+
+
+/* any()
+	- first resolvedOK promise (ignores Erred promises)
+	- if all reject, any() rejects.
+*/
+
+
+
+
+
+/* all()
+	- if any fails, it fails
+	- else, array of okResults
+*/
+
+// subscribe to all jobs
+	// and yield rec when any of them settles.
+
+
+
+
+
+
+
+
+
+
+class Ev<CB_Aarg = unknown> {
+
+	waitingJob!: Job
+
+	emit(val: CB_Aarg) {
+		this.waitingJob._resume(val)
+	}
+
+	get wait(): typeof PARKED {
+		this.waitingJob = runningJob()
+		return PARKED
+	}
+}
+
+
+// Better names:
+
+// first(): first done (cancel rest)
+// firstOK(): first succesful (ignore failed, cancel rest)

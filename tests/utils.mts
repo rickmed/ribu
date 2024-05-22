@@ -1,5 +1,5 @@
 import { expect } from "vitest"
-import { isE, type RibuE, Err, ERR_TAG } from "../source/errors.mjs"
+import { isE, RibuE, Err, ERR_TAG } from "../source/errors.mjs"
 import { type RibuGenFn, go } from "../source/job.mjs"
 
 export async function check_ThrowsAwait(fn: () => Promise<unknown>): Promise<unknown> {
@@ -12,14 +12,8 @@ export async function check_ThrowsAwait(fn: () => Promise<unknown>): Promise<unk
 	}
 }
 
-export function goAndAwaitFn(genFn: RibuGenFn): () => Promise<unknown> {
-	return async function () {
-		await go(genFn)
-	}
-}
-
-export function assertRibuErr(x: unknown): asserts x is Err {
-	expect(x).toBeInstanceOf(Err)
+export function assertRibuErr(x: unknown): asserts x is RibuE {
+	expect(x).toBeInstanceOf(RibuE)
 }
 
 

@@ -1,5 +1,5 @@
 import { ArrSet, Events } from "./data-structures.mjs"
-import { RibuE, ETimedOut, Err, isRibuE, ECancOK } from "./errors.mjs"
+import { ETimedOut, Err, isRibuE, ECancOK } from "./errors.mjs"
 import { runningJob, sys, theIterator } from "./system.mjs"
 
 /* Helpers */
@@ -48,7 +48,7 @@ const CANCEL_JOBS = Symbol("c_j")
 			- or {done: true, value: iterable.val}
 
 */
-type NotErrs<Ret> = Exclude<Ret, RibuE>
+export type NotErrs<Ret> = Exclude<Ret, Error>
 type OnlyErrs<Ret> = Extract<Ret, Error>
 
 export function go<Args extends unknown[], Ret>(genFn: RibuGenFn<Ret, Args>, ...args: Args) {
@@ -92,7 +92,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 	_name: string
 	_state: State = "PARKED"
 	_failed = false
-	_childs?: ArrSet<Job<Ret>>
+	_childs?: ArrSet<Job>
 	_parent?: Job
 	_sleepTO?: NodeJS.Timeout
 	_onEnds?: OnEnd | OnEnd[]
@@ -138,7 +138,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 		try {
 			// eslint-disable-next-line no-var
-			var yielded = this._gen.next()
+			var yielded = this._gen.next(IOval)
 		}
 		catch (e) {
 			this._io = new Err(e, this._name) as Ret
@@ -434,7 +434,6 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		})
 	}
 
-	// if timed-out this job needs to end in
 	timeout(ms: number): this {
 		this._jobTimeout = setTimeout(() => {
 			if (this._state !== "DONE") {
@@ -456,6 +455,19 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		return this._failed
 	}
 
+	steal(jobs: Job[]) {
+		const len = jobs.length
+		for (let i = 0; i < len; i++) {
+			const job = jobs[i]!
+			job._parent?._childs?.delete(job)
+			job._parent = this
+			if (!this._childs) {
+				this._childs = new ArrSet()
+			}
+			this._childs.add(job)
+		}
+	}
+
 	// todo: remove in a commit.
 	// then(thenOK: (value: Ret) => Ret, thenErr: (reason: unknown) => Promise<never>): Promise<Ret> {
 	// 	return new Promise<Ret>((res, rej) => {
@@ -474,6 +486,10 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 export function onEnd(x: OnEnd) {
 	runningJob().onEnd(x)
+}
+
+export function me(): Job {
+	return runningJob()
 }
 
 
