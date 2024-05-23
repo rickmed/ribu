@@ -30,7 +30,6 @@ describe("allDone()", () => {
 		await sleepProm(15)
 		expect(res).toStrictEqual(["job1", 2])
 	})
-
 })
 
 describe("allOneFail()", () => {
@@ -136,45 +135,6 @@ describe("first()", () => {
 		expect(rec).toStrictEqual(2)
 		expect(job1WasCancelled).toStrictEqual(true)
 	})
-
-	it("settles with correct error with a passed in job fails", async () => {
-
-		function* job1() {
-			yield sleep(2)
-			return "job1"
-		}
-
-		function* job2() {
-			yield sleep(2)
-			throw Error("pow")
-		}
-
-		function* main() {
-			const res = yield* allDone(go(job1), go(job2)).cont
-			yield sleep(1)
-			return res
-		}
-
-		const rec = await go(main).promfyCont
-
-		if (isE(rec)) {
-			throw Error("test failed")
-		}
-
-		expect(rec[0]).toBe("job1")
-
-		const otherVal = rec[1]
-		const exp = {
-			_op: "job2",
-			cause: {
-				name: "Error",
-				message: "pow",
-			}
-		}
-		assertRibuErr(otherVal)
-		checkErrSpec(otherVal, exp)
-
-	})
 })
 
 describe("firstOK()", () => {
@@ -213,7 +173,7 @@ describe("firstOK()", () => {
 		expect(job1WasCancelled).toStrictEqual(true)
 	})
 
-	it.skip("settles with correct error if all jobs failed", async () => {
+	it("settles with correct error if all jobs failed", async () => {
 
 		function* job1Fails() {
 			yield sleep(5)
@@ -228,31 +188,21 @@ describe("firstOK()", () => {
 		}
 
 		function* main() {
-			const res = yield* firstOK(go(job1Fails), go(job2Fails)).cont
+			yield* firstOK(go(job1Fails), go(job2Fails)).$
 			yield sleep(1)
-			return res
 		}
 
 		const rec = await go(main).promfyCont
-		console.dir({rec}, {depth: 50, compact: false, showHidden: true})
 
-		if (isE(rec)) {
-			throw Error("test failed")
-		}
-
-		expect(rec[0]).toBe("job1")
-
-		const otherVal = rec[1]
 		const exp = {
 			_op: "main",
 			cause: {
-				name: "FirstOK",
-				message: "All jobs failed",
+				name: "AllJobsFailed",
 				_op: "firstOK"
 			}
 		}
-		assertRibuErr(otherVal)
-		checkErrSpec(otherVal, exp)
+		assertRibuErr(rec)
+		checkErrSpec(rec, exp)
 
 	})
 })

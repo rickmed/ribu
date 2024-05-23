@@ -1,11 +1,11 @@
-import { E, RibuE } from "./errors.mjs"
 import { type Job, me, PARKED, cancel, go, type NotErrs } from "./job.mjs"
 import { runningJob } from "./system.mjs"
+import { E, RibuE } from "./errors.mjs"
 
 /*
 - Returns an array of the settled values of the passed-in jobs.
 - If one job fails, the remaining jobs are cancelled and the job fails.
-- Returns an empty array if the passed-in array in empty
+- Returns an empty array if the passed-in array in empty.
  */
 export function allOneFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 
@@ -23,8 +23,6 @@ export function allOneFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 			j._onDone(j => ev.emit(j))
 		}
 
-		// if job returns RibuE, what should ribu do?
-
 		let inFlight = jobs.length
 		while (inFlight--) {
 			const job = (yield ev.wait) as Job
@@ -34,14 +32,15 @@ export function allOneFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 			}
 			results.push(job.val as typeof results[number])
 		}
+
 		return results
 	})
 }
 
 
 /*
-- Returns an array of the resolved values of the passed jobs.
-- Waits for all to settle.
+- Returns an array of the settled values of the passed-in jobs,
+ie, it waits for all to settle.
 - Returns an empty array if the passed-in array in empty.
  */
 export function allDone<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
@@ -99,7 +98,8 @@ export function first<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 /*
 - Returns the settled value of the first job that settles _succesfully_.
 - The rest are cancelled.
-- The jobs the failed are ignored
+- The jobs that failed are ignored.
+- Settles with Error if all jobs fail.
 - Settles with Error if passed-in array is empty.
  */
 export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
@@ -131,17 +131,25 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 }
 
 
+export class Ev<T = unknown> {
 
-
-
-
-
-class Ev<CB_Aarg = unknown> {
+	static Timeout = Symbol("to")
 
 	waitingJob!: Job
+	_timeout?: NodeJS.Timeout
 
-	emit(val: CB_Aarg) {
+	emit(val?: T) {
+		if (this._timeout) {
+			clearTimeout(this._timeout)
+		}
 		this.waitingJob._resume(val)
+	}
+
+	timeout(ms: number) {
+		const job = runningJob()
+		this._timeout = setTimeout(() => {
+			job._resume(Ev.Timeout)
+		}, ms)
 	}
 
 	get wait(): typeof PARKED {
@@ -149,9 +157,3 @@ class Ev<CB_Aarg = unknown> {
 		return PARKED
 	}
 }
-
-
-// Better names:
-
-// first(): first done (cancel rest)
-// firstOK(): first succesful (ignore failed, cancel rest)

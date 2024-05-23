@@ -113,7 +113,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 	}
 
 	#addAsChild() {
-		let parent = sys.running
+		let parent = runningJob()
 		if (!parent) {
 			return
 		}
@@ -270,9 +270,8 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		return CANCEL
 	}
 
-	_endProtocol(errors_?: Error[]) {
-		const { _childs, _sleepTO, _onEnds, _jobTimeout } = this
-		let errors: Error[] | undefined = errors_
+	_endProtocol(errors?: Error[]) {
+		const { _sleepTO, _jobTimeout, _onEnds, _childs } = this
 
 		if (_sleepTO) {
 			clearTimeout(_sleepTO)
@@ -299,7 +298,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 				const childJob = arr_m[i]
 				if (childJob) {
 					childJob._endProtocol()
-					childJob._on(EV.JOB_DONE, onJobDone)
+					childJob._onDone(onJobDone)
 				}
 			}
 		}
@@ -403,15 +402,15 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 	// }
 
 	onEnd(newV: OnEnd) {
-		let currV = this._onEnds
-		if (!currV) {
+		let { _onEnds } = this
+		if (!_onEnds) {
 			this._onEnds = newV
 		}
-		else if (Array.isArray(currV)) {
-			currV.push(newV)
+		else if (Array.isArray(_onEnds)) {
+			_onEnds.push(newV)
 		}
 		else {
-			this._onEnds = [currV, newV]
+			this._onEnds = [_onEnds, newV]
 		}
 	}
 
@@ -492,6 +491,15 @@ export function onEnd(x: OnEnd) {
 
 export function me(): Job {
 	return runningJob()
+}
+
+class UserJob<Ret, Errs> {
+	onEnd() {
+
+	}
+	settle() {
+
+	}
 }
 
 

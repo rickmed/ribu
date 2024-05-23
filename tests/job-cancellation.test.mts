@@ -11,10 +11,10 @@ describe(".cancel()", () => {
 
 		function* main() {
 			const chld = go(function* child() {
-				yield sleep(2)
+				yield sleep(4)
 				childReturned = true
 			})
-			yield sleep(1)
+			yield sleep(2)
 			yield chld.cancel()
 		}
 
@@ -121,18 +121,18 @@ describe("cancel(jobs)", () => {
 		let childReturned = 0
 
 		function* child1() {
-			yield sleep(2)
+			yield sleep(4)
 			childReturned++
 		}
 
 		function* child2() {
-			yield sleep(2)
+			yield sleep(4)
 			childReturned++
 		}
 
 		function* main() {
 			const jobs = [go(child1), go(child2)]
-			yield sleep(1)
+			yield sleep(2)
 			yield cancel(jobs)
 		}
 

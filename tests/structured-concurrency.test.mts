@@ -49,9 +49,9 @@ describe("job auto-waits for children to finish", () => {
 		}
 
 		function* main() {
+			yield sleep(1)
 			go(child1)
 			go(child2)
-			yield sleep(1)
 		}
 
 		const rec = await go(main).promfyCont

@@ -1,4 +1,5 @@
-export { go, onEnd } from "./job.mjs"
+export { go, onEnd, type Job } from "./job.mjs"
 export { sleep } from "./timers.mjs"
 export { Ch } from "./channel.mjs"
 export { E } from "./errors.mjs"
+export {allDone, allOneFail, first, firstOK, Ev} from "./job-helpers.mjs"
