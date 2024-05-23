@@ -175,9 +175,11 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 	#genFnReturned(yieldedVal: Ret) {
 		const settleVal = this._io = yieldedVal
-		if (isRibuE(settleVal) && settleVal._op === "") {
-			// @ts-ignore (._op readonly)
-			settleVal._op = this._name
+		if (isRibuE(settleVal)) {
+			if (settleVal._op === "") {
+				// @ts-ignore (._op readonly)
+				settleVal._op = this._name
+			}
 			this._endProtocol()
 			return
 		}

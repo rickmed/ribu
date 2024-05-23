@@ -1,4 +1,4 @@
-import { RibuE } from "./errors.mjs"
+import { E, RibuE } from "./errors.mjs"
 import { type Job, me, PARKED, cancel, go, type NotErrs } from "./job.mjs"
 import { runningJob } from "./system.mjs"
 
@@ -23,12 +23,14 @@ export function allOneFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 			j._onDone(j => ev.emit(j))
 		}
 
+		// if job returns RibuE, what should ribu do?
+
 		let inFlight = jobs.length
 		while (inFlight--) {
 			const job = (yield ev.wait) as Job
 			if (job.failed) {
 				yield cancel(jobs)
-				return new RibuE("AllOneFail", "", "", job.val)
+				return E("AJobFailed", "allOneFail", "", job.val as RibuE)
 			}
 			results.push(job.val as typeof results[number])
 		}
@@ -78,7 +80,7 @@ export function first<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 	return go(function* _fst() {
 
 		if (jobs.length === 0) {
-			return new RibuE("First", "Empty arguments", "")
+			return E("EmptyArguments", "first")
 		}
 
 		me().steal(jobs)
@@ -92,31 +94,41 @@ export function first<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 		return job.val as NotErrs<Jobs[number]["val"]>
 	})
 }
-/* race()
-	- resolves on first resolved: fulfills if first fulfills, rejects if first rejects.
+
+
+/*
+- Returns the settled value of the first job that settles _succesfully_.
+- The rest are cancelled.
+- The jobs the failed are ignored
+- Settles with Error if passed-in array is empty.
  */
+export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 
+	return go(function* _fOK() {
 
+		if (jobs.length === 0) {
+			return E("EmptyArguments", "firstOK")
+		}
 
-/* any()
-	- first resolvedOK promise (ignores Erred promises)
-	- if all reject, any() rejects.
-*/
+		me().steal(jobs)
+		const ev = new Ev()
+		for (const j of jobs) {
+			j._onDone(j => ev.emit(j))
+		}
 
+		let inFlight = jobs.length
+		while (inFlight--) {
+			const job = (yield ev.wait) as Job
+			if (job.failed) {
+				continue
+			}
+			yield cancel(jobs)
+			return job.val as NotErrs<Jobs[number]["val"]>
+		}
 
-
-
-
-/* all()
-	- if any fails, it fails
-	- else, array of okResults
-*/
-
-// subscribe to all jobs
-	// and yield rec when any of them settles.
-
-
-
+		return E("AllJobsFailed", "firstOK")
+	})
+}
 
 
 

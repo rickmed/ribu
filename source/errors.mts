@@ -54,7 +54,7 @@ Object.setPrototypeOf(RibuE.prototype, Error.prototype)
 export type E<Name extends string = string> = Error & RibuE<Name>
 
 export function E<Name extends string>(name: Name, op = "", msg = "", cause?: RibuE): E<Name> {
-	return new RibuE<Name>(name, op, msg, cause)
+	return new RibuE<Name>(name, msg, op, cause)
 }
 
 export class ECancOK extends RibuE<"CancOK"> {
