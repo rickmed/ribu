@@ -50,7 +50,7 @@ export class RibuE<Name extends string = string> implements Error {
 // make "instanceof Error" work
 Object.setPrototypeOf(RibuE.prototype, Error.prototype)
 
-// todo: ??
+// todo: Error & RibuE<Name> ??
 export type E<Name extends string = string> = Error & RibuE<Name>
 
 export function E<Name extends string>(name: Name, op = "", msg = "", cause?: RibuE): E<Name> {

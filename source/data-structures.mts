@@ -33,20 +33,21 @@ export class Queue<V> {
 
 
 export class ArrSet<V> {
-	arr_m: Array<V> = []
+
+	arr: Array<V> = []
 
 	delete(v: V): this {
-		let arr = this.arr_m
+		let arr = this.arr
 		arr.splice(arr.indexOf(v), 1)  // todo splice is expensive
 		return this
 	}
 
 	get size(): number {
-		return this.arr_m.length
+		return this.arr.length
 	}
 
 	add(v: V): this {
-		this.arr_m.push(v)
+		this.arr.push(v)
 		return this
 	}
 

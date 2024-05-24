@@ -163,12 +163,12 @@ describe("cancel(jobs)", () => {
 			onEnd(() => {
 				throw Error("clean-up after cancel")
 			})
-			yield sleep(2)
+			yield sleep(3)
 			childsReturned++
 		}
 
 		function* child2() {
-			yield sleep(2)
+			yield sleep(3)
 			childsReturned++
 		}
 

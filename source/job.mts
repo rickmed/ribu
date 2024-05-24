@@ -2,12 +2,22 @@ import { ArrSet, Events } from "./data-structures.mjs"
 import { ETimedOut, Err, isRibuE, ECancOK } from "./errors.mjs"
 import { runningJob, sys, theIterator } from "./system.mjs"
 
-/* Helpers */
-const GenFn = (function* () { }).constructor
 
-function isGenFn(x: unknown): x is RibuGenFn {
-	return x instanceof GenFn
+export function onEnd(x: OnEnd) {
+	runningJob().onEnd(x)
 }
+
+export function me(): Job {
+	return runningJob()
+}
+
+export function go<Args extends unknown[], Ret>(genFn: RibuGenFn<Ret, Args>, ...args: Args) {
+	const gen = genFn(...args)
+	return new Job<NotErrs<Ret>, OnlyErrs<Ret> | ECancOK | ETimedOut | Err>(gen, genFn.name, true)._run()
+}
+
+
+//* **********  Job Class  ********** *//
 
 // todo: maybe change to symbol
 export const PARKED = "PARKED"
@@ -48,40 +58,11 @@ const CANCEL_JOBS = Symbol("c_j")
 			- or {done: true, value: iterable.val}
 
 */
-export type NotErrs<Ret> = Exclude<Ret, Error>
-type OnlyErrs<Ret> = Extract<Ret, Error>
 
-export function go<Args extends unknown[], Ret>(genFn: RibuGenFn<Ret, Args>, ...args: Args) {
-	const gen = genFn(...args)
-	return new Job<NotErrs<Ret>, OnlyErrs<Ret> | ECancOK | ETimedOut | Err>(gen, genFn.name, true)._run()
-}
-
-
-/***  Job class  ***/
-
-/* Events names */
 const EV = {
 	JOB_DONE: "job.done",
 	JOB_DONE_WAITCHILDS: "job.done.waitChilds"
 } as const
-
-
-/* Types */
-type Yieldable =
-	typeof PARKED |
-	typeof CANCEL |
-	typeof CANCEL_JOBS |
-	Promise<unknown>
-
-export type Gen<Ret = unknown, Rec = unknown> =
-	Generator<Yieldable, Ret, Rec>
-
-export type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
-	(...args: Args) => Generator<Yieldable, Ret>
-
-type OnEnd =
-	(() => unknown) | (() => Promise<unknown>) |
-	Disposable | AsyncDisposable | RibuGenFn
 
 type State = "PARKED" | "RUNNING" | "BLOCKED_$" | "BLOCKED_cont" | "WAITING_CHILDS" | "CANCELLING" | "TIMED_OUT" | "DONE"
 
@@ -173,7 +154,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		this._io = IOval as Ret
 	}
 
-	#genFnReturned(yieldedVal: Ret) {
+	#genFnReturned(yieldedVal: Ret | Errs) {
 		const settleVal = this._io = yieldedVal
 		if (isRibuE(settleVal)) {
 			if (settleVal._op === "") {
@@ -206,7 +187,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		let nChildsDone = 0
 
 		for (let i = 0; i < nChilds; i++) {
-			const job = childs.arr_m[i]
+			const job = childs.arr[i]
 			if (job) {
 				job._on(EV.JOB_DONE_WAITCHILDS, cb)
 			}
@@ -231,7 +212,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		const cs = this._childs!
 		const csL = cs.size
 		for (let i = 0; i < csL; i++) {
-			const job = cs.arr_m[i]
+			const job = cs.arr[i]
 			if (job) {
 				job._removeEvCBs(EV.JOB_DONE_WAITCHILDS)
 			}
@@ -292,10 +273,10 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 		if (_childs) {
 			nWaiting += _childs.size
-			const { arr_m } = _childs
-			const len = arr_m.length
+			const { arr } = _childs
+			const len = arr.length
 			for (let i = 0; i < len; i++) {
-				const childJob = arr_m[i]
+				const childJob = arr[i]
 				if (childJob) {
 					childJob._endProtocol()
 					childJob._onDone(onJobDone)
@@ -469,6 +450,13 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		}
 	}
 
+	settle(val: Ret | Errs) {
+		if (this._state === "DONE") {
+			return
+		}
+		this.#genFnReturned(val)
+	}
+
 	// todo: remove in a commit.
 	// then(thenOK: (value: Ret) => Ret, thenErr: (reason: unknown) => Promise<never>): Promise<Ret> {
 	// 	return new Promise<Ret>((res, rej) => {
@@ -485,21 +473,12 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 }
 
 
-export function onEnd(x: OnEnd) {
-	runningJob().onEnd(x)
-}
+/* **********  newJob  ********** */
 
-export function me(): Job {
-	return runningJob()
-}
+const dummyGen = (function* dummyGenFn() {})()
 
-class UserJob<Ret, Errs> {
-	onEnd() {
-
-	}
-	settle() {
-
-	}
+export function newJob<Ret = unknown, Errs = ECancOK | ETimedOut | Err>(jobName = "") {
+	return new Job<Ret, Errs | ECancOK | ETimedOut | Err>(dummyGen, jobName)
 }
 
 
@@ -624,9 +603,13 @@ function execCancelJobs(): void {
 
 
 
-
-
 //* **********  Utils  ********** *//
+
+const GenFn = (function* () { }).constructor
+
+function isGenFn(x: unknown): x is RibuGenFn {
+	return x instanceof GenFn
+}
 
 function wrapIfNotError(x: unknown): Error {
 	return x instanceof Error ? x : {
@@ -636,16 +619,33 @@ function wrapIfNotError(x: unknown): Error {
 	}
 }
 
-
-
-
-
 function isProm(x: unknown): x is PromiseLike<unknown> {
 	return (x !== null && typeof x === "object" &&
 		"then" in x && typeof x.then === "function")
 }
 
 
+
+//* **********  Types  ********** *//
+
+export type NotErrs<Ret> = Exclude<Ret, Error>
+type OnlyErrs<Ret> = Extract<Ret, Error>
+
+type Yieldable =
+	typeof PARKED |
+	typeof CANCEL |
+	typeof CANCEL_JOBS |
+	Promise<unknown>
+
+export type Gen<Ret = unknown, Rec = unknown> =
+	Generator<Yieldable, Ret, Rec>
+
+export type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
+	(...args: Args) => Generator<Yieldable, Ret>
+
+type OnEnd =
+	(() => unknown) | (() => Promise<unknown>) |
+	Disposable | AsyncDisposable | RibuGenFn
 
 /** Ports
  // ports<_P extends Ports>(ports: _P) {

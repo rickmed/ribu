@@ -18,7 +18,7 @@ export function allOneFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 		}
 
 		me().steal(jobs)
-		const ev = new Ev()
+		const ev = Ev()
 		for (const j of jobs) {
 			j._onDone(j => ev.emit(j))
 		}
@@ -54,7 +54,7 @@ export function allDone<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 		}
 
 		me().steal(jobs)
-		const ev = new Ev()
+		const ev = Ev()
 		for (const j of jobs) {
 			j._onDone(j => ev.emit(j))
 		}
@@ -83,7 +83,7 @@ export function first<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 		}
 
 		me().steal(jobs)
-		const ev = new Ev()
+		const ev = Ev()
 		for (const j of jobs) {
 			j._onDone(j => ev.emit(j))
 		}
@@ -111,7 +111,7 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 		}
 
 		me().steal(jobs)
-		const ev = new Ev()
+		const ev = Ev()
 		for (const j of jobs) {
 			j._onDone(j => ev.emit(j))
 		}
@@ -131,7 +131,7 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 }
 
 
-export class Ev<T = unknown> {
+class _Ev<T = unknown> {
 
 	static Timeout = Symbol("to")
 
@@ -145,15 +145,20 @@ export class Ev<T = unknown> {
 		this.waitingJob._resume(val)
 	}
 
-	timeout(ms: number) {
+	timeout(ms: number): typeof PARKED {
 		const job = runningJob()
 		this._timeout = setTimeout(() => {
-			job._resume(Ev.Timeout)
+			job._resume(_Ev.Timeout)
 		}, ms)
+		return PARKED
 	}
 
 	get wait(): typeof PARKED {
 		this.waitingJob = runningJob()
 		return PARKED
 	}
+}
+
+export function Ev<T>() {
+	return new _Ev<T>()
 }

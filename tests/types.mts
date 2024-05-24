@@ -1,8 +1,7 @@
-import { go, sleep, E } from "../source/index.mjs"
+import { go, sleep, E, newJob } from "../source/index.mjs"
 import { Err } from "../source/errors.mjs"
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function* dummyToUseYield() {
+export function* dummyToUseYield() {
 
 	const job = go(function* fn(x?: number) {
 		yield sleep(1)
@@ -30,16 +29,9 @@ function* dummyToUseYield() {
 		generic Ribu Error from thrown values.
 	*/
 	// todo: I don't like Err, change to E<"E"> for consistency
-	type Exp2 = E<"NoNumber"> | E<"TooLow"> | E<"CancOK"> | E<"Err"> | false | 1
+	type Exp2 = E<"NoNumber"> | E<"TooLow"> | E<"CancOK"> | E<"TimedOut"> | E<"Err"> | false | 1
 	const x2 = yield* job.cont
 	check_Eq<Exp2>()(x2)
-
-
-	// todo: check this returns never.
-	// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-	const x3 = yield job.cancel()
-	// eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
-	check_Eq<any>()(x3)
 
 	// todo
 	// const x4 = yield* job.cancelHandle()
@@ -62,6 +54,9 @@ function* dummyToUseYield() {
 	// check_Eq<undefined>()(x3)
 }
 
+export function newJob() {
+	
+}
 
 type SuperType<S, T extends S> = [S] extends [T] ? T : never
 

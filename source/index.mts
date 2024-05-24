@@ -1,4 +1,4 @@
-export { go, onEnd, type Job } from "./job.mjs"
+export { go, onEnd, type Job, newJob, cancel } from "./job.mjs"
 export { sleep } from "./timers.mjs"
 export { Ch } from "./channel.mjs"
 export { E } from "./errors.mjs"

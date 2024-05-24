@@ -1,4 +1,4 @@
-import {go, Ev, type Job, E} from "../source/index.mjs"
+import {go, Ev, type Job, E, newJob, cancel} from "../source/index.mjs"
 import dns from "node:dns/promises"
 import net from "node:net"
 import { Socket } from "node:net"
@@ -22,24 +22,22 @@ export function* happyEB(hostName: string, port: number, delay: number = 300) {
 	}
 
 	let addrsIdx = addrs.length
-	const fails = new Ev()
+	const fails = Ev()
 	const connectJobs = new Pool()
 
 	go(function* () {
 		for (;;) {
-			if (--addrsIdx) {
-				const j = connect("d")
-				// connectJobs.add()
-			}
-			else {
+			addrsIdx--
+			if (addrsIdx < 0) {
 				return
 			}
+			connectJobs.add(connect(addrs[addrsIdx]!))
 			yield fails.timeout(delay)
 		}
 	})
 
 	while (connectJobs.count) {
-		const job: Job = yield connectJobs.rec  // no yield*
+		const job = (yield connectJobs.rec) as Job
 		if (job.val instanceof Socket) {
 			yield connectJobs.cancel()
 			return job.val
@@ -51,20 +49,10 @@ export function* happyEB(hostName: string, port: number, delay: number = 300) {
 }
 
 
-/* hardest is a thing that dynamically add/receives from jobs.  */
-
-// DONE
-	// need a pool to:
-		// cancel() rest on success
-		// receive from any of them
-
-	// Pool
-		// subscribe to passed jobs in constructor immediately
-
 class Pool<_Job extends Job> {
 
 	constructor(
-		private jobsStore = new ArrSet
+		private jobsStore: ArrSet<Job> = new ArrSet
 	) {}
 	inFlight = 0
 	waitingJob!: _Job
@@ -79,28 +67,27 @@ class Pool<_Job extends Job> {
 	}
 
 	add(job: _Job) {
-		job.onDone(doneJob => {
+		this.jobsStore.add(job)
+		job._onDone(doneJob => {
+			this.jobsStore.delete(doneJob)
 			this.waitingJob._resume(doneJob.val)
 		})
 	}
 
-	// if I want go(), I need a reference to an array of Jobs to add/delete
-		// could also be useful for long running jobs who add/remove jobs dynamically
+	cancel() {
+		return cancel(this.jobsStore.arr)
+	}
 }
 
 
-
-// who is this job child of??
 function connect(addrs: string) {
 	const socket = new net.Socket()
-	const job = Job()
+	const job = newJob()
 
 	job.onEnd(() => socket.destroy())
 
 	socket.on("error", e => {
-		job.settle(e)
-		// or
-		job.settleErr(e)  // guarantees that prc resolves with Error (ie, wraps e if not instance of Error)
+		job.settle(e)  // job will fail if settle value instanceof Error
 	})
 
 	socket.on("connect", () => {
