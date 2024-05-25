@@ -138,8 +138,12 @@ describe("job can yield promises", () => {
 
 		const exp = {
 			_op: "main",
-			cause: "Bad"
+			cause: {
+				name: "PromiseRejected",
+				cause: "Bad",
+			}
 		}
 		assertRibuErr(rec)
-		checkErrSpec(rec, exp)	})
+		checkErrSpec(rec, exp)
+	})
 })

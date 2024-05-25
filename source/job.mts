@@ -1,5 +1,5 @@
 import { ArrSet, Events } from "./data-structures.mjs"
-import { ETimedOut, Err, isRibuE, ECancOK } from "./errors.mjs"
+import { ETimedOut, Err, isRibuE, ECancOK, E } from "./errors.mjs"
 import { runningJob, sys, theIterator } from "./system.mjs"
 
 
@@ -140,7 +140,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 			value.then(
 				ok => this._resume(ok),
 				e => {
-					this._io = new Err(e, this._name) as Ret
+					this._io = new Err(E("PromiseRejected", "", "", e), this._name) as Ret
 					this._endProtocol()
 				}
 			)
@@ -475,15 +475,6 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 	// 		})
 	// 	}).then(thenOK, thenErr)
 	// }
-}
-
-
-/* **********  newJob  ********** */
-
-const dummyGen = (function* dummyGenFn() {})()
-
-export function newJob<Ret = unknown, Errs = ECancOK | ETimedOut | Err>(jobName = "") {
-	return new Job<Ret, Errs | ECancOK | ETimedOut | Err>(dummyGen, jobName)
 }
 
 

@@ -1,6 +1,6 @@
-import { type Job, me, PARKED, cancel, go, type NotErrs, newJob } from "./job.mjs"
+import { Job, me, PARKED, cancel, go, type NotErrs } from "./job.mjs"
 import { runningJob } from "./system.mjs"
-import { E, RibuE } from "./errors.mjs"
+import { E, ECancOK, ETimedOut, Err, RibuE } from "./errors.mjs"
 
 
 //* **********  Job Combinators  ********** *//
@@ -168,9 +168,19 @@ export function Ev<T>() {
 
 
 
+/* **********  newJob  ********** */
+
+const dummyGen = (function* dummyGenFn() {})()
+
+export function newJob<Ret = unknown, Errs = ECancOK | ETimedOut | Err>(jobName = "") {
+	return new Job<Ret, Errs | ECancOK | ETimedOut | Err>(dummyGen, jobName)
+}
+
+
+
 //* **********  Promise to Job  ********** *//
 
-export function fromProm<T>(p: Promise<T>): Job<T> {
+export function fromProm<T>(p: Promise<T>) {
 	const job = newJob<T, E<"PromiseRejected">>()
 
 	p.then(

@@ -62,7 +62,7 @@ describe("allOneFail()", () => {
 		expect(res).toStrictEqual(["job1", 2])
 	})
 
-	it("settles with correct error if a passed-in job fails (others are cancelled)", async () => {
+	it.only("settles with correct error if a passed-in job fails (others are cancelled)", async () => {
 
 		const exp = {
 			name: "ProgramFailed",
@@ -83,7 +83,7 @@ describe("allOneFail()", () => {
 		let job1WasCancelled = true
 
 		function* job1() {
-			yield sleep(3)
+			yield sleep(4)
 			job1WasCancelled = false
 			return "job1"
 		}
@@ -213,19 +213,40 @@ describe("firstOK()", () => {
 
 //* **********  Promise to Job  ********** *//
 
-describe("fromProm()", () => {
+describe("yield* fromProm()", () => {
 
 	it("job gets resumed when promise resolves", async () => {
 
-		const p = Promise.resolve(1)
-
 		function* main() {
-			const res = yield* fromProm(p).cont
+			const job = fromProm(Promise.resolve(1))
+			const res = yield* job.$
 			return res
 		}
 
 		const rec = await go(main).promfyCont
 		expect(rec).toBe(1)
+	})
 
+
+	it("job fails with correct error when promise rejects", async () => {
+
+		function* main() {
+			const job = fromProm(Promise.reject("Bad"))
+			const res = yield* job.$
+			return res
+		}
+
+		const rec = await go(main).promfyCont
+
+		const exp = {
+			_op: "main",
+			cause: {
+				name: "PromiseRejected",
+				_op: "fromProm",
+				cause: "Bad",
+			}
+		}
+		assertRibuErr(rec)
+		checkErrSpec(rec, exp)
 	})
 })

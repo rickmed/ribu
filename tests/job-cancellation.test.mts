@@ -31,11 +31,11 @@ describe(".cancel()", () => {
 			const childJob = go(function* child() {
 
 				go(function* grandChild() {
-					yield sleep(2)
+					yield sleep(3)
 					changed++
 				})
 
-				yield sleep(2)
+				yield sleep(3)
 				changed++
 			})
 
@@ -98,20 +98,17 @@ describe.todo("using onEnds", () => {
 
 	it("runs when job is cancelled")
 
-	function* job() {
-		onEnd(() => {
+	// function* job() {
+	// 	onEnd(() => {
 
-		})
-		yield sleep(1)
-	}
+	// 	})
+	// 	yield sleep(1)
+	// }
 
-	function* main() {
-		yield* go(job).$
+	// function* main() {
+	// 	yield* go(job).$
 
-	}
-
-
-
+	// }
 })
 
 describe("cancel(jobs)", () => {

@@ -1,5 +1,4 @@
 import { go, sleep, E, newJob } from "../source/index.mjs"
-import { Err } from "../source/errors.mjs"
 
 export function* dummyToUseYield() {
 
@@ -55,7 +54,7 @@ export function* dummyToUseYield() {
 }
 
 export function newJob() {
-	
+
 }
 
 type SuperType<S, T extends S> = [S] extends [T] ? T : never
