@@ -23,6 +23,11 @@ export function sleepProm(ms: number): Promise<void> {
 
 export function checkErrSpec(rec: unknown, spec: NonNullable<unknown>): void {
 
+	if (typeof spec !== "object") {
+		expect(rec).toBe(spec)
+		return
+	}
+
 	if (!("message" in spec)) {
 		assertHasK(rec, "message")
 		expect(rec.message).toBe("")
@@ -70,9 +75,6 @@ export function checkErrSpec(rec: unknown, spec: NonNullable<unknown>): void {
 		}
 		return
 	}
-
-	// .cause is thrown value of not type Error
-	expect(rec).toStrictEqual(spec)
 }
 
 function assertHasK<K extends string>(x: unknown, k: K): asserts x is { [k in K]: unknown } {

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { go, sleep } from "../source/index.mjs"
-import { allDone, allOneFail, first, firstOK } from "../source/job-helpers.mjs"
+import { allDone, allOneFail, first, firstOK, fromProm } from "../source/job-helpers.mjs"
 import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.mjs"
 import { isE } from "../source/errors.mjs"
+
+
+//* ********** Job Combinators  ********** *//
 
 describe("allDone()", () => {
 
@@ -203,6 +206,26 @@ describe("firstOK()", () => {
 		}
 		assertRibuErr(rec)
 		checkErrSpec(rec, exp)
+
+	})
+})
+
+
+//* **********  Promise to Job  ********** *//
+
+describe("fromProm()", () => {
+
+	it("job gets resumed when promise resolves", async () => {
+
+		const p = Promise.resolve(1)
+
+		function* main() {
+			const res = yield* fromProm(p).cont
+			return res
+		}
+
+		const rec = await go(main).promfyCont
+		expect(rec).toBe(1)
 
 	})
 })

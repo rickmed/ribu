@@ -53,7 +53,7 @@ Object.setPrototypeOf(RibuE.prototype, Error.prototype)
 // todo: Error & RibuE<Name> ??
 export type E<Name extends string = string> = Error & RibuE<Name>
 
-export function E<Name extends string>(name: Name, op = "", msg = "", cause?: RibuE): E<Name> {
+export function E<Name extends string>(name: Name, op = "", msg = "", cause?: unknown): E<Name> {
 	return new RibuE<Name>(name, msg, op, cause)
 }
 

@@ -1,6 +1,9 @@
-import { type Job, me, PARKED, cancel, go, type NotErrs } from "./job.mjs"
+import { type Job, me, PARKED, cancel, go, type NotErrs, newJob } from "./job.mjs"
 import { runningJob } from "./system.mjs"
 import { E, RibuE } from "./errors.mjs"
+
+
+//* **********  Job Combinators  ********** *//
 
 /*
 - Returns an array of the settled values of the passed-in jobs.
@@ -161,4 +164,19 @@ class _Ev<T = unknown> {
 
 export function Ev<T>() {
 	return new _Ev<T>()
+}
+
+
+
+//* **********  Promise to Job  ********** *//
+
+export function fromProm<T>(p: Promise<T>): Job<T> {
+	const job = newJob<T, E<"PromiseRejected">>()
+
+	p.then(
+		ok => job.settle(ok),
+		e => job.settle(E("PromiseRejected", "fromProm", "", e))
+	)
+
+	return job
 }

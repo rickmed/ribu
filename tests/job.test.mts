@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import { go, onEnd, sleep } from "../source/index.mjs"
 import { Err, isE } from "../source/errors.mjs"
-import { assertRibuErr, sleepProm } from "./utils.mjs"
+import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.mjs"
 
 
 describe(`jobs can be blocked waiting for other jobs to finish`, () => {
@@ -112,4 +112,34 @@ describe("onEnds run when job's generator function returns", () => {
 		await go(main).promfy
 		expect(onEnds).toStrictEqual(["job2 cleanup", "job cleanup", "async cleanup", "sync cleanup"])
 	})
+})
+
+describe("job can yield promises", () => {
+
+	it("job gets resumed when promise resolves", async () => {
+
+		function* main() {
+			const res = (yield Promise.resolve(1)) as number
+			return res
+		}
+
+		const rec = await go(main).promfyCont
+		expect(rec).toBe(1)
+	})
+
+	it("job fails with correct error when promise rejects", async () => {
+
+		function* main() {
+			const res = (yield Promise.reject("Bad")) as number
+			return res
+		}
+
+		const rec = await go(main).promfyCont
+
+		const exp = {
+			_op: "main",
+			cause: "Bad"
+		}
+		assertRibuErr(rec)
+		checkErrSpec(rec, exp)	})
 })

@@ -106,13 +106,6 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		this._parent = parent
 	}
 
-// difference is that wait targeJob is always async (different stack)
-	// unless sync which returns the iterator {done: true}, immediately
-
-// cancelCont:
-	// targetJob is not done, can't know if cancel will be sync or async (thus cb)
-	// need a way to resume callerJob
-
 	_resume(IOval?: unknown): void {
 		sys.stack.push(this)
 		this._setResume(IOval)
@@ -129,19 +122,31 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 		sys.stack.pop()
 
-		if (yielded.value === PARKED) {
+		const {value} = yielded
+
+		if (value === PARKED) {
 			this._state = PARKED
 		}
-		else if (yielded.value === CANCEL) {
+		else if (value === CANCEL) {
 			execCancel()
 		}
-		else if (yielded.value === CANCEL_JOBS) {
+		else if (value === CANCEL_JOBS) {
 			execCancelJobs()
 		}
 		else if (yielded.done) {
-			this.#genFnReturned(yielded.value as Ret)
+			this.#genFnReturned(value as Ret)
 		}
-		// job resumed uneventfully
+		else if (isProm(value)) {
+			value.then(
+				ok => this._resume(ok),
+				e => {
+					this._io = new Err(e, this._name) as Ret
+					this._endProtocol()
+				}
+			)
+		}
+
+		//else, job resumed uneventfully
 	}
 
 	_setResume(IOval?: unknown) {
@@ -263,7 +268,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		}
 
 		if (!(_onEnds || (_childs && _childs.size > 0))) {
-			this.#settle()
+			this.#_settle()
 			return
 		}
 
@@ -340,7 +345,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 				errors.push(err)
 			}
 			if (nDone === nWaiting) {
-				me.#settle(errors)
+				me.#_settle(errors)
 			}
 		}
 
@@ -349,7 +354,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		}
 	}
 
-	#settle(errors?: Error[]) {
+	#_settle(errors?: Error[]) {
 		if (this._state === "CANCELLING" && errors) {
 			const eCancOK = this._io as ECancOK
 			this._io = new Err(undefined, this._name, errors, eCancOK.message) as Ret
