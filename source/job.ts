@@ -1,6 +1,6 @@
-import { ArrSet, Events } from "./data-structures.mjs"
-import { ETimedOut, Err, isRibuE, ECancOK, E } from "./errors.mjs"
-import { runningJob, sys, theIterator } from "./system.mjs"
+import { ArrSet, Events } from "./data-structures.js"
+import { ETimedOut, Err, isRibuE, ECancOK, E } from "./errors.js"
+import { runningJob, sys, theIterator } from "./system.js"
 
 
 export function onEnd(x: OnEnd) {
@@ -627,7 +627,7 @@ function isProm(x: unknown): x is PromiseLike<unknown> {
 export type NotErrs<Ret> = Exclude<Ret, Error>
 type OnlyErrs<Ret> = Extract<Ret, Error>
 
-type Yieldable =
+export type Yieldable =
 	typeof PARKED |
 	typeof CANCEL |
 	typeof CANCEL_JOBS |

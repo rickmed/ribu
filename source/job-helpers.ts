@@ -1,6 +1,6 @@
-import { Job, me, PARKED, cancel, go, type NotErrs } from "./job.mjs"
-import { runningJob } from "./system.mjs"
-import { E, ECancOK, ETimedOut, Err, RibuE } from "./errors.mjs"
+import { Job, me, PARKED, cancel, go, type NotErrs } from "./job.js"
+import { runningJob } from "./system.js"
+import { E, ECancOK, ETimedOut, Err, RibuE } from "./errors.js"
 
 
 //* **********  Job Combinators  ********** *//

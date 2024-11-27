@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
-import { go } from "../source/job.mjs"
-import { sleep } from "../source/timers.mjs"
-import { assertRibuErr } from "./utils.mjs"
+import { go } from "../source/job.js"
+import { sleep } from "../source/timers.js"
+import { assertRibuErr } from "./utils.js"
 
 describe("job can be converted to promise", () => {
 

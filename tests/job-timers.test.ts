@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { go, sleep } from "../source/index.mjs"
-import { sleepProm } from "./utils.mjs"
+import { go, sleep } from "../source/index.js"
+import { sleepProm } from "./utils.js"
 
 
 describe("sleep()", () => {

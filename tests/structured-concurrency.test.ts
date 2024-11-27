@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { go, sleep } from "../source/index.mjs"
-import { assertRibuErr, checkErrSpec } from "./utils.mjs"
+import { go, sleep } from "../source/index.js"
+import { assertRibuErr, checkErrSpec } from "./utils.js"
 
 describe("job auto-waits for children to finish", () => {
 

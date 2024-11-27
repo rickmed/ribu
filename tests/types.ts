@@ -1,4 +1,4 @@
-import { go, sleep, E, newJob } from "../source/index.mjs"
+import { go, sleep, E, newJob } from "../source/index.js"
 
 export function* dummyToUseYield() {
 

@@ -8,10 +8,10 @@
   ],
   "exports": {
     ".": {
-      "import": "./source/index.mjs"
+      "import": "./source/index.js"
     },
     "./test": {
-      "import": "./tests/test-utils.mjs"
+      "import": "./tests/test-utils.js"
     }
   },
   "type": "module",

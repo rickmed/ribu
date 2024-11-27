@@ -1,8 +1,8 @@
-import { type Job } from "./job.mjs"
-import { TheIterable, theIterable, runningJob } from "./system.mjs"
-import { Queue } from "./data-structures.mjs"
+import { type Job } from "./job.js"
+import { TheIterable, theIterable, runningJob } from "./system.js"
+import { Queue } from "./data-structures.js"
 
-// todo: if job is done, skip (out of queue).
+// todo: if job is done, skip in putters/receivers queue.
 
 export type Ch<V = undefined> = _Ch<V>
 export function Ch<V = undefined>(): Ch<V> {
@@ -16,7 +16,7 @@ export function isCh(x: unknown): x is Ch {
 
 class BaseChan<V> {
 
-	puttersQ = new Queue<Job>()
+	puttersQ = new Queue<Job>()	
 	receiversQ = new Queue<Job>()
 	_enQueuedMsgs = new Queue<V>()  // @todo: ???
 	closed = false
@@ -29,17 +29,17 @@ class BaseChan<V> {
 export class _Ch<V = undefined> extends BaseChan<V> {
 
 	get rec() {
-		let recPrc = runningJob()
-		let putPrc = this.puttersQ.deQ()
+		let recJob = runningJob()
+		let putJob = this.puttersQ.deQ()
 
-		if (!putPrc) {
-			this.receiversQ.enQ(recPrc)
-			recPrc._setPark()
+		if (!putJob) {
+			this.receiversQ.enQ(recJob)
+			recJob._setPark()
 		}
 		else {
-			const putMsg = putPrc._io
-			putPrc.resume()
-			recPrc._setResume(putMsg)
+			const putMsg = putJob._io
+			putJob._resume()
+			recJob._setResume(putMsg)
 		}
 		return theIterable as TheIterable<V>
 	}
@@ -52,16 +52,16 @@ export class _Ch<V = undefined> extends BaseChan<V> {
 		// 	throw Error(`can't put() on a closed channel`)
 		// }
 
-		let putPrc = runningJob()
-		let recPrc = this.receiversQ.deQ()
+		let putJob = runningJob()
+		let recJob = this.receiversQ.deQ()
 
-		if (!recPrc) {
-			this.puttersQ.enQ(putPrc)
-			putPrc._setPark(msg)
+		if (!recJob) {
+			this.puttersQ.enQ(putJob)
+			putJob._setPark(msg)
 		}
 		else {
-			recPrc.resume(msg)
-			putPrc._setResume()
+			recJob._resume(msg)
+			putJob._setResume()
 		}
 		return theIterable as TheIterable<V>
 	}

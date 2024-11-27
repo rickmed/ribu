@@ -1,10 +1,10 @@
-import {go, Ev, type Job, E, newJob, cancel} from "../source/index.mjs"
+import {go, Ev, type Job, E, newJob, cancel} from "../source/index.js"
 import dns from "node:dns/promises"
 import net from "node:net"
 import { Socket } from "node:net"
-import { ArrSet } from "../source/data-structures.mjs"
-import { runningJob } from "../source/system.mjs"
-import { PARKED } from "../source/job.mjs"
+import { ArrSet } from "../source/data-structures.js"
+import { runningJob } from "../source/system.ts"
+import { PARKED } from "../source/job.ts"
 
 /* Happy EyeBalls algorithm:
 	- launch attempt

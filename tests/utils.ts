@@ -1,5 +1,5 @@
 import { expect } from "vitest"
-import { RibuE, Err, ERR_TAG } from "../source/errors.mjs"
+import { RibuE, Err, ERR_TAG } from "../source/errors.js"
 
 export async function check_ThrowsAwait(fn: () => Promise<unknown>): Promise<unknown> {
 	try {

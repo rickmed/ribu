@@ -12,5 +12,7 @@
       "strictPropertyInitialization": true,
       "noImplicitReturns": true,
       "noUncheckedIndexedAccess": true,
+      "esModuleInterop": true,
+      "declaration": true
    },
 }

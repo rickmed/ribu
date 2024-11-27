@@ -1,6 +1,6 @@
 import { describe, it } from "vitest"
-import { go, sleep, onEnd } from "../source/index.mjs"
-import { assertRibuErr, checkErrSpec } from "./utils.mjs"
+import { go, sleep, onEnd } from "../source/index.js"
+import { assertRibuErr, checkErrSpec } from "./utils.js"
 
 describe("non-cancellation scenarios", () => {
 

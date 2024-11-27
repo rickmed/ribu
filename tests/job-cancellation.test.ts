@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
-import { go, onEnd, cancel } from "../source/job.mjs"
-import { sleep } from "../source/timers.mjs"
-import { assertRibuErr, checkErrSpec } from "./utils.mjs"
+import { go, onEnd, cancel } from "../source/job.js"
+import { sleep } from "../source/timers.js"
+import { assertRibuErr, checkErrSpec } from "./utils.js"
 //todo: test "Cancelled by " message.
 describe(".cancel()", () => {
 

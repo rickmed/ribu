@@ -1,5 +1,5 @@
-import { PARKED } from "./job.mjs"
-import { runningJob } from "./system.mjs"
+import { PARKED } from "./job.js"
+import { runningJob } from "./system.js"
 
 export function sleep(ms: number): typeof PARKED {
 	let caller = runningJob()

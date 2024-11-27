@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
-import { go, onEnd, sleep } from "../source/index.mjs"
-import { Err, isE } from "../source/errors.mjs"
-import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.mjs"
+import { go, onEnd, sleep } from "../source/index.js"
+import { Err, isE } from "../source/errors.js"
+import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.js"
 
 
 describe(`jobs can be blocked waiting for other jobs to finish`, () => {

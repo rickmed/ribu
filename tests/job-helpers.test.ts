@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { go, sleep } from "../source/index.mjs"
-import { allDone, allOneFail, first, firstOK, fromProm } from "../source/job-helpers.mjs"
-import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.mjs"
-import { isE } from "../source/errors.mjs"
+import { go, sleep } from "../source/index.js"
+import { allDone, allOneFail, first, firstOK, fromProm } from "../source/job-helpers.js"
+import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.js"
+import { isE } from "../source/errors.js"
 
 
 //* ********** Job Combinators  ********** *//

@@ -1,4 +1,4 @@
-import { type Job } from "./job.mjs"
+import { Yieldable, type Job } from "./job.js"
 
 class System {
 	deadline = 5000
@@ -50,7 +50,7 @@ export const theIterable = {
 /* Types */
 
 export type TheIterable<V> = {
-	[Symbol.iterator]: () => Iterator<unknown, V>
+	[Symbol.iterator]: () => Iterator<Yieldable, V>
 }
 
 export type TheIterator<V> = Iterator<unknown, V>
