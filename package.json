@@ -27,11 +27,11 @@
     "@eslint/js": "^9.2.0",
     "@types/eslint__js": "^8.42.3",
     "@types/node": "^20.4.1",
-    "eslint": "^8.57.0",
-    "eslint-plugin-functional": "^6.5.1",
+    "eslint": "^9.15.0",
+    "eslint-plugin-functional": "^7.1.0",
     "tsx": "^3.12.7",
     "typescript": "^5.4.5",
-    "typescript-eslint": "^7.8.0",
+    "typescript-eslint": "^8.16.0",
     "vitest": "^1.6.0"
   },
   "repository": {
