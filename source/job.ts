@@ -445,19 +445,6 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		return this._failed
 	}
 
-	steal(jobs: Job[]) {
-		const len = jobs.length
-		for (let i = 0; i < len; i++) {
-			const job = jobs[i]!
-			job._parent?._childs?.delete(job)
-			job._parent = this
-			if (!this._childs) {
-				this._childs = new ArrSet()
-			}
-			this._childs.add(job)
-		}
-	}
-
 	settle(val: Ret | Errs) {
 		if (this._state === "DONE") {
 			return
@@ -478,6 +465,19 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 	// 		})
 	// 	}).then(thenOK, thenErr)
 	// }
+}
+
+export function steal(toJob_m: Job, jobs: Job[]) {
+	const len = jobs.length
+	for (let i = 0; i < len; i++) {
+		let job = jobs[i]!
+		job._parent?._childs?.delete(job)
+		job._parent = toJob_m
+		if (!toJob_m._childs) {
+			toJob_m._childs = new ArrSet()
+		}
+		toJob_m._childs.add(job)
+	}
 }
 
 
