@@ -1,4 +1,4 @@
-import { Job, me, PARKED, cancel, go, type NotErrs } from "./job.js"
+import { Job, PARKED, cancel, go, type NotErrs } from "./job.js"
 import { runningJob } from "./system.js"
 import { E, ECancOK, ETimedOut, Err, RibuE } from "./errors.js"
 
@@ -20,7 +20,6 @@ export function allOneFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 			return results
 		}
 
-		me().steal(jobs)
 		const ev = Ev()
 		for (const j of jobs) {
 			j._onDone(j => ev.emit(j))
@@ -56,7 +55,6 @@ export function allDone<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 			return results
 		}
 
-		me().steal(jobs)
 		const ev = Ev()
 		for (const j of jobs) {
 			j._onDone(j => ev.emit(j))
@@ -86,7 +84,6 @@ export function first<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 			return E("EmptyArguments", "first")
 		}
 
-		me().steal(jobs)
 		const ev = Ev()
 		for (const j of jobs) {
 			j._onDone(j => ev.emit(j))
@@ -114,7 +111,6 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 			return E("EmptyArguments", "firstOK")
 		}
 
-		me().steal(jobs)
 		const ev = Ev()
 		for (const j of jobs) {
 			j._onDone(j => ev.emit(j))
