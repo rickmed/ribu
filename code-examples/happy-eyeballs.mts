@@ -1,105 +1,134 @@
-import {go, Ev, type Job, E, newJob, cancel} from "../source/index.js"
+import { go, E as Err, Ch } from "../source/index.js"
 import dns from "node:dns/promises"
 import net from "node:net"
 import { Socket } from "node:net"
-import { ArrSet } from "../source/data-structures.js"
-import { runningJob } from "../source/system.ts"
-import { PARKED } from "../source/job.ts"
+import { onEnd } from "../source/job.js"
+import { OutCh } from "../source/channel.js"
 
 /* Happy EyeBalls algorithm:
-	- launch attempt
-	- if any inFlight attempt fails or timeout expires, launch another concurrent attempt
+	- launch attempt + timeout
+	- if any inFlight attempt fails or timeout expires, launch another concurrent attempt (+ new timeout)
 	- cancel everything when first attempt is succesful
 		- and return the socket
 		- if all attempts fail, return an Error.
 */
-export function* happyEB(hostName: string, port: number, delay: number = 300) {
 
-	const addrs = (yield dns.resolve4(hostName)) as string[]
+export async function* happyEyeBalls(hostName: string, port: number, delay: number = 300) {
 
-	if (addrs.length === 0) {
-		return E("NoAddressesFromDNS")
+	const addresses = await dns.resolve4(hostName)
+	const addressesLen = addresses.length
+
+	if (addressesLen === 0) {
+		return Err("NoAddressesFromDNS")
 	}
 
-	let addrsIdx = addrs.length
-	const fails = Ev()
-	const connectJobs = new Pool()
+	const ch = Ch<Socket | "FAILED" | "TIMED_OUT">()
+	let addrsIdx = 0
+	let inFlight = 0
+	let timeout!: NodeJS.Timeout
 
-	go(function* () {
-		for (;;) {
-			addrsIdx--
-			if (addrsIdx < 0) {
-				return
-			}
-			connectJobs.add(connect(addrs[addrsIdx]!))
-			yield fails.timeout(delay)
+	do {
+		if (addrsIdx < addressesLen) {
+			inFlight++
+			connect(addresses[addrsIdx++]!, ch)
+			timeout = setTimeout(() => ch.enQ("TIMED_OUT"), delay)
 		}
-	})
-
-	while (connectJobs.count) {
-		const job = (yield connectJobs.rec) as Job
-		if (job.val instanceof Socket) {
-			yield connectJobs.cancel()
-			return job.val
-		}
-		fails.emit()
-	}
+		const result = yield* ch.rec
+		clearTimeout(timeout)
+		if (result instanceof Socket) return result
+		if (result == "FAILED") inFlight--
+	} while (inFlight > 0)
 
 	return Error("All attempted connections failed")
+
+	// resources like in-flight socket connection attempts will be cancelled on return
 }
 
 
-class Pool<_Job extends Job> {
-
-	constructor(
-		private jobsStore: ArrSet<Job> = new ArrSet
-	) {}
-	inFlight = 0
-	waitingJob!: _Job
-
-	get count() {
-		return this.inFlight
-	}
-
-	get rec(): typeof PARKED {
-		this.waitingJob = runningJob() as _Job
-		return PARKED
-	}
-
-	add(job: _Job) {
-		this.jobsStore.add(job)
-		job._onDone(doneJob => {
-			this.jobsStore.delete(doneJob)
-			this.waitingJob._resume(doneJob.val)
-		})
-	}
-
-	cancel() {
-		return cancel(this.jobsStore.arr)
-	}
-}
-
-
-function connect(addrs: string) {
+function connect(addrs: string, outCh: OutCh<Socket | "FAILED">) {
 	const socket = new net.Socket()
-	const job = newJob()
 
-	job.onEnd(() => socket.destroy())
+	// onEnd adds a cancellation resource to sys.runningJob
+	// todo, optimize to something like onEnd(socket.destroy) maybe
+	onEnd(() => socket.destroy())
 
-	socket.on("error", e => {
-		job.settle(e)  // job will fail if settle value instanceof Error
-	})
+	let isConnected = false
 
 	socket.on("connect", () => {
-		job.settle(socket)
+		isConnected = true
+		outCh.enQ(socket)
+	})
+
+	socket.on("error", () => {
+		if (!isConnected)	outCh.enQ("FAILED")
+
 	})
 
 	socket.connect(443, addrs)
-	return job
 }
 
 
 
-/* using higher level primitives */
-// todo
-// function* happyEB_v2() {}
+// This version is closer to the natural specification but a bit less efficient
+// since it adds an additional job.
+export async function* happyEyeBalls_V2(hostName: string, port: number, delay: number = 300) {
+
+	let addresses = await dns.resolve4(hostName)
+
+	if (addresses.length === 0) {
+		return Err("NoAddressesFromDNS")
+	}
+
+	const connectRes = Ch<Socket | "FAIL">()
+	const failOrTimeout = Ch()
+	let inFlight = 0
+	let timeout!: NodeJS.Timeout
+
+	const launchJob = go(function* launcher() {
+		for (;;) {
+			if (addresses.length == 0) {
+				return
+			}
+			inFlight++
+			connect(addresses.shift()!)
+			timeout = setTimeout(() => failOrTimeout.enQ(), delay)
+			yield* failOrTimeout.rec
+			clearTimeout(timeout)
+		}
+	})
+
+	while (inFlight) {
+		const res = yield* connectRes.rec
+		if (res instanceof Socket) {
+			yield launchJob.cancel()
+			clearTimeout(timeout)
+			return res
+		}
+		inFlight--
+		yield failOrTimeout.put()
+	}
+
+	return Error("All attempted connections failed")
+	// resources like in-flight connection attempts will be cancelled on return
+
+	function connect(addrs: string) {
+		const socket = new net.Socket()
+
+		// onEnd adds a cancellation resource to sys.runningJob
+		// todo, optimize to something like onEnd(socket.destroy) maybe
+		onEnd(() => socket.destroy())
+
+		let isConnected = false
+
+		socket.on("connect", () => {
+			isConnected = true
+			connectRes.enQ(socket)
+		})
+
+		socket.on("error", () => {
+			if (!isConnected) connectRes.enQ("FAIL")
+		})
+
+		socket.connect(443, addrs)
+	}
+}

@@ -17,7 +17,6 @@ describe("message transfer: unbuffered channels", () => {
 
 		const res = await receiver.promfy
 		expect(res).toBe("hello")
-
 	})
 
 	it("receiver arrives first", async () => {
@@ -35,7 +34,6 @@ describe("message transfer: unbuffered channels", () => {
 
 		const res = await receiver.promfy
 		expect(res).toBe("hi")
-
 	})
 
 	it("multiple puts and receives in order", async () => {
@@ -60,7 +58,6 @@ describe("message transfer: unbuffered channels", () => {
 
 		const result = await receiver.promfy
 		expect(result).toEqual(["one", "two", "three"])
-
 	})
 
 	it("multiple producers to single consumer", async () => {
@@ -72,7 +69,6 @@ describe("message transfer: unbuffered channels", () => {
 			go(function* producer() {
 				yield* ch.put(val)
 			})
-
 		}
 
 		const receiver = go(function* receiver() {
@@ -83,105 +79,32 @@ describe("message transfer: unbuffered channels", () => {
 			return received
 		})
 
-		let res = await receiver.promfy
-		// Order might vary but should have all values
-		expect(res.sort()).toEqual(values.sort())
-
+		const res = await receiver.promfy
+		expect(res).toEqual(values.sort())
 	})
 
 	it("single producer to multiple consumers", async () => {
 
 		const ch = Ch<number>()
-		const count = 3
+		const messages = [0, 1, 2]
 
 		go(function* producer() {
-			for (let i = 0; i < count; i++) {
-				yield* ch.put(i)
+			for (const msg of messages) {
+				yield* ch.put(msg)
 			}
 		})
 
-		const consumers = Array.from({length: count}, () => 0).map(() =>
-			go(function* () {
+		const consumers = messages.map(() =>
+			go(function* consumer() {
 				return yield* ch.rec
 			})
 		)
 
-		let results = await Promise.all(consumers.map(c => c.promfy))
-		expect(results.sort()).toEqual([0, 1, 2])
-
+		const results = await Promise.all(consumers.map(c => c.promfy))
+		expect(results).toEqual([0, 1, 2])
 	})
 })
 
-
-describe.skip("buffered channels", () => {
-
-	it("works when receiver arrives first", async () => {
-
-		let recS: Array<number> = []
-
-		go(async function main() {
-
-			const ch1 = Ch<number>(1)
-
-			go(async function child() {
-				for (const i of range(2)) {
-					await ch1.put(i)
-				}
-				ch1.close()
-			})
-
-			while (ch1.notDone) {
-				const rec = await ch1.rec
-				recS.push(rec)
-			}
-		})
-
-		await promSleep(1)
-		check_Eq(recS).with([0, 1])
-	})
-
-	it("works when putter arrives first", async () => {
-
-		let recS: Array<number> = []
-
-		go(async function main() {
-
-			const ch1 = Ch<number>(1)
-
-			go(async function child() {
-				for (const i of range(2)) {
-					await ch1.put(i)
-				}
-				ch1.close()
-			})
-
-			await sleep(1)
-			while (ch1.notDone) {
-				const rec = await ch1.rec
-				recS.push(rec)
-			}
-		})
-
-		await promSleep(2)
-		check_Eq(recS).with([0, 1])
-	})
-
-	it("blocks when buffer is full", async () => {
-
-		let opS: Array<number> = []
-		const ch1 = Ch(2)
-
-		go(async function main() {
-			for (let i = 0; i < 3; i++) {
-				await ch1.put()
-				opS.push(i)
-			}
-		})
-
-		await promSleep(2)
-		check_Eq(opS).with([0, 1])
-	})
-})
 
 
 function* range(n: number) {

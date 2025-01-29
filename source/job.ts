@@ -98,11 +98,11 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		if (!parent) {
 			return
 		}
-		let parentCs = parent._childs
-		if (!parentCs) {
-			parent._childs = parentCs = new ArrSet()
+		let parentChilds = parent._childs
+		if (!parentChilds) {
+			parent._childs = parentChilds = new ArrSet()
 		}
-		parentCs.add(this)
+		parentChilds.add(this)
 		this._parent = parent
 	}
 
@@ -422,7 +422,9 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 	}
 
 	timeout(ms: number): this {
+
 		this._jobTimeout = setTimeout(() => {
+			// todo: fix bug "this" reference is lost in lambda
 			if (this._state !== "DONE") {
 				this._io = new ETimedOut(this._name) as Ret
 				if (this._state === "WAITING_CHILDS") {
@@ -431,6 +433,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 				this._endProtocol()
 			}
 		}, ms)
+
 		return this
 	}
 

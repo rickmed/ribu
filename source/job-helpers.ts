@@ -48,7 +48,7 @@ ie, it waits for all to settle.
  */
 export function allDone<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 
-	return go(function* _ad() {
+	return go(function* _allDone() {
 
 		let results: Array<NotErrs<Jobs[number]["val"]>> = []
 
@@ -67,6 +67,7 @@ export function allDone<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 			const job = (yield ev.wait) as Job
 			results.push(job.val as typeof results[number])
 		}
+
 		return results
 	})
 }
@@ -99,7 +100,7 @@ export function first<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 
 
 /*
-- Returns the settled value of the first job that settles _succesfully_.
+- Returns the settled value of the first job that settles successfully.
 - The rest are cancelled.
 - The jobs that failed are ignored.
 - Settles with Error if all jobs fail.
@@ -133,35 +134,16 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 	})
 }
 
-
 class _Ev<T = unknown> {
-
-	static Timeout = Symbol("to")
-
 	waitingJob!: Job
-	_timeout?: NodeJS.Timeout
-
 	emit(val?: T) {
-		if (this._timeout) {
-			clearTimeout(this._timeout)
-		}
 		this.waitingJob._resume(val)
 	}
-
-	timeout(ms: number): typeof PARKED {
-		const job = runningJob()
-		this._timeout = setTimeout(() => {
-			job._resume(_Ev.Timeout)
-		}, ms)
-		return PARKED
-	}
-
 	get wait(): typeof PARKED {
 		this.waitingJob = runningJob()
 		return PARKED
 	}
 }
-
 export function Ev<T>() {
 	return new _Ev<T>()
 }

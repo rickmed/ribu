@@ -32,7 +32,7 @@ export default ts_eslint.config({
 		],
 		"no-console": "error",
 		"prefer-const": "off",
-		curly: "error",
+		curly: ["error", "multi-line"],
 		"@typescript-eslint/no-this-alias": [
 			"error",
 			{
