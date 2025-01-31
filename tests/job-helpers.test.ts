@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { go, sleep } from "../source/index.js"
-import { allDone, allOneFail, first, firstOK, fromProm } from "../source/job-helpers.js"
+import { all, allOrFail, first, firstOK, fromProm } from "../source/job-helpers.js"
 import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.js"
 import { isE } from "../source/errors.js"
 
@@ -24,18 +24,18 @@ describe("allDone()", () => {
 		}
 
 		function* main() {
-			res = yield* allDone(go(job1), go(job2)).$
+			res = yield* all(go(job1), go(job2)).$
 			yield sleep(0)
 		}
 
 		go(main)
-		// sleepProm(15) ensures that job1 and job2 are ran concurrently
+		// sleepProm() ensures that job1 and job2 are ran concurrently
 		await sleepProm(15)
 		expect(res).toStrictEqual(["job1", 2])
 	})
 })
 
-describe("allOneFail()", () => {
+describe("allOrFail()", () => {
 
 	it("waits for jobs concurrently and return their results in an array", async () => {
 
@@ -52,7 +52,7 @@ describe("allOneFail()", () => {
 		}
 
 		function* main() {
-			res = yield* allOneFail(go(job1), go(job2)).$
+			res = yield* allOrFail(go(job1), go(job2)).$
 			yield sleep(0)
 		}
 
@@ -62,14 +62,14 @@ describe("allOneFail()", () => {
 		expect(res).toStrictEqual(["job1", 2])
 	})
 
-	it.only("settles with correct error if a passed-in job fails (others are cancelled)", async () => {
+	it("settles with correct error if a passed-in job fails (others are cancelled)", async () => {
 
 		const exp = {
 			name: "ProgramFailed",
 			_op: "main",
 			cause: {
 				name: "AJobFailed",
-				_op: "allOneFail",
+				_op: "allOrFail",
 				cause: {
 					_op: "job2",
 					cause: {
@@ -94,7 +94,7 @@ describe("allOneFail()", () => {
 		}
 
 		function* main() {
-			const res = yield* allOneFail(go(job1), go(job2)).cont
+			const res = yield* allOrFail(go(job1), go(job2)).cont
 			yield sleep(1)
 			if (isE(res)) {
 				return res.E("ProgramFailed")

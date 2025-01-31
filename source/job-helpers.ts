@@ -10,7 +10,7 @@ import { E, ECancOK, ETimedOut, Err, RibuE } from "./errors.js"
 - If one job fails, the remaining jobs are cancelled and the job fails.
 - Returns an empty array if the passed-in array in empty.
  */
-export function allOneFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
+export function allOrFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 
 	return go(function* _a1f() {
 
@@ -30,7 +30,7 @@ export function allOneFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 			const job = (yield ev.wait) as Job
 			if (job.failed) {
 				yield cancel(jobs)
-				return E("AJobFailed", "allOneFail", "", job.val as RibuE)
+				return E("AJobFailed", "allOrFail", "", job.val as RibuE)
 			}
 			results.push(job.val as typeof results[number])
 		}
@@ -45,7 +45,7 @@ export function allOneFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 ie, it waits for all to settle.
 - Returns an empty array if the passed-in array in empty.
  */
-export function allDone<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
+export function all<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 
 	return go(function* _allDone() {
 
