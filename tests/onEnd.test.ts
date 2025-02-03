@@ -1,6 +1,6 @@
 import { describe, it } from "vitest"
-import { go, sleep, onEnd } from "../source/index.js"
-import { assertRibuErr, checkErrSpec } from "./utils.js"
+import { go, sleep, onEnd } from "../source/index.ts"
+import { assertRibuErr, checkErrSpec } from "./utils.ts"
 
 describe("non-cancellation scenarios", () => {
 
@@ -26,7 +26,7 @@ describe("non-cancellation scenarios", () => {
 				onEnd(() => {
 					throw Error("while cleaning")
 				})
-				yield sleep(1)
+				yield* sleep(1)
 				return Error("Fail path")
 			}
 

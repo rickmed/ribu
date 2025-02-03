@@ -1,6 +1,6 @@
-import { type Job } from "./job.js"
-import { TheIterable, theIterable, runningJob } from "./system.js"
-import { Queue } from "./data-structures.js"
+import { type Job, type TheIterable } from "./job.ts"
+import { runningJob } from "./system.ts"
+import { Queue } from "./data-structures.ts"
 
 // todo: if job is done, skip in putters/receivers queue.
 
@@ -35,16 +35,16 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 		let recJob = runningJob()
 		let putJob = this.puttersQ.deQ()
 
+
 		if (!putJob) {
 			this.receiversQ.enQ(recJob)
-			recJob._setPark()
+			return recJob._park<V>()
 		}
-		else {
-			const putMsg = putJob._io
-			putJob._resume()
-			recJob._setResume(putMsg)
-		}
-		return theIterable as TheIterable<V>
+
+		console.log(".rec()", putJob._io)
+
+		putJob._resume()
+		return recJob._continue<V>(putJob._io)
 	}
 
 	put(msg: V): TheIterable<undefined>
@@ -60,13 +60,11 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 
 		if (!recJob) {
 			this.puttersQ.enQ(putJob)
-			putJob._setPark(msg)
+			return putJob._park(msg)
 		}
-		else {
-			recJob._resume(msg)
-			putJob._setResume()
-		}
-		return theIterable as TheIterable<undefined>
+
+		recJob._resume(msg)
+		return putJob._continue()
 	}
 
 	get notDone() {

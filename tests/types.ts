@@ -1,9 +1,9 @@
-import { go, sleep, E, newJob } from "../source/index.js"
+import { go, sleep, E, newJob } from "../source/index.ts"
 
 export function* dummyToUseYield() {
 
 	const job = go(function* fn(x?: number) {
-		yield sleep(1)
+		yield* sleep(1)
 		if (!x) {
 			return E("NoNumber")
 		}
@@ -37,7 +37,7 @@ export function* dummyToUseYield() {
 	// assert2<Equals3<typeof x3, undefined>>()
 
 	// const job2 = go(function* fn(x?: number) {
-	// 	yield sleep(1)
+	// 	yield* sleep(1)
 	// 	if (!x) return Error("NoNumber")
 	// 	if (x < 5) return E("TooLow")
 	// 	if (x < 10) return false

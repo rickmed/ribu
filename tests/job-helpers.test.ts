@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { go, sleep } from "../source/index.js"
-import { all, allOrFail, first, firstOK, fromProm } from "../source/job-helpers.js"
-import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.js"
-import { isE } from "../source/errors.js"
+import { go, sleep } from "../source/index.ts"
+import { all, allOrFail, first, firstOK, fromProm } from "../source/job-helpers.ts"
+import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.ts"
+import { isE } from "../source/errors.ts"
 
 
 //* ********** Job Combinators  ********** *//
@@ -14,18 +14,18 @@ describe("allDone()", () => {
 		let res: Array<string| number> = []
 
 		function* job1() {
-			yield sleep(10)
+			yield* sleep(10)
 			return "job1"
 		}
 
 		function* job2() {
-			yield sleep(10)
+			yield* sleep(10)
 			return 2
 		}
 
 		function* main() {
 			res = yield* all(go(job1), go(job2)).$
-			yield sleep(0)
+			yield* sleep(0)
 		}
 
 		go(main)
@@ -42,18 +42,18 @@ describe("allOrFail()", () => {
 		let res: Array<string| number> = []
 
 		function* job1() {
-			yield sleep(10)
+			yield* sleep(10)
 			return "job1"
 		}
 
 		function* job2() {
-			yield sleep(10)
+			yield* sleep(10)
 			return 2
 		}
 
 		function* main() {
 			res = yield* allOrFail(go(job1), go(job2)).$
-			yield sleep(0)
+			yield* sleep(0)
 		}
 
 		go(main)
@@ -83,19 +83,19 @@ describe("allOrFail()", () => {
 		let job1WasCancelled = true
 
 		function* job1() {
-			yield sleep(4)
+			yield* sleep(4)
 			job1WasCancelled = false
 			return "job1"
 		}
 
 		function* job2() {
-			yield sleep(2)
+			yield* sleep(2)
 			throw Error("pow")
 		}
 
 		function* main() {
 			const res = yield* allOrFail(go(job1), go(job2)).cont
-			yield sleep(1)
+			yield* sleep(1)
 			if (isE(res)) {
 				return res.E("ProgramFailed")
 			}
@@ -118,19 +118,19 @@ describe("first()", () => {
 		let job1WasCancelled = true
 
 		function* job1() {
-			yield sleep(20)
+			yield* sleep(20)
 			job1WasCancelled = false
 			return "job1"
 		}
 
 		function* job2Faster() {
-			yield sleep(10)
+			yield* sleep(10)
 			return 2
 		}
 
 		function* main() {
 			rec = yield* first(go(job1), go(job2Faster)).$
-			yield sleep(1)
+			yield* sleep(1)
 		}
 
 		go(main)
@@ -148,25 +148,25 @@ describe("firstOK()", () => {
 		let job1WasCancelled = true
 
 		function* job1Slow() {
-			yield sleep(20)
+			yield* sleep(20)
 			job1WasCancelled = false
 			return "job 1"
 		}
 
 		function* job2Fails() {
-			yield sleep(5)
+			yield* sleep(5)
 			throw Error("")
 			return "irrelevant"
 		}
 
 		function* job3Good() {
-			yield sleep(10)
+			yield* sleep(10)
 			return 3
 		}
 
 		function* main() {
 			rec = yield* firstOK(go(job1Slow), go(job2Fails), go(job3Good)).$
-			yield sleep(1)
+			yield* sleep(1)
 		}
 
 		go(main)
@@ -179,20 +179,20 @@ describe("firstOK()", () => {
 	it("settles with correct error if all jobs failed", async () => {
 
 		function* job1Fails() {
-			yield sleep(5)
+			yield* sleep(5)
 			throw Error("")
 			return "irrelevant"
 		}
 
 		function* job2Fails() {
-			yield sleep(5)
+			yield* sleep(5)
 			throw Error("")
 			return "irrelevant"
 		}
 
 		function* main() {
 			yield* firstOK(go(job1Fails), go(job2Fails)).$
-			yield sleep(1)
+			yield* sleep(1)
 		}
 
 		const rec = await go(main).promfyCont

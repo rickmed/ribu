@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { go, sleep } from "../source/index.js"
-import { assertRibuErr, checkErrSpec } from "./utils.js"
+import { go, sleep } from "../source/index.ts"
+import { assertRibuErr, checkErrSpec } from "./utils.ts"
 
 describe("job auto-waits for children to finish", () => {
 
@@ -9,14 +9,14 @@ describe("job auto-waits for children to finish", () => {
 		let childsDone = 0
 
 		function* child() {
-			yield sleep(2)
+			yield* sleep(2)
 			childsDone++
 		}
 
 		function* main() {
 			go(child)
 			go(child)
-			yield sleep(1)
+			yield* sleep(1)
 		}
 
 		await go(main).promfy
@@ -39,17 +39,17 @@ describe("job auto-waits for children to finish", () => {
 		let child2Finished = false
 
 		function* child1() {
-			yield sleep(2)
+			yield* sleep(2)
 			throw Error("Bad")
 		}
 
 		function* child2() {
-			yield sleep(3)
+			yield* sleep(3)
 			child2Finished = true
 		}
 
 		function* main() {
-			yield sleep(1)
+			yield* sleep(1)
 			go(child1)
 			go(child2)
 		}

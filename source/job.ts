@@ -1,6 +1,6 @@
-import { ArrSet, Events } from "./data-structures.js"
-import { ETimedOut, Err, isRibuE, ECancOK, E } from "./errors.js"
-import { runningJob, sys, theIterator } from "./system.js"
+import { ArrSet, Events } from "./data-structures.ts"
+import { ETimedOut, Err, isRibuE, ECancOK, E } from "./errors.ts"
+import { runningJob, sys } from "./system.ts"
 
 
 export function onEnd(x: OnEnd) {
@@ -18,11 +18,6 @@ export function go<Args extends unknown[], Ret>(genFn: RibuGenFn<Ret, Args>, ...
 
 
 //* **********  Job Class  ********** *//
-
-// todo: maybe change to symbol
-export const PARKED = "PARKED"
-const CANCEL = Symbol("c")
-const CANCEL_JOBS = Symbol("c_j")
 
 /* observe-resume model:
 
@@ -64,14 +59,20 @@ const EV = {
 	JOB_DONE_WAITCHILDS: "job.done.waitChilds"
 } as const
 
-type State = "PARKED" | "RUNNING" | "BLOCKED_$" | "BLOCKED_cont" | "WAITING_CHILDS" | "CANCELLING" | "TIMED_OUT" | "DONE"
+// todo: maybe change to symbol
+export const PARK_ = "P", CONTINUE_ = "CONT"
+const	CANCEL = "CANC", CANCEL_JOBS = "CANC_JOBS"
+
+export type PARK = typeof PARK_
+export type CONTINUE = typeof CONTINUE_
+type State = PARK | "RUNNING" | "BLOCKED_$" | "BLOCKED_cont" | "WAITING_CHILDS" | "CANCELLING" | "TIMED_OUT" | "DONE"
 
 export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 	_io: Ret | Errs = "$dummy" as (Ret | Errs)
 	_gen: Gen
 	_name: string
-	_state: State = "PARKED"
+	_state: State = PARK_
 	_failed = false
 	_childs?: ArrSet<Job>
 	_parent?: Job
@@ -110,6 +111,8 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		sys.stack.push(this)
 		this._setResume(IOval)
 
+		console.log("_resume", this._name, this._io)
+
 		try {
 			// eslint-disable-next-line no-var
 			var yielded = this._gen.next(IOval)
@@ -124,29 +127,32 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 		const {value} = yielded
 
-		if (value === PARKED) {
-			this._state = PARKED
-		}
-		else if (value === CANCEL) {
+		if (value === CANCEL) {
 			execCancel()
+			return
 		}
-		else if (value === CANCEL_JOBS) {
+		if (value === CANCEL_JOBS) {
 			execCancelJobs()
+			return
 		}
-		else if (yielded.done) {
+
+		if (yielded.done) {
 			this.#genFnReturned(value as Ret)
-		}
-		else if (isProm(value)) {
-			value.then(
-				ok => this._resume(ok),
-				e => {
-					this._io = new Err(E("PromiseRejected", "", "", e), this._name) as Ret
-					this._endProtocol()
-				}
-			)
 		}
 
 		//else, job resumed uneventfully
+	}
+
+	_continue<IterReturn>(IOval?: unknown) {
+		console.log("ms g", IOval)
+
+		this._io = IOval as Ret
+		return theIterable as TheIterable<IterReturn>
+	}
+
+	_park<IterReturn>(IOval?: unknown) {
+		this._setPark(IOval)
+		return theIterable as TheIterable<IterReturn>
 	}
 
 	_setResume(IOval?: unknown) {
@@ -155,7 +161,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 	}
 
 	_setPark(IOval?: unknown) {
-		this._state = "PARKED"
+		this._state = PARK_
 		this._io = IOval as Ret
 	}
 
@@ -404,7 +410,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		return new Promise<Ret>((res, rej) => {
 			this._onDone(jobDone => {
 				if (jobDone._failed) {
-					rej(jobDone.val)
+					rej(jobDone.val as Error)
 				}
 				else {
 					res(jobDone.val as Ret)
@@ -483,11 +489,6 @@ export function steal(toJob_m: Job, jobs: Job[]) {
 
 
 /* **********  Block/Wait Job Iterables  ********** */
-
-export let theIterResult = {
-	done: false,
-	value: 0 as unknown,
-}
 
 type RibuIterable<V> = {
 	[Symbol.iterator]: () => Iterator<Yieldable, V>
@@ -625,13 +626,51 @@ function isProm(x: unknown): x is PromiseLike<unknown> {
 
 
 
+//* **********  The Iterable  ********** *//
+
+let theIterResult = {
+	done: false,
+	value: 0 as unknown,
+}
+
+
+export const theIterator = {
+	next() {
+		const job = runningJob()
+		console.log("next", job._name, job._io)
+		if (job._state === "RUNNING") {
+			theIterResult.done = true
+			theIterResult.value = job._io
+		}
+		else {
+			theIterResult.done = false
+		}
+		return theIterResult
+	}
+}
+
+export const theIterable = {
+	[Symbol.iterator]() {
+		return theIterator
+	}
+}
+
+
+export type TheIterable<V> = {
+	[Symbol.iterator]: () => Iterator<Yieldable, V>
+}
+
+export type TheIterator<V> = Iterator<unknown, V>
+
+
+
 //* **********  Types  ********** *//
 
 export type NotErrs<Ret> = Exclude<Ret, Error>
 type OnlyErrs<Ret> = Extract<Ret, Error>
 
 export type Yieldable =
-	typeof PARKED |
+	PARK | CONTINUE |
 	typeof CANCEL |
 	typeof CANCEL_JOBS |
 	Promise<unknown>

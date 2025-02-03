@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest"
-import { go } from "../source/job.js"
-import { sleep } from "../source/timers.js"
-import { assertRibuErr } from "./utils.js"
+import { go } from "../source/job.ts"
+import { sleep } from "../source/timers.ts"
+import { assertRibuErr } from "./utils.ts"
 
 describe("job can be converted to promise", () => {
 
 	it("resolves correct awaited value when job is successful", async () => {
 		const job = go(function* other() {
-			yield sleep(1)
+			yield* sleep(1)
 			return "ok"
 		})
 
@@ -28,7 +28,7 @@ describe("job can be converted to promise", () => {
 		}
 
 		function* main() {
-			yield sleep(1)
+			yield* sleep(1)
 			throw Error("boom")
 		}
 

@@ -1,6 +1,6 @@
-import { Job, PARKED, cancel, go, type NotErrs } from "./job.js"
-import { runningJob } from "./system.js"
-import { E, ECancOK, ETimedOut, Err, RibuE } from "./errors.js"
+import { Job, PARK_, cancel, go, type NotErrs } from "./job.ts"
+import { runningJob } from "./system.ts"
+import { E, ECancOK, ETimedOut, Err, RibuE } from "./errors.ts"
 
 
 //* **********  Job Combinators  ********** *//
@@ -135,9 +135,9 @@ class _Ev<T = unknown> {
 	emit(val?: T) {
 		this.waitingJob._resume(val)
 	}
-	get wait(): typeof PARKED {
+	get wait(): typeof PARK_ {
 		this.waitingJob = runningJob()
-		return PARKED
+		return PARK_
 	}
 }
 export function Ev<T>() {

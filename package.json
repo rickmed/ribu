@@ -8,10 +8,10 @@
   ],
   "exports": {
     ".": {
-      "import": "./source/index.js"
+      "import": "./source/index.ts"
     },
     "./test": {
-      "import": "./tests/test-utils.js"
+      "import": "./tests/test-utils.ts"
     }
   },
   "type": "module",

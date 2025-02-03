@@ -1,4 +1,4 @@
-import { Yieldable, type Job } from "./job.js"
+import { type Job } from "./job.ts"
 
 class System {
 	deadline = 5000
@@ -17,40 +17,3 @@ export const sys = new System()
 export function runningJob() {
 	return sys.running!
 }
-
-
-export let theIterResult = {
-	done: false,
-	value: 0 as unknown,
-}
-
-
-export const theIterator = {
-	next() {
-		const job = runningJob()
-		if (job._state === "RUNNING") {
-			theIterResult.done = true
-			theIterResult.value = job._io
-		}
-		else {
-			theIterResult.done = false
-		}
-		return theIterResult
-	}
-}
-
-export const theIterable = {
-	[Symbol.iterator]() {
-		return theIterator
-	}
-}
-
-
-
-/* Types */
-
-export type TheIterable<V> = {
-	[Symbol.iterator]: () => Iterator<Yieldable, V>
-}
-
-export type TheIterator<V> = Iterator<unknown, V>

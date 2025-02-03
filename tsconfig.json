@@ -13,6 +13,8 @@
       "noImplicitReturns": true,
       "noUncheckedIndexedAccess": true,
       "esModuleInterop": true,
-      "declaration": true
+      "declaration": true,
+      "allowImportingTsExtensions": true,
+      "noEmit": true,
    },
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { Ch, go, sleep } from "../source/index.js"
+import { Ch, go, sleep } from "../source/index.ts"
 
 describe("channel closing with pending operations", () => {
 
@@ -18,7 +18,7 @@ describe("channel closing with pending operations", () => {
 				}
 			})
 
-			yield sleep(10) // Let put operation start and block
+			yield* sleep(10) // Let put operation start and block
 			ch._done()
 
 			return results
@@ -43,7 +43,7 @@ describe("channel closing with pending operations", () => {
 				}
 			})
 
-			yield sleep(10) // Let receive operation start and block
+			yield* sleep(10) // Let receive operation start and block
 			ch._done()
 
 			return results

@@ -1,9 +1,9 @@
-import { go, E as Err, Ch } from "../source/index.js"
+import { go, E as Err, Ch } from "../source/index.ts"
 import dns from "node:dns/promises"
 import net from "node:net"
 import { Socket } from "node:net"
-import { onEnd } from "../source/job.js"
-import { OutCh } from "../source/channel.js"
+import { onEnd } from "../source/job.ts"
+import { OutCh } from "../source/channel.ts"
 
 /* Happy EyeBalls algorithm:
 	- launch attempt + timeout

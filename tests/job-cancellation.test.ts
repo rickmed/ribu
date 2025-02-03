@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
-import { go, onEnd, cancel } from "../source/job.js"
-import { sleep } from "../source/timers.js"
-import { assertRibuErr, checkErrSpec } from "./utils.js"
+import { go, onEnd, cancel } from "../source/job.ts"
+import { sleep } from "../source/timers.ts"
+import { assertRibuErr, checkErrSpec } from "./utils.ts"
 //todo: test "Cancelled by " message.
 describe(".cancel()", () => {
 
@@ -11,10 +11,10 @@ describe(".cancel()", () => {
 
 		function* main() {
 			const chld = go(function* child() {
-				yield sleep(4)
+				yield* sleep(4)
 				childReturned = true
 			})
-			yield sleep(2)
+			yield* sleep(2)
 			yield chld.cancel()
 		}
 
@@ -31,15 +31,15 @@ describe(".cancel()", () => {
 			const childJob = go(function* child() {
 
 				go(function* grandChild() {
-					yield sleep(3)
+					yield* sleep(3)
 					changed++
 				})
 
-				yield sleep(3)
+				yield* sleep(3)
 				changed++
 			})
 
-			yield sleep(1)
+			yield* sleep(1)
 			yield childJob.cancel()
 		})
 
@@ -51,10 +51,10 @@ describe(".cancel()", () => {
 
 		function* main() {
 			const chld = go(function* child() {
-				yield sleep(1)
+				yield* sleep(1)
 				return "child done"
 			})
-			yield sleep(2)
+			yield* sleep(2)
 			yield chld.cancel()
 			return [chld.val, "main done"]
 		}
@@ -79,11 +79,11 @@ describe(".cancel()", () => {
 		function* main() {
 
 			const chld = go(function* child() {
-				yield sleep(1)
+				yield* sleep(1)
 				return Error("Bad")
 			})
 
-			yield sleep(2)
+			yield* sleep(2)
 			yield chld.cancel()
 			return true
 		}
@@ -102,7 +102,7 @@ describe.todo("using onEnds", () => {
 	// 	onEnd(() => {
 
 	// 	})
-	// 	yield sleep(1)
+	// 	yield* sleep(1)
 	// }
 
 	// function* main() {
@@ -118,18 +118,18 @@ describe("cancel(jobs)", () => {
 		let childReturned = 0
 
 		function* child1() {
-			yield sleep(4)
+			yield* sleep(4)
 			childReturned++
 		}
 
 		function* child2() {
-			yield sleep(4)
+			yield* sleep(4)
 			childReturned++
 		}
 
 		function* main() {
 			const jobs = [go(child1), go(child2)]
-			yield sleep(2)
+			yield* sleep(2)
 			yield cancel(jobs)
 		}
 
@@ -160,12 +160,12 @@ describe("cancel(jobs)", () => {
 			onEnd(() => {
 				throw Error("clean-up after cancel")
 			})
-			yield sleep(3)
+			yield* sleep(3)
 			childsReturned++
 		}
 
 		function* child2() {
-			yield sleep(3)
+			yield* sleep(3)
 			childsReturned++
 		}
 
@@ -174,7 +174,7 @@ describe("cancel(jobs)", () => {
 				throw Error("main() clean-up after cancel fail")
 			})
 			const jobs = [go(child1), go(child2)]
-			yield sleep(1)
+			yield* sleep(1)
 			yield cancel(jobs)
 		}
 

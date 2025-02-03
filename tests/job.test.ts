@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
-import { go, onEnd, sleep } from "../source/index.js"
-import { Err, isE } from "../source/errors.js"
-import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.js"
+import { go, onEnd, sleep } from "../source/index.ts"
+import { Err, isE } from "../source/errors.ts"
+import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.ts"
 
 
 describe(`jobs can be blocked waiting for other jobs to finish`, () => {
@@ -9,7 +9,7 @@ describe(`jobs can be blocked waiting for other jobs to finish`, () => {
 	it("using .$, the target job unblocks the caller job with its return value", async () => {
 
 		function* child() {
-			yield sleep(1)
+			yield* sleep(1)
 			return "child one"
 		}
 
@@ -25,7 +25,7 @@ describe(`jobs can be blocked waiting for other jobs to finish`, () => {
 	it("using .cont, the target job unblocks the caller job with its return value, including possible errors", async () => {
 
 		function* child() {
-			yield sleep(1)
+			yield* sleep(1)
 			return "child done"
 		}
 
@@ -64,7 +64,7 @@ describe("Job Errors. Job settles with the right error when:", () => {
 		function* main() {
 
 			function* inner() {
-				yield sleep(1)
+				yield* sleep(1)
 				throw Error("boom")
 			}
 
@@ -98,15 +98,15 @@ describe("onEnds run when job's generator function returns", () => {
 
 			onEnd(function* () {
 				onEnds.push("job cleanup")
-				yield sleep(1)
+				yield* sleep(1)
 			})
 
 			onEnd(() => go(function* () {
 				onEnds.push("job2 cleanup")
-				yield sleep(1)
+				yield* sleep(1)
 			}).timeout(3))
 
-			yield sleep(1)
+			yield* sleep(1)
 		}
 
 		await go(main).promfy
