@@ -1,5 +1,5 @@
 import { ArrSet, Events } from "./data-structures.ts"
-import { ETimedOut, Err, isRibuE, ECancOK, E } from "./errors.ts"
+import { ETimedOut, Err, isRibuE, ECancOK } from "./errors.ts"
 import { runningJob, sys } from "./system.ts"
 
 
@@ -73,6 +73,9 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 	_gen: Gen
 	_name: string
 	_state: State = PARK_
+
+	// Because a job can settle with ECancOK which technically isn't a faillure but,
+	// when awaiting for a job, the caller shouldn't continue if called job settled with ECancOK.
 	_failed = false
 	_childs?: ArrSet<Job>
 	_parent?: Job
@@ -111,8 +114,6 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		sys.stack.push(this)
 		this._setResume(IOval)
 
-		console.log("_resume", this._name, this._io)
-
 		try {
 			// eslint-disable-next-line no-var
 			var yielded = this._gen.next(IOval)
@@ -144,8 +145,6 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 	}
 
 	_continue<IterReturn>(IOval?: unknown) {
-		console.log("ms g", IOval)
-
 		this._io = IOval as Ret
 		return theIterable as TheIterable<IterReturn>
 	}
@@ -240,12 +239,12 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 
 	get $() {
 		this.#prepSystem("BLOCKED_$")
-		return blockJobIterable as RibuIterable<Ret>
+		return blockJobIterable as TheIterable<Ret>
 	}
 
 	get cont() {
 		this.#prepSystem("BLOCKED_cont")
-		return blockJobIterable as RibuIterable<typeof this._io>
+		return blockJobIterable as TheIterable<typeof this._io>
 	}
 
 	#prepSystem(state: "BLOCKED_cont" | "BLOCKED_$"): void {
@@ -490,9 +489,6 @@ export function steal(toJob_m: Job, jobs: Job[]) {
 
 /* **********  Block/Wait Job Iterables  ********** */
 
-type RibuIterable<V> = {
-	[Symbol.iterator]: () => Iterator<Yieldable, V>
-}
 
 const blockJobIterable = {
 	[Symbol.iterator]() {
@@ -637,7 +633,6 @@ let theIterResult = {
 export const theIterator = {
 	next() {
 		const job = runningJob()
-		console.log("next", job._name, job._io)
 		if (job._state === "RUNNING") {
 			theIterResult.done = true
 			theIterResult.value = job._io

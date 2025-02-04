@@ -2,7 +2,7 @@ import { it, expect } from "vitest"
 import { Ch, go } from "../source/index.ts"
 
 
-it.only("putter arrives first", async () => {
+it("putter arrives first", async () => {
 
 	const ch = Ch<string>()
 

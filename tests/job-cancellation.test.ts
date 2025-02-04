@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest"
 import { go, onEnd, cancel } from "../source/job.ts"
 import { sleep } from "../source/timers.ts"
 import { assertRibuErr, checkErrSpec } from "./utils.ts"
+
 //todo: test "Cancelled by " message.
+
 describe(".cancel()", () => {
 
-	it("a job can cancel another job", async () => {
+	it.only("a job can cancel another job", async () => {
 
 		let childReturned = false
 
@@ -15,7 +17,7 @@ describe(".cancel()", () => {
 				childReturned = true
 			})
 			yield* sleep(2)
-			yield chld.cancel()
+			yield* chld.cancel()
 		}
 
 		await go(main).promfy

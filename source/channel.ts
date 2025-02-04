@@ -41,10 +41,9 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 			return recJob._park<V>()
 		}
 
-		console.log(".rec()", putJob._io)
-
+		const msg = putJob._io
 		putJob._resume()
-		return recJob._continue<V>(putJob._io)
+		return recJob._continue<V>(msg)
 	}
 
 	put(msg: V): TheIterable<undefined>
