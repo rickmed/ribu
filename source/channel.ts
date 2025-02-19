@@ -2,7 +2,13 @@ import { type Job, type TheIterable } from "./job.ts"
 import { runningJob } from "./system.ts"
 import { Queue } from "./data-structures.ts"
 
-// todo: if job is done, skip in putters/receivers queue.
+// channel resumes job if job._state != DONE
+// else, it skips it and pulls another one
+// ie, a blocked job in rec should be skipped (since wont do anything witl the msg)
+// but a blocked job in put, the receveing job should take out its msg from _io
+
+// Optimization: lots of Channels are to send only one msg,
+	// so only instantiate internal queue at second queued msg.
 
 export function Ch<V = undefined>(): Chan<V> {
 	return new Chan<V>()
@@ -34,7 +40,6 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 	get rec() {
 		let recJob = runningJob()
 		let putJob = this.puttersQ.deQ()
-
 
 		if (!putJob) {
 			this.receiversQ.enQ(recJob)

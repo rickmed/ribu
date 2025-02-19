@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { go, sleep } from "../source/index.ts"
-import { all, allOrFail, first, firstOK, fromProm } from "../source/job-helpers.ts"
+import { all, allOrFail, first, firstOK, promToJob } from "../source/job-helpers.ts"
 import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.ts"
 import { isE } from "../source/errors.ts"
 
@@ -94,7 +94,7 @@ describe("allOrFail()", () => {
 		}
 
 		function* main() {
-			const res = yield* allOrFail(go(job1), go(job2)).cont
+			const res = yield* allOrFail(go(job1), go(job2)).err
 			yield* sleep(1)
 			if (isE(res)) {
 				return res.E("ProgramFailed")
@@ -218,7 +218,7 @@ describe("yield* fromProm()", () => {
 	it("job gets resumed when promise resolves", async () => {
 
 		function* main() {
-			const job = fromProm(Promise.resolve(1))
+			const job = promToJob(Promise.resolve(1))
 			const res = yield* job.$
 			return res
 		}
@@ -231,7 +231,7 @@ describe("yield* fromProm()", () => {
 	it("job fails with correct error when promise rejects", async () => {
 
 		function* main() {
-			const job = fromProm(Promise.reject("Bad"))
+			const job = promToJob(Promise.reject("Bad"))
 			const res = yield* job.$
 			return res
 		}

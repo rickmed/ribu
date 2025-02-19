@@ -29,7 +29,7 @@ export function* dummyToUseYield() {
 	*/
 	// todo: I don't like Err, change to E<"E"> for consistency
 	type Exp2 = E<"NoNumber"> | E<"TooLow"> | E<"CancOK"> | E<"TimedOut"> | E<"Err"> | false | 1
-	const x2 = yield* job.cont
+	const x2 = yield* job.err
 	check_Eq<Exp2>()(x2)
 
 	// todo

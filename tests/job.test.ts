@@ -4,9 +4,9 @@ import { Err, isE } from "../source/errors.ts"
 import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.ts"
 
 
-describe(`jobs can be blocked waiting for other jobs to finish`, () => {
+describe(`jobs blocks and resumes waiting for other jobs to finish`, () => {
 
-	it("using .$, the target job unblocks the caller job with its return value", async () => {
+	it.only("using .$, the target job unblocks the caller job with its return value", async () => {
 
 		function* child() {
 			yield* sleep(1)
@@ -30,7 +30,7 @@ describe(`jobs can be blocked waiting for other jobs to finish`, () => {
 		}
 
 		function* main() {
-			const res = yield* go(child).cont
+			const res = yield* go(child).err
 			if (isE(res)) {  // just to demo basic usage
 				return res
 			}

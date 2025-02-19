@@ -1,90 +1,97 @@
-import { ArrSet, Events } from "./data-structures.ts"
+import { ArrSet} from "./data-structures.ts"
 import { ETimedOut, Err, isRibuE, ECancOK } from "./errors.ts"
-import { runningJob, sys } from "./system.ts"
+import { Timeout } from "./timers.ts"
 
 
-export function onEnd(x: OnEnd) {
-	runningJob().onEnd(x)
+//* **********  System  ********** *//
+
+export enum Event {
+	PARK = 1,
+	RESUME,
+	JOB_RETURNED,
+	JOB_THREW,
+	CANCEL,
+	CANCEL_JOBS_EV
 }
 
-export function me(): Job {
-	return runningJob()
+export const {
+	PARK,
+	RESUME,
+	JOB_RETURNED,
+	JOB_THREW,
+	CANCEL,
+	CANCEL_JOBS_EV
+} = Event
+
+export enum State {
+	RUNNING = 1,
+	PARKED_CONTINUE,
+	PARKED_END_IF_ERR,
+	PARKED_SLEEP,
+	GEN_DONE_WAITING_CHILDS,
+	GEN_DONE_WAITING_ASYNC_ONENDS,
+	CANCELLING,
+	DONE
 }
 
-export function go<Args extends unknown[], Ret>(genFn: RibuGenFn<Ret, Args>, ...args: Args) {
-	const gen = genFn(...args)
-	return new Job<NotErrs<Ret>, OnlyErrs<Ret> | ECancOK | ETimedOut | Err>(gen, genFn.name, true)._run()
+export const { RUNNING, PARKED_CONTINUE, PARKED_END_IF_ERR, PARKED_SLEEP, GEN_DONE_WAITING_CHILDS, GEN_DONE_WAITING_ASYNC_ONENDS, CANCELLING, DONE } = State
+
+type Targets = Target | Target[]
+
+type StateCtx =
+	| [State.RUNNING, 0]
+	| [State.PARKED_CONTINUE, string]
+	| [State.PARKED_END_IF_ERR, string]
+	| [State.PARKED_SLEEP, Timeout]
+	| [State.GEN_DONE_WAITING_CHILDS, Targets]
+	| [State.GEN_DONE_WAITING_ASYNC_ONENDS, undefined]
+	| [State.CANCELLING, null]
+	| [State.DONE, {yes: boolean}]
+
+type StateCtxVal<T extends State> = Extract<StateCtx, [T, unknown]> extends [T, infer U] ? U : never;
+
+/* *** System variables *** */
+
+let jobStack: Array<Job> = []
+let jobInProcess!: Job
+let shouldIteratorPark: typeof PARK | 0 = PARK
+let targetJob!: Job
+let cancelCallerJob!: Job
+let cancelTargetJobs!: Job
+
+// todo: maybe optimize to just a shared object access
+export function runningJob() {
+	return jobInProcess
 }
+
 
 
 //* **********  Job Class  ********** *//
 
-/* observe-resume model:
-
-	- Things subscribe to job._on(EV.JOB_DONE, cb) event when want to be notified
-	when observingJob is done.
-
-	- Jobs observing other jobs (yield*) insert cb :: (jobDone) => observer._resume()
-		- There's no way for user to stop observing a job.
-			- When yield* job.cancel() is called and additional observer is added,
-			and the other observers (yield* job.$) are resumed when job settles
-			(with CancOK|Errors in this case)
-
-	- Cancellation (and removal of things I'm observing)
-		- Set callbacks (eg: setTimeout) need to be removed on cancellation
-			(as opposed of cb being "() => if job === DONE; return")
-		bc, eg, nodejs won't end process if timeout cb isn't cleared.
-
-	- Channels:
-		- Removing a job from within a queue is expensive, so channel checks
-		if job === DONE and skips it (removed from queue and not resumed)
-*/
-
-/* Internals:
-
-- Things IO/Comms model:
-	- job.resume(IOmsg) to have job receive some value and act on it
-	- set job.val = IOmsg to whichever observer to consume.
+// cancelling children and onEnds
+	// nWaiting
+	// errors[], could use ._io
 
 
-- When yield* is called, [Symbol.iterator]() which returns the iterable,
-	- iterable.next() is called
-		.next() checks if iterable is "PARK" and returns {done: false}
-			- or {done: true, value: iterable.val}
 
-*/
+export class Job<Ret = unknown, Errs = unknown> {
 
-const EV = {
-	JOB_DONE: "job.done",
-	JOB_DONE_WAITCHILDS: "job.done.waitChilds"
-} as const
-
-// todo: maybe change to symbol
-export const PARK_ = "P", CONTINUE_ = "CONT"
-const	CANCEL = "CANC", CANCEL_JOBS = "CANC_JOBS"
-
-export type PARK = typeof PARK_
-export type CONTINUE = typeof CONTINUE_
-type State = PARK | "RUNNING" | "BLOCKED_$" | "BLOCKED_cont" | "WAITING_CHILDS" | "CANCELLING" | "TIMED_OUT" | "DONE"
-
-export class Job<Ret = unknown, Errs = unknown> extends Events {
-
-	_io: Ret | Errs = "$dummy" as (Ret | Errs)
 	_gen: Gen
 	_name: string
-	_state: State = PARK_
+	__state: State = RUNNING
+	_stateCtx: StateCtxVal<State> = 0
 
-	// Because a job can settle with ECancOK which technically isn't a faillure but,
-	// when awaiting for a job, the caller shouldn't continue if called job settled with ECancOK.
+	// Used as an Inbox/Outbox for the job
+	_io: Ret | Errs = "$dummy" as (Ret | Errs)
+
+	// Because a job can settle with ECancOK, which technically isn't a failure but,
+	// when const res = yield* job.$, the caller shouldn't continue if called job settled with ECancOK.
 	_failed = false
 	_childs?: ArrSet<Job>
 	_parent?: Job
-	_sleepTO?: NodeJS.Timeout
 	_onEnds?: OnEnd | OnEnd[]
-	_jobTimeout?: NodeJS.Timeout
 
 	constructor(gen: Gen, genFnName: string, withParent?: boolean) {
-		super()
 		this._gen = gen
 		this._name = genFnName
 		if (withParent) {
@@ -93,7 +100,7 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 	}
 
 	_run() {
-		this._resume()
+		resumeJob(this)
 		return this
 	}
 
@@ -181,10 +188,9 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		}
 		if (this._childs?.size) {
 			this.#waitChilds()
+			return
 		}
-		else {
-			this._endProtocol()
-		}
+		this._endProtocol()
 	}
 
 	#waitChilds() {
@@ -242,34 +248,30 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		return blockJobIterable as TheIterable<Ret>
 	}
 
-	get cont() {
+	get err() {
 		this.#prepSystem("BLOCKED_cont")
 		return blockJobIterable as TheIterable<typeof this._io>
 	}
 
 	#prepSystem(state: "BLOCKED_cont" | "BLOCKED_$"): void {
 		runningJob()._state = state
-		sys.targetJob = this
+		targetJob = this
 	}
 
 	/**
 	 * Fails caller if result is other than ECancOK
 	 */
 	cancel(): typeof CANCEL {
-		sys.targetJob = this
-		sys.cancelCallerJob = runningJob()
+		targetJob = this
+		cancelCallerJob = runningJob()
 		return CANCEL
 	}
 
 	_endProtocol(errors?: Error[]) {
-		const { _sleepTO, _jobTimeout, _onEnds, _childs } = this
+		const { _sleepTO, _onEnds, _childs } = this
 
 		if (_sleepTO) {
 			clearTimeout(_sleepTO)
-		}
-
-		if (_jobTimeout) {
-			clearTimeout(_jobTimeout)
 		}
 
 		if (!(_onEnds || (_childs && _childs.size > 0))) {
@@ -418,30 +420,6 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 		})
 	}
 
-	get promfyCont() {
-		return new Promise<typeof this._io>(res => {
-			this._onDone(job => {
-				res(job.val as Ret)
-			})
-		})
-	}
-
-	timeout(ms: number): this {
-
-		this._jobTimeout = setTimeout(() => {
-			// todo: fix bug "this" reference is lost in lambda
-			if (this._state !== "DONE") {
-				this._io = new ETimedOut(this._name) as Ret
-				if (this._state === "WAITING_CHILDS") {
-					this._removeWaitChildsCBs()
-				}
-				this._endProtocol()
-			}
-		}, ms)
-
-		return this
-	}
-
 	get val() {
 		return this._io
 	}
@@ -470,7 +448,144 @@ export class Job<Ret = unknown, Errs = unknown> extends Events {
 	// 		})
 	// 	}).then(thenOK, thenErr)
 	// }
+
+
 }
+
+type Observer = {
+	onTargetDone(target: Target): void
+}
+
+type Target = {
+	removeObserver(observer: Observer): void
+}
+
+
+//* **********  State Machine Step function  ********** *//
+
+export function Step(job: Job, ev: Event, evData: unknown): State {
+	let state = job.__state
+	let stateCtx = job._stateCtx
+	let newState = state
+
+	if (state === PARKED_SLEEP) {
+		clearTimeout(stateCtx as StateCtxVal<typeof PARKED_SLEEP>)
+	}
+
+	// Maybe implement same protocol for all Step(JOB_FAILED)
+	// so if I job is blocked at ch.rec and its cancelled
+		// it will go to cancel state and channel will not resume
+
+	// Maybe branch on event.
+		// Maybe implement CANCEL setting a onEnd()
+
+	// MAIN idea is that observers just adds itself in target.observers
+		// so that targetJob can call a single function Step(callerJob, JOB_DONE, targetJob)
+		// so it's observer responsability to branch on its state.
+
+	// eslint-disable-next-line no-constant-condition
+	stepping: while (1) {
+
+		if (state === RUNNING) {
+		// handle RUNNING
+
+			newState = RUNNING
+		}
+		if (state === PARKED_CONTINUE) {
+		// handle PARKED_CONTINUE
+			newState = PARKED_CONTINUE
+		}
+		if (state === PARKED_END_IF_ERR) {
+		// handle PARKED_END_IF_ERR
+		// state = 'B';
+			newState = PARKED_END_IF_ERR
+		}
+
+		if (state === GEN_DONE_WAITING_CHILDS) {
+		// handle GEN_DONE_WAITING_CHILDS
+			newState = GEN_DONE_WAITING_CHILDS
+		}
+		if (state === CANCELLING) {
+		// handle CANCELLLING
+			newState = CANCELLING
+		}
+		if (state === DONE) {
+		// handle DONE
+			newState = DONE
+		}
+
+		return newState
+	}
+}
+
+
+export function resumeJob(job: Job) {
+	jobStack.push(job)
+	jobInProcess = job
+	try {
+		// No values are passed into gen.next() because values inside the generator
+		// function are received automatically by the returned {value} of the
+		// delegated theIterator
+		const { done, value} = job._gen.next()
+		if (done) {
+			Step(job, JOB_RETURNED, value)
+		}
+	}
+	catch (e) {
+		Step(job, JOB_THREW, e)
+	}
+	finally {
+		jobInProcess = jobStack.pop()!
+	}
+}
+
+export function setRunning(job_m: Job) {
+	job_m.__state = RUNNING
+	job_m._io = undefined
+}
+
+export function setStateAndCtx<S extends State>(job_m: Job, state: S, stateCtx: StateCtxVal<S>) {
+	job_m.__state = state
+	job_m._stateCtx = stateCtx as StateCtxVal<State>
+}
+
+export function parkOrContinue(job_m: Job, shouldPark: typeof shouldIteratorPark): NewTheIterable<never>
+export function parkOrContinue<IterableRet>(job_m: Job, shouldPark: typeof shouldIteratorPark = PARK, IOval?: IterableRet) {
+	shouldIteratorPark = shouldPark
+	job_m._io = IOval
+	return NewtheIterable as NewTheIterable<IterableRet>
+}
+
+let NewtheIterResult = {
+	done: false,
+	value: 0 as unknown,
+}
+
+export const NewtheIterator = {
+	next() {
+		if (shouldIteratorPark) {
+			// since job will be parked, no need to set value since it will be
+			// ignored by gen.next() call
+			NewtheIterResult.done = false
+		}
+		else {
+			NewtheIterResult.done = true
+			NewtheIterResult.value = jobInProcess._io
+		}
+		return NewtheIterResult
+	}
+}
+
+export type NewTheIterable<V> = {
+	[Symbol.iterator]: () => Iterator<never, V>
+}
+
+export const NewtheIterable = {
+	[Symbol.iterator]() {
+		return NewtheIterator
+	}
+}
+
 
 export function steal(toJob_m: Job, jobs: Job[]) {
 	const len = jobs.length
@@ -484,6 +599,7 @@ export function steal(toJob_m: Job, jobs: Job[]) {
 		toJob_m._childs.add(job)
 	}
 }
+
 
 
 
@@ -597,7 +713,23 @@ function execCancelJobs(): void {
 	}
 }
 
+export function jobFailed(jobIO: unknown): jobIO is Err {
+	return jobIO instanceof Err
+}
 
+
+export function onEnd(x: OnEnd) {
+	runningJob().onEnd(x)
+}
+
+export function me(): Job {
+	return runningJob()
+}
+
+export function go<Args extends unknown[], Ret>(genFn: RibuGenFn<Ret, Args>, ...args: Args) {
+	const gen = genFn(...args)
+	return new Job<NotErrs<Ret>, OnlyErrs<Ret> | ECancOK | ETimedOut | Err>(gen, genFn.name, true)._run()
+}
 
 //* **********  Utils  ********** *//
 
@@ -664,17 +796,11 @@ export type TheIterator<V> = Iterator<unknown, V>
 export type NotErrs<Ret> = Exclude<Ret, Error>
 type OnlyErrs<Ret> = Extract<Ret, Error>
 
-export type Yieldable =
-	PARK | CONTINUE |
-	typeof CANCEL |
-	typeof CANCEL_JOBS |
-	Promise<unknown>
-
 export type Gen<Ret = unknown, Rec = unknown> =
-	Generator<Yieldable, Ret, Rec>
+	Generator<never, Ret, Rec>
 
 export type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
-	(...args: Args) => Generator<Yieldable, Ret>
+	(...args: Args) => Generator<never, Ret>
 
 type OnEnd =
 	(() => unknown) | (() => Promise<unknown>) |

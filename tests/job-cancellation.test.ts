@@ -132,7 +132,7 @@ describe("cancel(jobs)", () => {
 		function* main() {
 			const jobs = [go(child1), go(child2)]
 			yield* sleep(2)
-			yield cancel(jobs)
+			yield* cancel(jobs)
 		}
 
 		await go(main).promfy
@@ -177,7 +177,7 @@ describe("cancel(jobs)", () => {
 			})
 			const jobs = [go(child1), go(child2)]
 			yield* sleep(1)
-			yield cancel(jobs)
+			yield* cancel(jobs)
 		}
 
 		const rec = await go(main).promfyCont

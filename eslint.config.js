@@ -21,7 +21,7 @@ export default ts_eslint.config({
 	rules: {
 		semi: ["error", "never"],
 		indent: ["error", "tab"],
-		"no-trailing-spaces": "error",
+		"no-trailing-spaces": ["error", { "skipBlankLines": true }],
 		"no-mixed-spaces-and-tabs": "error",
 		quotes: [
 			"error",
@@ -33,12 +33,7 @@ export default ts_eslint.config({
 		"no-console": "error",
 		"prefer-const": "off",
 		curly: ["error", "multi-line"],
-		"@typescript-eslint/no-this-alias": [
-			"error",
-			{
-				allowedNames: ["me"],
-			},
-		],
+		"@typescript-eslint/no-this-alias": "off",
 		"@typescript-eslint/await-thenable": "error",
 		"@typescript-eslint/ban-ts-comment": "off",
 		"@typescript-eslint/method-signature-style": ["error", "property"],
