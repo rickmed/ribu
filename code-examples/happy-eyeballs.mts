@@ -31,7 +31,7 @@ export async function* happyEyeBalls(hostName: string, port: number, delay: numb
 		if (addrsIdx < addressesLen) {
 			inFlight++
 			connect(addresses[addrsIdx++]!, ch)
-			timeout = setTimeout(() => ch.enQ("TIMED_OUT"), delay)
+			timeout = setTimeout(() => ch.enQueue("TIMED_OUT"), delay)
 		}
 		const result = yield* ch.rec
 		clearTimeout(timeout)
@@ -48,7 +48,7 @@ export async function* happyEyeBalls(hostName: string, port: number, delay: numb
 function connect(addrs: string, outCh: OutCh<Socket | "FAILED">) {
 	const socket = new net.Socket()
 
-	// onEnd adds a cancellation resource to sys.runningJob
+	// onEnd adds a cancellation resource to runningJob
 	// todo, optimize to something like onEnd(socket.destroy) maybe
 	onEnd(() => socket.destroy())
 
@@ -56,12 +56,13 @@ function connect(addrs: string, outCh: OutCh<Socket | "FAILED">) {
 
 	socket.on("connect", () => {
 		isConnected = true
-		outCh.enQ(socket)
+		outCh.enQueue(socket)
 	})
 
 	socket.on("error", () => {
-		if (!isConnected)	outCh.enQ("FAILED")
-
+		if (!isConnected)	{
+			outCh.enQueue("FAILED")
+		}
 	})
 
 	socket.connect(443, addrs)
@@ -91,7 +92,7 @@ export async function* happyEyeBalls_V2(hostName: string, port: number, delay: n
 			}
 			inFlight++
 			connect(addresses.shift()!)
-			timeout = setTimeout(() => failOrTimeout.enQ(), delay)
+			timeout = setTimeout(() => failOrTimeout.enQueue(), delay)
 			yield* failOrTimeout.rec
 			clearTimeout(timeout)
 		}
@@ -122,11 +123,11 @@ export async function* happyEyeBalls_V2(hostName: string, port: number, delay: n
 
 		socket.on("connect", () => {
 			isConnected = true
-			connectRes.enQ(socket)
+			connectRes.enQueue(socket)
 		})
 
 		socket.on("error", () => {
-			if (!isConnected) connectRes.enQ("FAIL")
+			if (!isConnected) connectRes.enQueue("FAIL")
 		})
 
 		socket.connect(443, addrs)

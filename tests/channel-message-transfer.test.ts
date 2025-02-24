@@ -4,10 +4,10 @@ import { Ch, go } from "../source/index.ts"
 
 it("putter arrives first", async () => {
 
-	const ch = Ch<string>()
+	const ch = Ch()
 
 	go(function* putter() {
-		yield* ch.put("hello")
+		yield* ch.put()
 	})
 
 	const receiver = go(function* receiver() {
@@ -110,3 +110,22 @@ function* range(n: number) {
 		yield i
 	}
 }
+
+/*
+	put:
+		1) sets whoever job yield* first to park/resume via the iterator result
+		2) Enqueues job/thing (or continues)
+
+	ch.put(1)
+	ch.put(1)
+	yield* sleep(1000)
+
+	BAD: would put runningJob in the queue twice and resume at sleep (if receiver resumes me, before sleep)
+	BAD: should not be possible to put me in the queue twice (Channel aren't buffered)
+		,ie, a receiver will try to resume me if blocked doing waiting for something else
+
+
+	todo: test that ch.put() or .rec without yield* does nothing.
+*/
+
+// todo: test .rec and put returns correct types

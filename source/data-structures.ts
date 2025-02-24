@@ -1,7 +1,9 @@
+import { EMPTY } from "./shared.ts"
+
 /**
  * @todo rewrite to specialized data structure (ring buffer, LL...)
  */
-export class Queue<V> {
+export class Queue<V = unknown> {
 
 	_array_m: Array<V> = []
 	_capacity
@@ -23,11 +25,12 @@ export class Queue<V> {
 	}
 
 	deQ() {
-		return this._array_m.pop()
+		return this._array_m.length == 0 ? EMPTY : this._array_m.pop()!
 	}
 
 	enQ(x: V) {
 		this._array_m.unshift(x)
+		return this
 	}
 }
 

@@ -1,6 +1,9 @@
+import { sys } from "./system.ts"
+import { Chan } from "./channel.ts"
 import { ArrSet} from "./data-structures.ts"
 import { ETimedOut, Err, isRibuE, ECancOK } from "./errors.ts"
 import { Timeout } from "./timers.ts"
+import { Observer } from "./shared.ts"
 
 
 //* **********  System  ********** *//
@@ -54,27 +57,18 @@ type StateCtxVal<T extends State> = Extract<StateCtx, [T, unknown]> extends [T, 
 
 let jobStack: Array<Job> = []
 let jobInProcess!: Job
-let shouldIteratorPark: typeof PARK | 0 = PARK
-let targetJob!: Job
-let cancelCallerJob!: Job
-let cancelTargetJobs!: Job
-
-// todo: maybe optimize to just a shared object access
-export function runningJob() {
-	return jobInProcess
-}
 
 
 
 //* **********  Job Class  ********** *//
 
 // cancelling children and onEnds
-	// nWaiting
-	// errors[], could use ._io
+// nWaiting
+// errors[], could use ._io
 
 
 
-export class Job<Ret = unknown, Errs = unknown> {
+export class Job<Ret = unknown, Errs = unknown> implements Observer {
 
 	_gen: Gen
 	_name: string
@@ -105,7 +99,7 @@ export class Job<Ret = unknown, Errs = unknown> {
 	}
 
 	#addAsChild() {
-		let parent = runningJob()
+		let parent = sys.runningJob
 		if (!parent) {
 			return
 		}
@@ -117,8 +111,12 @@ export class Job<Ret = unknown, Errs = unknown> {
 		this._parent = parent
 	}
 
+	onObservableDone(val: unknown) {
+
+	}
+
 	_resume(IOval?: unknown): void {
-		sys.stack.push(this)
+		sys.pushJob(this)
 		this._setResume(IOval)
 
 		try {
@@ -131,7 +129,7 @@ export class Job<Ret = unknown, Errs = unknown> {
 			return
 		}
 
-		sys.stack.pop()
+		sys.popJob()
 
 		const {value} = yielded
 
@@ -254,7 +252,7 @@ export class Job<Ret = unknown, Errs = unknown> {
 	}
 
 	#prepSystem(state: "BLOCKED_cont" | "BLOCKED_$"): void {
-		runningJob()._state = state
+		sys.runningJob._state = state
 		targetJob = this
 	}
 
@@ -263,7 +261,7 @@ export class Job<Ret = unknown, Errs = unknown> {
 	 */
 	cancel(): typeof CANCEL {
 		targetJob = this
-		cancelCallerJob = runningJob()
+		cancelCallerJob = sys.runningJob
 		return CANCEL
 	}
 
@@ -452,12 +450,8 @@ export class Job<Ret = unknown, Errs = unknown> {
 
 }
 
-type Observer = {
-	onTargetDone(target: Target): void
-}
-
 type Target = {
-	removeObserver(observer: Observer): void
+	removeObserver: (observer: Observer) => void
 }
 
 
@@ -474,17 +468,17 @@ export function Step(job: Job, ev: Event, evData: unknown): State {
 
 	// Maybe implement same protocol for all Step(JOB_FAILED)
 	// so if I job is blocked at ch.rec and its cancelled
-		// it will go to cancel state and channel will not resume
+	// it will go to cancel state and channel will not resume
 
 	// Maybe branch on event.
-		// Maybe implement CANCEL setting a onEnd()
+	// Maybe implement CANCEL setting a onEnd()
 
 	// MAIN idea is that observers just adds itself in target.observers
-		// so that targetJob can call a single function Step(callerJob, JOB_DONE, targetJob)
-		// so it's observer responsability to branch on its state.
+	// so that targetJob can call a single function Step(callerJob, JOB_DONE, targetJob)
+	// so it's observer responsability to branch on its state.
 
 	// eslint-disable-next-line no-constant-condition
-	stepping: while (1) {
+	while (1) {
 
 		if (state === RUNNING) {
 		// handle RUNNING
@@ -556,23 +550,25 @@ export function parkOrContinue<IterableRet>(job_m: Job, shouldPark: typeof shoul
 	return NewtheIterable as NewTheIterable<IterableRet>
 }
 
-let NewtheIterResult = {
+export function parkRunningJob<V>() {
+	theIterResult.done = false
+	return theIterator as Iterator<unknown, V>
+}
+
+export function continueRunningJob<V>(val?: unknown) {
+	theIterResult.done = true
+	theIterResult.value = val
+	return theIterator as Iterator<unknown, V>
+}
+
+export let theIterResult = {
 	done: false,
 	value: 0 as unknown,
 }
 
-export const NewtheIterator = {
+export const theIterator = {
 	next() {
-		if (shouldIteratorPark) {
-			// since job will be parked, no need to set value since it will be
-			// ignored by gen.next() call
-			NewtheIterResult.done = false
-		}
-		else {
-			NewtheIterResult.done = true
-			NewtheIterResult.value = jobInProcess._io
-		}
-		return NewtheIterResult
+		return theIterResult
 	}
 }
 
@@ -582,7 +578,7 @@ export type NewTheIterable<V> = {
 
 export const NewtheIterable = {
 	[Symbol.iterator]() {
-		return NewtheIterator
+		return theIterator
 	}
 }
 
@@ -609,7 +605,7 @@ export function steal(toJob_m: Job, jobs: Job[]) {
 const blockJobIterable = {
 	[Symbol.iterator]() {
 		const { targetJob } = sys
-		const callerJob = runningJob()
+		const callerJob = sys.runningJob
 		if (targetJob._state !== "DONE") {
 			targetJob._onDone(doneJob => onJobDone(doneJob, callerJob))
 			return theIterator
@@ -674,7 +670,7 @@ function onCancelJobIsDone(callerJob: Job, targetJob: Job): void {
 }
 
 export function cancel(jobs: Job[]): typeof CANCEL_JOBS {
-	sys.cancelCallerJob = runningJob()
+	sys.cancelCallerJob = sys.runningJob
 	sys.cancelTargetJobs = jobs
 	return CANCEL_JOBS
 }
@@ -719,11 +715,11 @@ export function jobFailed(jobIO: unknown): jobIO is Err {
 
 
 export function onEnd(x: OnEnd) {
-	runningJob().onEnd(x)
+	sys.runningJob.onEnd(x)
 }
 
 export function me(): Job {
-	return runningJob()
+	return sys.runningJob
 }
 
 export function go<Args extends unknown[], Ret>(genFn: RibuGenFn<Ret, Args>, ...args: Args) {
@@ -754,33 +750,7 @@ function isProm(x: unknown): x is PromiseLike<unknown> {
 
 
 
-//* **********  The Iterable  ********** *//
-
-let theIterResult = {
-	done: false,
-	value: 0 as unknown,
-}
-
-
-export const theIterator = {
-	next() {
-		const job = runningJob()
-		if (job._state === "RUNNING") {
-			theIterResult.done = true
-			theIterResult.value = job._io
-		}
-		else {
-			theIterResult.done = false
-		}
-		return theIterResult
-	}
-}
-
-export const theIterable = {
-	[Symbol.iterator]() {
-		return theIterator
-	}
-}
+//* **********  The Iterable ********** *//
 
 
 export type TheIterable<V> = {

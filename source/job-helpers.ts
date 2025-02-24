@@ -1,9 +1,10 @@
-import { DONE, Job, State, cancel, go, onEnd, type NotErrs } from "./job.ts"
+import { DONE, Job, theIterator, State, cancel, go, onEnd, type NotErrs, theIterResult } from "./job.ts"
 import { runningJob } from "./system.ts"
 import { E, ECancOK, ETimedOut, Err, RibuE } from "./errors.ts"
-import { time } from "console"
 import { TIMEOUT } from "dns"
 import { sleep } from "./timers.ts"
+import { Queue } from "./data-structures.ts"
+import { Chan } from "./channel.ts"
 
 
 //* **********  Job Combinators  ********** *//
@@ -13,9 +14,9 @@ import { sleep } from "./timers.ts"
 - If one job fails, it returns Error (fails callerJob if not using .err)
 - Returns an empty array if the passed-in array in empty.
  */
-export function allOrFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
+export function allOrErr<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 
-	return go(function* _allOrFail() {
+	return go(function* _allOrErr() {
 
 		let results: Array<NotErrs<Jobs[number]["val"]>> = []
 
@@ -33,7 +34,7 @@ export function allOrFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 			const job = (yield ev.wait) as Job
 			if (job.failed) {
 				yield cancel(jobs)
-				return E("AJobFailed", "allOrFail", "", job.val as RibuE)
+				return E("AJobFailed", "allOrErr", "", job.val as RibuE)
 			}
 			results.push(job.val as typeof results[number])
 		}
@@ -42,52 +43,78 @@ export function allOrFail<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 	})
 }
 
-/*
-- Doesn't support allOrFail2(job1, job2).cancel()
-	const res = yield* allOrFail(job1, job2).err
-	if (res instanceof Error) {
-		yield* cancel(jobs)
-	}
-*/
 
-export function allOrFail2<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 
-/*
-
-	** Has iterator so blocks/unblocks caller
-		supports .$ and .err behavior
-	Could be different from channel (don't need a queue, just a final value )
-
-	1) accums results of all job's result
-		maybe use select class an overwrite onObservableDone
-	2) if one fails, fail the callerJob
-		- Most likely jobs are caller's children and will be cancelled
-
-	const res = yield* allOrFail2(job1, job2).err
-	if (res instanceof Error) {
-		yield* cancel(jobs)
-	}
-
- */
+export function allOrErr2<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 }
 
-class allOrFail2_ {
 
-	private results: Array<NotErrs<Jobs[number]["val"]>> = []
+/* allOrErr
+
+- Doesn't support allOrErr2(job1, job2).cancel()
+	const res = yield* allOrErr(job1, job2).err
+	if (res instanceof Error) {
+		yield* cancel(jobs)
+	}
+
+
+- Supports only one observer
+
+	const allOrErrObj = allOrErr(job1, job2)
+	yield* allOrErrObj
+	yield* allOrErrObj  // this throws
+
+
+*/
+
+
+class allOrErr2_ {
+
+	private result: Array<NotErrs<Jobs[number]["val"]>> = []
+	private errorResult?: E<"AJobFailed">
 	private inFlight: number
+	private observer?: Job
 
-	constructor(jobs: Observable[]) {
+	constructor(jobs: Job[]) {
 		this.inFlight = jobs.length
 		for (const job of jobs) {
 			jobs.addObserver(this)
 		}
 	}
 
-	onObservableDone(val: unknown) {
+	onObservableDone(job: Job) {
 		if (job.failed) {
-			yield cancel(jobs)
-			return E("AJobFailed", "allOrFail", "", job.val as RibuE)
+			const err = E("AJobFailed", "allOrErr", "", job.val as RibuE)
+			for (const observable of this.observables) {
+				observable.removeObserver(this)
+			}
+			this.errorResult = err
+			this.observer?.onObservableDone(err)
+			return
 		}
+		this.inFlight--
+		const { result, inFlight } = this
+		result.push(job.val as typeof result[number])
+		if (inFlight === 0) {
+			this.observer?.onObservableDone(results)
+		}
+	}
+
+	[Symbol.iterator]() {
+		if (this.errorResult || this.inFlight === 0) {
+			// unblock caller inmediately
+		}
+
+
+	}
+
+	get err() {
+		sys.runningJob.__state = State.PARKED_END_IF_ERR
+		return this
+	}
+
+	get val() {
+		return this.errorResult ?? this.result
 	}
 }
 
@@ -96,7 +123,7 @@ class allOrFail2_ {
 
 /*
 - Returns an array of the settled values of the passed-in jobs,
-ie, it waits for all to settle.
+	ie, it waits for all to settle.
 - Returns an empty array if the passed-in array in empty.
  */
 export function all<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
@@ -232,7 +259,7 @@ class CancelAll {
 	_state: -1 | State.DONE = -1
 	targets: Job[]
 	waitingJobsCount: number
-	observer = runningJob()
+	observer = sys.runningJob
 	ObservedJobsErrors: Err[] | undefined
 
 	constructor(jobs: Job[]) {
@@ -240,7 +267,7 @@ class CancelAll {
 		this.waitingJobsCount = jobs.length
 	}
 
-	onObservedDone(observed: Observable) {
+	onObservedDone(observed: Selectable) {
 		this.waitingJobsCount--
 		if (this.waitingJobsCount === 0) {
 			this._state = DONE
@@ -276,28 +303,55 @@ class CancelAll {
 	Same if job is done
 */
 
-type Observable = Job
 type Observer = Job
 
 /*
-	- Select in a loop works if you call use it like:
-		const jobsList = [job1, job2, ch1]
-		let waiting = jobsList.length
-		const selectObj = select(...jobsList)
-		while (waiting > 0) {
-			const res = yield* selectObj
-			waiting--
-			// do whatever with res
-		}
+- Select in a loop works efficiently:
+
+	const jobsList = [job1, job2, ch1]
+	let waiting = jobsList.length
+
+	const selectObj = select(...jobsList)
+
+	while (waiting > 0) {
+		const res = yield* selectObj
+		waiting--
+		// do whatever with res
+	}
+
+
+
+* default case (return DEFAULT SYMBOL from yield* when no one is ready)
+* Need an internal queue of ready observables for fairness
+
+
+* There could be max 1 observer (if another Job calls yield* selectObj, it throws)
+
 */
 
-class Select {
+const NONE_READY = Symbol("N_R")
 
-	observer?: Observer | Observer[]
+export class Select {
 
-	constructor(private observables: Observable[]) {
-		for (const observable of observables) {
-			observable.addObserver(this)
+	observer?: Observer
+	readySelectables?: Selectable | Queue<Selectable>
+	private _nonBlocking = false
+
+	constructor(selectables: Selectable[]) {
+		for (const selectable of selectables) {
+			if (selectable.isReady()) {
+				const { readySelectables } = this
+				if (readySelectables) {
+					if (readySelectables instanceof Queue) {
+						readySelectables.enQ(selectable)
+					} else {
+						this.readySelectables = new Queue<Selectable>().enQ(readySelectables)
+					}
+				}
+			}
+			else {  // selectable is not ready
+				selectable.addObserver(this)
+			}
 		}
 	}
 
@@ -317,18 +371,50 @@ class Select {
 	}
 
 	[Symbol.iterator]() {
-		// adds an observer here
-		// todo: (if observable is done, need to resume observer immediately, but with what value
+		const { _nonBlocking, readySelectables } = this
+
+		// todo, optimization: change instance of Queue to in operator
+		const dontHaveReadySelectable = readySelectables === undefined || (readySelectables instanceof Queue && !readySelectables.isEmpty)
+
+		if (dontHaveReadySelectable) {
+			if (!_nonBlocking) {
+				this.observer = sys.runningJob
+				theIterResult.done = false
+			}
+			else {
+				theIterResult.done = true
+				theIterResult.value = NONE_READY
+			}
+		}
+
+		else {  // Selectable(s) ready
+			const selectableReady = isSelectable(readySelectables) ? readySelectables : readySelectables.deQ()
+			theIterResult.done = true
+			// should return job or job.val??
+			// if its channel, how to get value?
+			theIterResult.value = selectableReady
+		}
+
+		return theIterator
+	}
+
+	// todo: withDefault should return a Select
+	nonBlocking() {
+		this._nonBlocking = true
+		return this
 	}
 }
 
+type Selectable = Job | Chan
 
+function isSelectable(maybeSelectable: NonNullable<unknown>): maybeSelectable is Selectable {
+	if (typeof maybeSelectable === "object" && Symbol("$isSelectable") in maybeSelectable) {
+		return true
+	}
+	return false
+}
 
-
-
-
-
-
+/* **************************** CANCEL ALL ******************************** */
 
 /* job.cance() implementation:
 

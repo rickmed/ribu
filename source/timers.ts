@@ -1,7 +1,7 @@
 import { runningJob, setRunning, resumeJob, parkOrContinue, type Job, PARKED_SLEEP, PARK, setStateAndCtx } from "./job.ts"
 
 export function sleep(ms: number) {
-	let callerJ = runningJob()
+	let callerJ = sys.runningJob
 	setStateAndCtx(callerJ, PARKED_SLEEP, setTimeout(timeoutCB, ms, callerJ))
 	return parkOrContinue(callerJ, PARK)
 }
@@ -97,7 +97,6 @@ Notes:
 
 		yield* ch.rec
 		yield* ch.put()
-			channel things no need to do nothing.
 
 		yield* job.$
 		yield* job.err
