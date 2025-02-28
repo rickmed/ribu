@@ -8,24 +8,6 @@ import { Observer } from "./shared.ts"
 
 //* **********  System  ********** *//
 
-export enum Event {
-	PARK = 1,
-	RESUME,
-	JOB_RETURNED,
-	JOB_THREW,
-	CANCEL,
-	CANCEL_JOBS_EV
-}
-
-export const {
-	PARK,
-	RESUME,
-	JOB_RETURNED,
-	JOB_THREW,
-	CANCEL,
-	CANCEL_JOBS_EV
-} = Event
-
 export enum State {
 	RUNNING = 1,
 	PARKED_CONTINUE,
@@ -76,13 +58,13 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 	_stateCtx: StateCtxVal<State> = 0
 
 	// Used as an Inbox/Outbox for the job
-	_io: Ret | Errs = "$dummy" as (Ret | Errs)
+	val: Ret | Errs = "$dummy" as (Ret | Errs)
 
 	// Because a job can settle with ECancOK, which technically isn't a failure but,
 	// when const res = yield* job.$, the caller shouldn't continue if called job settled with ECancOK.
 	_failed = false
 	_childs?: ArrSet<Job>
-	_parent?: Job
+
 	_onEnds?: OnEnd | OnEnd[]
 
 	constructor(gen: Gen, genFnName: string, withParent?: boolean) {
@@ -124,7 +106,7 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 			var yielded = this._gen.next(IOval)
 		}
 		catch (e) {
-			this._io = new Err(e, this._name) as Ret
+			this.val = new Err(e, this._name) as Ret
 			this._endProtocol()
 			return
 		}
@@ -150,7 +132,7 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 	}
 
 	_continue<IterReturn>(IOval?: unknown) {
-		this._io = IOval as Ret
+		this.val = IOval as Ret
 		return theIterable as TheIterable<IterReturn>
 	}
 
@@ -161,16 +143,16 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 
 	_setResume(IOval?: unknown) {
 		this._state = "RUNNING"
-		this._io = IOval as Ret
+		this.val = IOval as Ret
 	}
 
 	_setPark(IOval?: unknown) {
 		this._state = PARK_
-		this._io = IOval as Ret
+		this.val = IOval as Ret
 	}
 
 	#genFnReturned(yieldedVal: Ret | Errs) {
-		const settleVal = this._io = yieldedVal
+		const settleVal = this.val = yieldedVal
 		if (isRibuE(settleVal)) {
 			if (settleVal._op === "") {
 				// @ts-ignore (._op readonly)
@@ -180,7 +162,7 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 			return
 		}
 		if (settleVal instanceof Error) {
-			this._io = new Err(settleVal, this._name) as Ret
+			this.val = new Err(settleVal, this._name) as Ret
 			this._endProtocol()
 			return
 		}
@@ -211,7 +193,7 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 			++nChildsDone
 			if (childDone._failed) {
 				me._removeWaitChildsCBs()
-				me._io = new Err(childDone.val, me._name) as Ret
+				me.val = new Err(childDone.val, me._name) as Ret
 				me._endProtocol()
 				return
 			}
@@ -248,7 +230,11 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 
 	get err() {
 		this.#prepSystem("BLOCKED_cont")
-		return blockJobIterable as TheIterable<typeof this._io>
+		return blockJobIterable as TheIterable<typeof this.val>
+	}
+
+	get isReady() {
+		return this.__state == DONE
 	}
 
 	#prepSystem(state: "BLOCKED_cont" | "BLOCKED_$"): void {
@@ -355,27 +341,27 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 		}
 
 		function onJobDone(j: Job) {
-			onDone(j._io instanceof Error ? j._io : undefined)
+			onDone(j.val instanceof Error ? j.val : undefined)
 		}
 	}
 
 	#_settle(errors?: Error[]) {
 		if (this._state === "CANCELLING" && errors) {
-			const eCancOK = this._io as ECancOK
-			this._io = new Err(undefined, this._name, errors, eCancOK.message) as Ret
+			const eCancOK = this.val as ECancOK
+			this.val = new Err(undefined, this._name, errors, eCancOK.message) as Ret
 			this.#completeSettle()
 			return
 		}
 		if (errors) {
-			if (this._io instanceof Err) {
-				this._io.errors = errors
+			if (this.val instanceof Err) {
+				this.val.errors = errors
 			}
 		}
 		this.#completeSettle()
 	}
 
 	#completeSettle() {
-		const finalVal = this._io
+		const finalVal = this.val
 		if (finalVal instanceof Error && !(finalVal instanceof ECancOK)) {
 			this._failed = true
 		}
@@ -405,6 +391,19 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 		}
 	}
 
+
+
+	get failed(): boolean {
+		return this._failed
+	}
+
+	settle(val: Ret | Errs) {
+		if (this._state === "DONE") {
+			return
+		}
+		this.#genFnReturned(val)
+	}
+
 	get promfy() {
 		return new Promise<Ret>((res, rej) => {
 			this._onDone(jobDone => {
@@ -418,34 +417,18 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 		})
 	}
 
-	get val() {
-		return this._io
+	then(thenOK: (value: Ret) => Ret, thenErr: (reason: unknown) => Promise<never>): Promise<Ret> {
+		return new Promise<Ret>((res, rej) => {
+			this._on(EV.JOB_DONE, ({ val }: Job) => {
+				if (val instanceof Error) {
+					rej(val)
+				}
+				else {
+					res(val as Ret)
+				}
+			})
+		}).then(thenOK, thenErr)
 	}
-
-	get failed(): boolean {
-		return this._failed
-	}
-
-	settle(val: Ret | Errs) {
-		if (this._state === "DONE") {
-			return
-		}
-		this.#genFnReturned(val)
-	}
-
-	// todo: remove in a commit.
-	// then(thenOK: (value: Ret) => Ret, thenErr: (reason: unknown) => Promise<never>): Promise<Ret> {
-	// 	return new Promise<Ret>((res, rej) => {
-	// 		this._on(EV.JOB_DONE, ({ val }: Job) => {
-	// 			if (val instanceof Error) {
-	// 				rej(val)
-	// 			}
-	// 			else {
-	// 				res(val as Ret)
-	// 			}
-	// 		})
-	// 	}).then(thenOK, thenErr)
-	// }
 
 
 }
@@ -535,7 +518,7 @@ export function resumeJob(job: Job) {
 
 export function setRunning(job_m: Job) {
 	job_m.__state = RUNNING
-	job_m._io = undefined
+	job_m.val = undefined
 }
 
 export function setStateAndCtx<S extends State>(job_m: Job, state: S, stateCtx: StateCtxVal<S>) {
@@ -543,32 +526,21 @@ export function setStateAndCtx<S extends State>(job_m: Job, state: S, stateCtx: 
 	job_m._stateCtx = stateCtx as StateCtxVal<State>
 }
 
-export function parkOrContinue(job_m: Job, shouldPark: typeof shouldIteratorPark): NewTheIterable<never>
-export function parkOrContinue<IterableRet>(job_m: Job, shouldPark: typeof shouldIteratorPark = PARK, IOval?: IterableRet) {
-	shouldIteratorPark = shouldPark
-	job_m._io = IOval
-	return NewtheIterable as NewTheIterable<IterableRet>
+export function continueRunningJob(val?: unknown) {
+	iterResult.done = true
+	iterResult.value = val
 }
 
-export function parkRunningJob<V>() {
-	theIterResult.done = false
-	return theIterator as Iterator<unknown, V>
-}
-
-export function continueRunningJob<V>(val?: unknown) {
-	theIterResult.done = true
-	theIterResult.value = val
-	return theIterator as Iterator<unknown, V>
-}
-
-export let theIterResult = {
+export let iterResult = {
 	done: false,
 	value: 0 as unknown,
 }
 
-export const theIterator = {
+export type Iter<V> = Iterator<never, V, never>
+
+export const iter = {
 	next() {
-		return theIterResult
+		return iterResult
 	}
 }
 
@@ -578,7 +550,7 @@ export type NewTheIterable<V> = {
 
 export const NewtheIterable = {
 	[Symbol.iterator]() {
-		return theIterator
+		return iter
 	}
 }
 
@@ -608,7 +580,7 @@ const blockJobIterable = {
 		const callerJob = sys.runningJob
 		if (targetJob._state !== "DONE") {
 			targetJob._onDone(doneJob => onJobDone(doneJob, callerJob))
-			return theIterator
+			return iter
 		}
 
 		// else, targetJob is already settled...
@@ -616,14 +588,14 @@ const blockJobIterable = {
 			callerJob._endProtocol()
 		}
 		callerJob._setResume(targetJob.val)
-		return theIterator
+		return iter
 	}
 }
 
 function onJobDone(doneJob: Job, callerJob: Job) {
 	if (callerJob._state === "BLOCKED_$" && doneJob._failed) {
 		// eslint-disable-next-line functional/immutable-data
-		callerJob._io = new Err(doneJob.val, callerJob._name)
+		callerJob.val = new Err(doneJob.val, callerJob._name)
 		callerJob._endProtocol()
 	}
 	else {
@@ -654,14 +626,14 @@ function execCancel(callCB = true): void {
 		return
 	}
 	targetJob._state = "CANCELLING"
-	targetJob._io = new ECancOK(targetJob._name, `Cancelled by ${callerJob._name}`)
+	targetJob.val = new ECancOK(targetJob._name, `Cancelled by ${callerJob._name}`)
 	targetJob._endProtocol()
 }
 
 function onCancelJobIsDone(callerJob: Job, targetJob: Job): void {
 	if (targetJob._failed) {
 		// eslint-disable-next-line functional/immutable-data
-		callerJob._io = new Err(targetJob.val, callerJob._name)
+		callerJob.val = new Err(targetJob.val, callerJob._name)
 		callerJob._endProtocol()
 	}
 	else {
@@ -699,7 +671,7 @@ function execCancelJobs(): void {
 		}
 		if (nJobsCancelling === 0) {
 			if (targetJobsErrors) {
-				callerJob._io = new Err(undefined, callerJob._name)
+				callerJob.val = new Err(undefined, callerJob._name)
 				callerJob._endProtocol(targetJobsErrors)
 			}
 			else {

@@ -1,10 +1,10 @@
-import { DONE, Job, theIterator, State, cancel, go, onEnd, type NotErrs, theIterResult } from "./job.ts"
-import { runningJob } from "./system.ts"
+import { DONE, Job, iter, State, cancel, go, onEnd, type NotErrs, iterResult } from "./job.ts"
+import { runningJob, sys } from "./system.ts"
 import { E, ECancOK, ETimedOut, Err, RibuE } from "./errors.ts"
 import { TIMEOUT } from "dns"
 import { sleep } from "./timers.ts"
 import { Queue } from "./data-structures.ts"
-import { Chan } from "./channel.ts"
+import { Ch, Chan } from "./channel.ts"
 
 
 //* **********  Job Combinators  ********** *//
@@ -285,134 +285,116 @@ class CancelAll {
 }
 
 
-/* ContinueAfter_ is Select !!
-
-- Select's role is not to cancel anything.
-
-- callerJob is cancelled at const res =  yield* select(job1, job2, ch1)
-	it will cancel its other children and waiting for their cancel result
-
-	SOLUTION:
-		remove as observer from jobs, but not from channels
-		channels skip resuming if callerJob.state !== blocked
-*/
-
-
-/*
-	If channel has queued sending msgs/jobs, it should resume callerJob immediately
-	Same if job is done
-*/
-
-type Observer = Job
-
-/*
-- Select in a loop works efficiently:
-
-	const jobsList = [job1, job2, ch1]
-	let waiting = jobsList.length
-
-	const selectObj = select(...jobsList)
-
-	while (waiting > 0) {
-		const res = yield* selectObj
-		waiting--
-		// do whatever with res
-	}
 
 
 
-* default case (return DEFAULT SYMBOL from yield* when no one is ready)
-* Need an internal queue of ready observables for fairness
+/* Subscriptions architecture
 
+** Job: blocked/subscribed to one job/Ch/Select
+** Job: subscribed to many children (awaiting if done or cancelled)
 
-* There could be max 1 observer (if another Job calls yield* selectObj, it throws)
+This supports O1 many-many subscriptions (O: Observer, N: Notifier, conn: Connection):
 
-*/
+	job.connHead
 
-const NONE_READY = Symbol("N_R")
+	1) Observer makes its own LL and inserts itself into all target's LL
 
-export class Select {
+		for target of targets:
 
-	observer?: Observer
-	readySelectables?: Selectable | Queue<Selectable>
-	private _nonBlocking = false
+			// make my own subscription LL
 
-	constructor(selectables: Selectable[]) {
-		for (const selectable of selectables) {
-			if (selectable.isReady()) {
-				const { readySelectables } = this
-				if (readySelectables) {
-					if (readySelectables instanceof Queue) {
-						readySelectables.enQ(selectable)
-					} else {
-						this.readySelectables = new Queue<Selectable>().enQ(readySelectables)
-					}
-				}
+			const conn = {
+				Ob: Job | Ch,
+				pNt: prevSubObj,      // keep in function scope
+				nNt: null,            // next moves towards tail
+				pOb: null,
+				nOb: null,
 			}
-			else {  // selectable is not ready
-				selectable.addObserver(this)
-			}
-		}
-	}
 
-	onObservableDone(val: unknown) {
-		const {observer} = this
-		if (observer) {
-			observer.onObservableDone(val)
-		}
-	}
+			prevSubObj.nextSub = subscriptionObj
 
-	addObserver(observer: Observer) {
+			// insert subscriptionObj into target's LL tail:
 
-	}
-
-	removeObserver(observer: Observer) {
-		// remove observer here
-	}
-
-	[Symbol.iterator]() {
-		const { _nonBlocking, readySelectables } = this
-
-		// todo, optimization: change instance of Queue to in operator
-		const dontHaveReadySelectable = readySelectables === undefined || (readySelectables instanceof Queue && !readySelectables.isEmpty)
-
-		if (dontHaveReadySelectable) {
-			if (!_nonBlocking) {
-				this.observer = sys.runningJob
-				theIterResult.done = false
+			const targetTail = target.obsTail
+			if (targetTail != null) {
+				targetTail.nextWatcher = subscriptionObj
+				subscriptionObj.prevWatcher = targetTail
 			}
 			else {
-				theIterResult.done = true
-				theIterResult.value = NONE_READY
+				targetTail.nextWatcher = subscriptionObj
+				subscriptionObj.prevWatcher = targetTail
 			}
+
+			target.obsTail = subscriptionObj
+
+	2) When target is done (iterate from .obsHead)
+
+		const { obsHead } = this
+		if (obsHead != null) {
+
+			// remove conn in notifier
+			obsHead.prevOb.nextOb = obsHead.nextOb
+			obsHead.nextOb.prevOb = obsHead.prevOb
+
+			// remove conn in observer
+
+
+			// notify Ob
+			sys.targetJustDone = this
+			obsHead.owner.onDone(val)
 		}
 
-		else {  // Selectable(s) ready
-			const selectableReady = isSelectable(readySelectables) ? readySelectables : readySelectables.deQ()
-			theIterResult.done = true
-			// should return job or job.val??
-			// if its channel, how to get value?
-			theIterResult.value = selectableReady
-		}
 
-		return theIterator
-	}
+	3) Obs can unsubscribe from all targets by just iterating over its
+		.obsHead LL and removing nodes from all targets LL
+		when its cancelled or a target is done.
 
-	// todo: withDefault should return a Select
-	nonBlocking() {
-		this._nonBlocking = true
-		return this
-	}
-}
 
-type Selectable = Job | Chan
+** jobs._childs: How to use LL?
+	- child needs to remove itself from parent's LL when done
+		but when done, parent doesn't need to be resumed (parent.onDone())
+	- child could also have observers that DO need to be notified when done (await child)
 
-function isSelectable(maybeSelectable: NonNullable<unknown>): maybeSelectable is Selectable {
-	if (typeof maybeSelectable === "object" && Symbol("$isSelectable") in maybeSelectable) {
-		return true
-	}
-	return false
-}
+		So maybe a conn.nfy = boolean
+
+	very cool since I just update conn.{p,n}N
+	so I if job is cancelled I can mutate/transition all childs nodes conn objects
+		so that notifier can notify back when done
+	Can transition from normal run -> awaiting for childs -> cancelling childs
+
+
+** onEnds list: Can reuse job.connHead (and nodes) since onEnds are ran after children are done
+	- Needs to be executed Last In First Out
+		- Now, all nodes head conn.pNt = tailConn (this way I can iterate from tail to head)
+
+
+** Ch:
+	Needs  dequeu <= []-[]-[] <= queue
+		- so if ch.conn: head, need head.prevOb = tail
+		- when iterating, instead of checking if node.next = null, check if node.next === head
+		- Adding is from head. Maybe, will check the other iteration algos.
+
+**** All nodes need to be removed from ob LL when nt is done so conn is returned to pool
+
+*/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* **************************** CANCEL ALL ******************************** */
 
@@ -422,7 +404,6 @@ function isSelectable(maybeSelectable: NonNullable<unknown>): maybeSelectable is
 	yield* cancelJob  // subscribe to result (cancel)
 	cancel.cancel()  // noop (job is already in CANCELLING state)
 */
-
 
 function cancelAll(jobs: Job[]) {
 	const res = Ch()

@@ -1,7 +1,6 @@
-import { Job, continueRunningJob, parkRunningJob, type TheIterable } from "./job.ts"
+import { Job, continueRunningJob, iter, type TheIterable, Iter, iterResult, go } from "./job.ts"
 import { sys } from "./system.ts"
 import { Queue } from "./data-structures.ts"
-import { Select } from "./job-helpers.ts"
 import { EMPTY, Observer } from "./shared.ts"
 
 // channel resumes job if job._state != DONE
@@ -20,21 +19,25 @@ export function isCh(x: unknown): x is Chan {
 	return x instanceof Chan
 }
 
+type PutVal<V> = V extends undefined ? void : V
+
+// todo, type for unclosable channel
+
 export interface OutCh<in V> {
-	put: (msg: V extends undefined ? void : V) => TheIterable<undefined>
-	enQueue: (msg: V extends undefined ? void : V) => void
+	put: (msg: PutVal<V>) => TheIterable<undefined>
+	enQueue: (msg: PutVal<V>) => void
 }
 
-
-interface InCh<out V> {
+type InCh<out V> = {
 	rec: TheIterable<V>
 }
-
 
 const REC = 0
 const PUT = 1
 let op: typeof REC | typeof PUT = PUT
 let putMsg: unknown = EMPTY
+
+type Receivers = typeof EMPTY | Observer | Queue<Observer>
 
 /*
 
@@ -50,8 +53,9 @@ let putMsg: unknown = EMPTY
 */
 export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 
-	putters: unknown = EMPTY  // Queue<Job | unknown> | Job | unknown
-	receivers: typeof EMPTY | Observer | Queue<Observer> = EMPTY
+	// unknown value inserted by enQueue
+	putterS: unknown = EMPTY  // Queue<Job | unknown> | Job | unknown
+	receiverS: Receivers = EMPTY
 	_done = false
 
 	done() {
@@ -64,7 +68,7 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 		return this as TheIterable<V>
 	}
 
-	put(msg: V extends undefined ? void : V): TheIterable<undefined> {
+	put(msg: PutVal<V>): TheIterable<undefined> {
 		throwIfDone<V>(this)
 		op = PUT
 		putMsg = msg
@@ -72,12 +76,16 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 	}
 
 	[Symbol.iterator]() {
-		return op === REC ?
-			processRec(this) :
+		if (op == REC) {
+			processRec(this)
+		}
+		else {
 			processPut(this)
+		}
+		return iter as Iter<V>
 	}
 
-	enQueue(msg: V extends undefined ? void : V) {
+	enQueue(msg: PutVal<V>) {
 		throwIfDone<V>(this)
 		putMsg = msg
 		processPut(this)
@@ -86,11 +94,18 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 	// there maybe values in queue by putter jobs waiting or inserted by enQueue
 	get notDone() {
 		// todo
+		return null
 	}
 
 	isReady() {
-
+		const { putterS } = this
+		return putterS == EMPTY || (putterS instanceof Queue && putterS.isEmpty)
 	}
+
+}
+
+export function enQueue<V>(ch: Chan<V>, msg: PutVal<V>): void {
+	ch.enQueue(msg)
 }
 
 function throwIfDone<V>(ch: Chan<V>) {
@@ -99,89 +114,125 @@ function throwIfDone<V>(ch: Chan<V>) {
 	}
 }
 
-const RECS = "receivers"
-const PUTS = "putters"
-type MaybeQueueK = typeof RECS | typeof PUTS
+const RECS = "receiverS"
+type Recs = typeof RECS
+const PUTS = "putterS"
+type Puts = typeof PUTS
+type KOfawaiterS = Recs | Puts
 
 function processRec<V>(ch_m: Chan<V>) {
-	const { putters } = ch_m
+	const { putterS } = ch_m
 
-	if (putters == EMPTY) {
-		return receiverHasNoPutter(ch_m)
+	if (putterS == EMPTY) {
+		receiverHasNoPutter(ch_m)
+		return
 	}
-	if (putters instanceof Job) {
-		ch_m.putters = EMPTY
-		return counterpartIsObserver(putters, undefined, putters._io)
+	if (putterS instanceof Job) {
+		ch_m.putterS = EMPTY
+		resumeObserverAndMe(putterS, undefined, putterS.val)
+		return
 	}
-	if (putters instanceof Queue) {
-		const putVal: unknown = putters.deQ()
+	if (putterS instanceof Queue) {
+		const putVal: unknown = putterS.deQ()
 		return putVal == EMPTY ?
 			receiverHasNoPutter(ch_m) :
 			putVal instanceof Job ?
-				counterpartIsObserver(putVal, undefined, putVal._io) :
+				resumeObserverAndMe(putVal, undefined, putVal.val) :
 				continueRunningJob(putVal)  // a value inserted by .enQueue()
 	}
 
 	// a sole value inserted by .enQueue()
-	return continueRunningJob(putters)
+	continueRunningJob(putterS)
 }
 
-function receiverHasNoPutter(ch: Chan) {
-	addToItsMaybeQueue(ch, RECS, sys.runningJob)
-	return parkRunningJob()
+function receiverHasNoPutter<V>(ch: Chan<V>) {
+	addAsWaiter(sys.runningJob, ch, RECS)
+	iterResult.done = false
 }
 
-export function addToItsMaybeQueue(withMaybeQ_m: Chan, kToAddVal: MaybeQueueK, value: unknown) {
-	const maybeQueueVal = withMaybeQ_m[kToAddVal]
-	if (maybeQueueVal === EMPTY) {
-		withMaybeQ_m[kToAddVal] = value
+export function addAsWaiter<V>(value: Receivers, hasAwaiterS_m: Chan<V>, kOfawaiterS: Recs): void
+export function addAsWaiter<V>(value: unknown, hasAwaiterS_m: Chan<V>, kOfawaiterS: Puts): void
+export function addAsWaiter<V>(value: unknown, hasAwaiterS_m: Chan<V>, kOfawaiterS: KOfawaiterS): void {
+	const awaiterS = hasAwaiterS_m[kOfawaiterS]
+	if (awaiterS === EMPTY) {
+		hasAwaiterS_m[kOfawaiterS] = value as (typeof kOfawaiterS extends Puts ? unknown : Receivers)
 	}
-	else if (maybeQueueVal instanceof Queue) {
-		maybeQueueVal.enQ(value)
+	else if (awaiterS instanceof Queue) {
+		awaiterS.enQ(value)
 	}
 	else {
-		const newQueue = new Queue()
-		newQueue.enQ(maybeQueueVal)
-		newQueue.enQ(value)
-		withMaybeQ_m[kToAddVal] = newQueue
+		const queue = new Queue()
+		queue.enQ(awaiterS).enQ(value)
+		hasAwaiterS_m[kOfawaiterS] = queue as (typeof kOfawaiterS extends Puts ? unknown : Queue<Observer>)
 	}
 }
 
-function counterpartIsObserver(observer: Observer, msgToCounterPart: unknown, msgToRunningJob: unknown) {
-	observer.onObservableDone(msgToCounterPart)
-	return continueRunningJob(msgToRunningJob)
+function resumeObserverAndMe(observer: Observer, msgToObserver: unknown, msgToRunningJob: unknown) {
+	observer.onObservableDone(msgToObserver)
+	continueRunningJob(msgToRunningJob)
 }
 
 
-function processPut<V>(ch: Chan<V>) {
-	const { receivers } = ch
-	if (receivers == EMPTY || "onObservableDone" in receivers) {
-		return _processPut(ch, receivers)
+function processPut<V>(ch_m: Chan<V>) {
+
+	const { receiverS } = ch_m
+
+	if (receiverS == EMPTY) {
+		putterHasNoReceiver(ch_m)
+		return
+	}
+	if ("onObservableDone" in receiverS) {
+		ch_m.receiverS = EMPTY
+		resumeObserverAndMe(receiverS, putMsg, undefined)
+		return
 	}
 
-	const receiver = receivers.deQ()
-	return _processPut(ch, receiver)
-}
+	const receiver = receiverS.deQ()
 
-
-function _processPut<V>(ch_m: Chan<V>, receiver: typeof EMPTY | Observer) {
 	if (receiver == EMPTY) {
-		return putterHasNoReceiver(ch_m)
+		putterHasNoReceiver(ch_m)
+		return
 	}
 
-	ch_m.receivers = EMPTY
-	return counterpartIsObserver(receiver, putMsg, undefined)
-}
-
-function putterHasNoReceiver(ch: Chan) {
-	addToItsMaybeQueue(ch, PUTS, sys.runningJob)
-	return parkRunningJob()
+	resumeObserverAndMe(receiver, putMsg, undefined)
 }
 
 
+function putterHasNoReceiver<V>(ch: Chan<V>) {
+	addAsWaiter<V>(sys.runningJob, ch, PUTS)
+	iterResult.done = false
+}
 
 
+/* ******************   Merge  ******************************************** */
 
-export function enQueue<V>(ch: Chan<V>, msg: V): void {
-	ch.enQueue(msg)
+// todo: need a way to unsubscribe from chans (otherwise, maybe memory leak)
+export function merge(...chans: Chan[]) {
+	const outCh = Ch()
+
+	for (const ch of chans) {
+		go(function* () {
+			for (;;) {
+				const msg = yield* ch.rec
+				yield* outCh.put(msg)
+			}
+		})
+	}
+
+	return outCh
+}
+
+
+let waiting = 0
+
+const selectObj = select(ch1, ch2, ch3)
+
+while (waiting > 0) {
+	if (selectObj.isBlocked) {
+		doWork()
+		continue
+	}
+	const res = yield* selectObj
+	waiting--
+	// do whatever with res
 }

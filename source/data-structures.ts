@@ -12,6 +12,10 @@ export class Queue<V = unknown> {
 		this._capacity = capacity
 	}
 
+	get size() {
+		return this._array_m.length
+	}
+
 	get isEmpty() {
 		return this._array_m.length === 0
 	}
@@ -32,6 +36,8 @@ export class Queue<V = unknown> {
 		this._array_m.unshift(x)
 		return this
 	}
+
+
 }
 
 

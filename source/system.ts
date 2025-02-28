@@ -3,7 +3,7 @@ import { type Job } from "./job.ts"
 
 class System {
 	#stack: Array<Job> = []  // todo: optimize to Linked List
-	runningJob?: Job
+	runningJob!: Job
 	selectableJustDone?: Chan | Job
 
 	deadline = 5000

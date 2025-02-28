@@ -35,8 +35,12 @@ export async function* happyEyeBalls(hostName: string, port: number, delay: numb
 		}
 		const result = yield* ch.rec
 		clearTimeout(timeout)
-		if (result instanceof Socket) return result
-		if (result == "FAILED") inFlight--
+		if (result instanceof Socket) {
+			return result
+		}
+		if (result == "FAILED") {
+			inFlight--
+		}
 	} while (inFlight > 0)
 
 	return Error("All attempted connections failed")

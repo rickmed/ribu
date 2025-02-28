@@ -4,10 +4,10 @@ import { Ch, go } from "../source/index.ts"
 
 it("putter arrives first", async () => {
 
-	const ch = Ch()
+	const ch = Ch<string>()
 
 	go(function* putter() {
-		yield* ch.put()
+		yield* ch.put("hello")
 	})
 
 	const receiver = go(function* receiver() {
