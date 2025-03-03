@@ -1,7 +1,7 @@
-import { Job, continueRunningJob, iter, type TheIterable, Iter, iterResult, go } from "./job.ts"
+import { Job, continueRunningJob, iterator, type Iterable, Iter, iterRes, go } from "./job.ts"
 import { sys } from "./system.ts"
-import { Queue } from "./data-structures.ts"
-import { EMPTY, Observer } from "./shared.ts"
+import { Queue } from "./linked-lists.ts"
+import { EMPTY, Linkable } from "./shared.ts"
 
 // channel resumes job if job._state != DONE
 // else, it skips it and pulls another one
@@ -24,12 +24,12 @@ type PutVal<V> = V extends undefined ? void : V
 // todo, type for unclosable channel
 
 export interface OutCh<in V> {
-	put: (msg: PutVal<V>) => TheIterable<undefined>
-	enQueue: (msg: PutVal<V>) => void
+	put: (msg: PutVal<V>) => Iterable<undefined>
+	enQ: (msg: PutVal<V>) => void
 }
 
 type InCh<out V> = {
-	rec: TheIterable<V>
+	rec: Iterable<V>
 }
 
 const REC = 0
@@ -37,7 +37,7 @@ const PUT = 1
 let op: typeof REC | typeof PUT = PUT
 let putMsg: unknown = EMPTY
 
-type Receivers = typeof EMPTY | Observer | Queue<Observer>
+type Receivers = typeof EMPTY | Linkable | Queue<Linkable>
 
 /*
 
@@ -65,14 +65,16 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 	// todo: skip if job is !blocked (done, cancelling,...)
 	get rec() {
 		op = REC
-		return this as TheIterable<V>
+		// needs to return blockJobIterable as TheIterable<typeof this.val>
+		// so that caller can't call .put() on it after it called .rec and vice versa
+		return this as Iterable<V>
 	}
 
-	put(msg: PutVal<V>): TheIterable<undefined> {
+	put(msg: PutVal<V>): Iterable<undefined> {
 		throwIfDone<V>(this)
 		op = PUT
 		putMsg = msg
-		return this as TheIterable<undefined>
+		return this as Iterable<undefined>
 	}
 
 	[Symbol.iterator]() {
@@ -82,13 +84,14 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 		else {
 			processPut(this)
 		}
-		return iter as Iter<V>
+		return iterator as Iter<V>
 	}
 
-	enQueue(msg: PutVal<V>) {
+	enQ(msg: PutVal<V>) {
 		throwIfDone<V>(this)
 		putMsg = msg
 		processPut(this)
+		return this
 	}
 
 	// there maybe values in queue by putter jobs waiting or inserted by enQueue
@@ -105,7 +108,7 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 }
 
 export function enQueue<V>(ch: Chan<V>, msg: PutVal<V>): void {
-	ch.enQueue(msg)
+	ch.enQ(msg)
 }
 
 function throwIfDone<V>(ch: Chan<V>) {
@@ -147,7 +150,7 @@ function processRec<V>(ch_m: Chan<V>) {
 
 function receiverHasNoPutter<V>(ch: Chan<V>) {
 	addAsWaiter(sys.runningJob, ch, RECS)
-	iterResult.done = false
+	iterRes.done = false
 }
 
 export function addAsWaiter<V>(value: Receivers, hasAwaiterS_m: Chan<V>, kOfawaiterS: Recs): void
@@ -163,11 +166,11 @@ export function addAsWaiter<V>(value: unknown, hasAwaiterS_m: Chan<V>, kOfawaite
 	else {
 		const queue = new Queue()
 		queue.enQ(awaiterS).enQ(value)
-		hasAwaiterS_m[kOfawaiterS] = queue as (typeof kOfawaiterS extends Puts ? unknown : Queue<Observer>)
+		hasAwaiterS_m[kOfawaiterS] = queue as (typeof kOfawaiterS extends Puts ? unknown : Queue<Linkable>)
 	}
 }
 
-function resumeObserverAndMe(observer: Observer, msgToObserver: unknown, msgToRunningJob: unknown) {
+function resumeObserverAndMe(observer: Linkable, msgToObserver: unknown, msgToRunningJob: unknown) {
 	observer.onObservableDone(msgToObserver)
 	continueRunningJob(msgToRunningJob)
 }
@@ -200,7 +203,7 @@ function processPut<V>(ch_m: Chan<V>) {
 
 function putterHasNoReceiver<V>(ch: Chan<V>) {
 	addAsWaiter<V>(sys.runningJob, ch, PUTS)
-	iterResult.done = false
+	iterRes.done = false
 }
 
 

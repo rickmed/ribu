@@ -31,7 +31,7 @@ export async function* happyEyeBalls(hostName: string, port: number, delay: numb
 		if (addrsIdx < addressesLen) {
 			inFlight++
 			connect(addresses[addrsIdx++]!, ch)
-			timeout = setTimeout(() => ch.enQueue("TIMED_OUT"), delay)
+			timeout = setTimeout(() => ch.enQ("TIMED_OUT"), delay)
 		}
 		const result = yield* ch.rec
 		clearTimeout(timeout)
@@ -60,12 +60,12 @@ function connect(addrs: string, outCh: OutCh<Socket | "FAILED">) {
 
 	socket.on("connect", () => {
 		isConnected = true
-		outCh.enQueue(socket)
+		outCh.enQ(socket)
 	})
 
 	socket.on("error", () => {
 		if (!isConnected)	{
-			outCh.enQueue("FAILED")
+			outCh.enQ("FAILED")
 		}
 	})
 
@@ -96,7 +96,7 @@ export async function* happyEyeBalls_V2(hostName: string, port: number, delay: n
 			}
 			inFlight++
 			connect(addresses.shift()!)
-			timeout = setTimeout(() => failOrTimeout.enQueue(), delay)
+			timeout = setTimeout(() => failOrTimeout.enQ(), delay)
 			yield* failOrTimeout.rec
 			clearTimeout(timeout)
 		}
@@ -127,11 +127,11 @@ export async function* happyEyeBalls_V2(hostName: string, port: number, delay: n
 
 		socket.on("connect", () => {
 			isConnected = true
-			connectRes.enQueue(socket)
+			connectRes.enQ(socket)
 		})
 
 		socket.on("error", () => {
-			if (!isConnected) connectRes.enQueue("FAIL")
+			if (!isConnected) connectRes.enQ("FAIL")
 		})
 
 		socket.connect(443, addrs)

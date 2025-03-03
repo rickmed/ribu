@@ -1,9 +1,9 @@
-import { DONE, Job, iter, State, cancel, go, onEnd, type NotErrs, iterResult } from "./job.ts"
+import { DONE, Job, iterator, State, cancel, go, onEnd, type NotErrs, iterRes } from "./job.ts"
 import { runningJob, sys } from "./system.ts"
 import { E, ECancOK, ETimedOut, Err, RibuE } from "./errors.ts"
 import { TIMEOUT } from "dns"
 import { sleep } from "./timers.ts"
-import { Queue } from "./data-structures.ts"
+import { Queue } from "./linked-lists.ts"
 import { Ch, Chan } from "./channel.ts"
 
 
@@ -363,7 +363,7 @@ This supports O1 many-many subscriptions (O: Observer, N: Notifier, conn: Connec
 	Can transition from normal run -> awaiting for childs -> cancelling childs
 
 
-** onEnds list: Can reuse job.connHead (and nodes) since onEnds are ran after children are done
+** onEnds list: Can reuse job.connHead (and nodes)
 	- Needs to be executed Last In First Out
 		- Now, all nodes head conn.pNt = tailConn (this way I can iterate from tail to head)
 

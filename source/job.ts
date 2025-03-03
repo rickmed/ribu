@@ -1,69 +1,74 @@
-import { sys } from "./system.ts"
+import { sys, type Link, Linkable, EMPTY, disposeLink, freshLink, LL, ObsLL, NtsLL, Observer } from "./shared.ts"
 import { Chan } from "./channel.ts"
-import { ArrSet} from "./data-structures.ts"
-import { ETimedOut, Err, isRibuE, ECancOK } from "./errors.ts"
 import { Timeout } from "./timers.ts"
-import { Observer } from "./shared.ts"
+import { ETimedOut, Err, isRibuE, ECancOK } from "./errors.ts"
 
+/* EcancOK semantics
+	- const res = yield* job    // caller fails
+	- yield* job.cancel()    // caller resumes even though target's result is ECancOK (::Error)
 
+*/
 //* **********  System  ********** *//
 
 export enum State {
 	RUNNING = 1,
-	PARKED_CONTINUE,
-	PARKED_END_IF_ERR,
-	PARKED_SLEEP,
-	GEN_DONE_WAITING_CHILDS,
-	GEN_DONE_WAITING_ASYNC_ONENDS,
+	PARKED,
 	CANCELLING,
+	WAITING_CHILDS,
+	WAITING_ONENDS,
 	DONE
 }
 
-export const { RUNNING, PARKED_CONTINUE, PARKED_END_IF_ERR, PARKED_SLEEP, GEN_DONE_WAITING_CHILDS, GEN_DONE_WAITING_ASYNC_ONENDS, CANCELLING, DONE } = State
+export const { RUNNING, PARKED, WAITING_CHILDS, WAITING_ONENDS, CANCELLING, DONE } = State
 
-type Targets = Target | Target[]
+const PARKED_END_IF_FAIL = 20
+const PARKED_CONTINUE = 21
+const PARKED_SLEEP = 22
+
+type PARKED_CTX =
+	typeof PARKED_END_IF_FAIL |
+	typeof PARKED_CONTINUE |
+	typeof PARKED_SLEEP
+
+type MaybeErrsArr = Err[] | undefined
 
 type StateCtx =
-	| [State.RUNNING, 0]
-	| [State.PARKED_CONTINUE, string]
-	| [State.PARKED_END_IF_ERR, string]
-	| [State.PARKED_SLEEP, Timeout]
-	| [State.GEN_DONE_WAITING_CHILDS, Targets]
-	| [State.GEN_DONE_WAITING_ASYNC_ONENDS, undefined]
-	| [State.CANCELLING, null]
-	| [State.DONE, {yes: boolean}]
+	| [State.RUNNING, undefined]
+	| [State.PARKED, PARKED_CTX]
+	| [State.WAITING_CHILDS, MaybeErrsArr]
+	| [State.WAITING_ONENDS, MaybeErrsArr]
+	| [State.DONE, undefined]
 
 type StateCtxVal<T extends State> = Extract<StateCtx, [T, unknown]> extends [T, infer U] ? U : never;
 
 /* *** System variables *** */
 
+// change to LL using Node
 let jobStack: Array<Job> = []
 let jobInProcess!: Job
-
+let self!: Job
 
 
 //* **********  Job Class  ********** *//
 
-// cancelling children and onEnds
-// nWaiting
-// errors[], could use ._io
-
-
-
-export class Job<Ret = unknown, Errs = unknown> implements Observer {
+export class Job<Ret = unknown, Errs = unknown> implements Linkable<Ret | Errs> {
 
 	_gen: Gen
 	_name: string
-	__state: State = RUNNING
-	_stateCtx: StateCtxVal<State> = 0
-
-	// Used as an Inbox/Outbox for the job
-	val: Ret | Errs = "$dummy" as (Ret | Errs)
+	_state: State = RUNNING
+	_stateCtx: StateCtxVal<State>
+	_obH?: ObsLL<Observer>
+	_ntH?: NtsLL<Job | Chan>
+	val = EMPTY as Ret | Errs  //  inbox/outbox
 
 	// Because a job can settle with ECancOK, which technically isn't a failure but,
 	// when const res = yield* job.$, the caller shouldn't continue if called job settled with ECancOK.
+	// not sure if needed
 	_failed = false
-	_childs?: ArrSet<Job>
+	_childs?: Link<unknown, Job>
+
+	// needed to be removed from parent's _childs LL
+	_parent?: Link<Job, unknown>
 
 	_onEnds?: OnEnd | OnEnd[]
 
@@ -91,10 +96,6 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 		}
 		parentChilds.add(this)
 		this._parent = parent
-	}
-
-	onObservableDone(val: unknown) {
-
 	}
 
 	_resume(IOval?: unknown): void {
@@ -133,12 +134,12 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 
 	_continue<IterReturn>(IOval?: unknown) {
 		this.val = IOval as Ret
-		return theIterable as TheIterable<IterReturn>
+		return theIterable as Iterable<IterReturn>
 	}
 
 	_park<IterReturn>(IOval?: unknown) {
 		this._setPark(IOval)
-		return theIterable as TheIterable<IterReturn>
+		return theIterable as Iterable<IterReturn>
 	}
 
 	_setResume(IOval?: unknown) {
@@ -219,36 +220,18 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 		this._on(EV.JOB_DONE, cb)
 	}
 
-	get orEnd() {
-		return this.$
-	}
 
-	get $() {
-		this.#prepSystem("BLOCKED_$")
-		return blockJobIterable as TheIterable<Ret>
-	}
-
-	get err() {
-		this.#prepSystem("BLOCKED_cont")
-		return blockJobIterable as TheIterable<typeof this.val>
-	}
 
 	get isReady() {
-		return this.__state == DONE
-	}
-
-	#prepSystem(state: "BLOCKED_cont" | "BLOCKED_$"): void {
-		sys.runningJob._state = state
-		targetJob = this
+		return this._state == DONE
 	}
 
 	/**
 	 * Fails caller if result is other than ECancOK
 	 */
-	cancel(): typeof CANCEL {
-		targetJob = this
-		cancelCallerJob = sys.runningJob
-		return CANCEL
+	cancel() {
+		this.val = CANCELLED as Ret  // reuse .val as a hack for context in .settle()
+		// todo return iterator
 	}
 
 	_endProtocol(errors?: Error[]) {
@@ -391,12 +374,24 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 		}
 	}
 
-
-
 	get failed(): boolean {
 		return this._failed
 	}
 
+
+	get err() {
+		self = this
+		return TheJobIterable as Iterable<typeof this.val>
+	}
+
+	[Symbol.iterator]() {
+		const { runningJob } = sys
+		const conn = Conn()
+		linkJobs(ObJob, ntJob)
+		this.#prepSystem("BLOCKED_$")
+	}
+
+	// todo: set this._gen = null, just in case
 	settle(val: Ret | Errs) {
 		if (this._state === "DONE") {
 			return
@@ -418,129 +413,215 @@ export class Job<Ret = unknown, Errs = unknown> implements Observer {
 	}
 
 	then(thenOK: (value: Ret) => Ret, thenErr: (reason: unknown) => Promise<never>): Promise<Ret> {
+		// todo maybe simplify this
 		return new Promise<Ret>((res, rej) => {
-			this._on(EV.JOB_DONE, ({ val }: Job) => {
-				if (val instanceof Error) {
-					rej(val)
+
+			const observerObj = {
+				_onNtDone(val: unknown, notifierJobFailed?: boolean, valIsECancOK?: boolean) {
+					void ((notifierJobFailed || valIsECancOK) ?
+						rej(val as Error) :
+						res(val as Ret))
 				}
-				else {
-					res(val as Ret)
-				}
-			})
+			}
+
+			subscribeToNotifier(observerObj, this, freshLink(observer, notifier))
+
 		}).then(thenOK, thenErr)
 	}
 
 
-}
+	// need to know if I was cancelled originally i think
+	_onNtDone(val: unknown, notifierJobFailed = false, resIsECancOK = false) {
+		const { _state, _stateCtx } = this
+		if (_state == PARKED) {
+			if (_stateCtx == PARKED_CONTINUE) {
+				// todo
+				return
+			}
 
-type Target = {
-	removeObserver: (observer: Observer) => void
-}
-
-
-//* **********  State Machine Step function  ********** *//
-
-export function Step(job: Job, ev: Event, evData: unknown): State {
-	let state = job.__state
-	let stateCtx = job._stateCtx
-	let newState = state
-
-	if (state === PARKED_SLEEP) {
-		clearTimeout(stateCtx as StateCtxVal<typeof PARKED_SLEEP>)
-	}
-
-	// Maybe implement same protocol for all Step(JOB_FAILED)
-	// so if I job is blocked at ch.rec and its cancelled
-	// it will go to cancel state and channel will not resume
-
-	// Maybe branch on event.
-	// Maybe implement CANCEL setting a onEnd()
-
-	// MAIN idea is that observers just adds itself in target.observers
-	// so that targetJob can call a single function Step(callerJob, JOB_DONE, targetJob)
-	// so it's observer responsability to branch on its state.
-
-	// eslint-disable-next-line no-constant-condition
-	while (1) {
-
-		if (state === RUNNING) {
-		// handle RUNNING
-
-			newState = RUNNING
-		}
-		if (state === PARKED_CONTINUE) {
-		// handle PARKED_CONTINUE
-			newState = PARKED_CONTINUE
-		}
-		if (state === PARKED_END_IF_ERR) {
-		// handle PARKED_END_IF_ERR
-		// state = 'B';
-			newState = PARKED_END_IF_ERR
+			return
 		}
 
-		if (state === GEN_DONE_WAITING_CHILDS) {
-		// handle GEN_DONE_WAITING_CHILDS
-			newState = GEN_DONE_WAITING_CHILDS
-		}
-		if (state === CANCELLING) {
-		// handle CANCELLLING
-			newState = CANCELLING
-		}
-		if (state === DONE) {
-		// handle DONE
-			newState = DONE
-		}
-
-		return newState
+		// problem is that notifier could have ended with ECancOK but need
+		// to check here if i need to fail if I'm PARKED_END_IF_FAIL
+		// (instanceof is expensive) and this is called by channels and so on
 	}
 }
 
 
-export function resumeJob(job: Job) {
-	jobStack.push(job)
-	jobInProcess = job
+
+
+/*********************  NEW FUNCTONS **************************** */
+
+const CANCELLED = Symbol("canc")
+
+export function resumeJob(thisJob: Job) {
+	jobStack.push(thisJob)
+	jobInProcess = thisJob
 	try {
 		// No values are passed into gen.next() because values inside the generator
-		// function are received automatically by the returned {value} of the
-		// delegated theIterator
-		const { done, value} = job._gen.next()
+		// function are received by the returned iteratorResult object
+		const { done, value} = thisJob._gen.next()
 		if (done) {
-			Step(job, JOB_RETURNED, value)
+			thisJob.val = value
+			endProtocol(thisJob)
 		}
 	}
 	catch (e) {
-		Step(job, JOB_THREW, e)
+		thisJob.val = new Err(e, thisJob._name)
+		terminateJob(thisJob, sys.runningJob)
 	}
 	finally {
 		jobInProcess = jobStack.pop()!
 	}
 }
+/*
+.cancel()
+	unsub from notifiers (._ntH)
+	if (childs), loop childs and call cancelJob(), move to state = waitingChilds
+		this could just mutate Links in .chids LL to subscribe to childs' observers
+
+jobReturned
+	subscribe/wait for childs
+	call/wait onEnds
+jobThrew, jobCancelled
+	waiting childs
+		ctx can be same if (.childs), ie, childs in LL
+	waiting (async) onEnds
+		ctx can be same if (.onEnds), ie, childs in LL
+
+Events:
+	- cancel
+		call all child.cancel() (child will subscribe caller)
+		transition waitingChilds
+	- jobThrew
+		idem (but thrown error needs to be in .val)
+	- jobReturned
+	- ntJobFailed (need for ex to fail me if am PARKED_ERR)
+*/
+
+// endProtocol is wait_childs, then exec onEnds  (or settle() direcly)
+
+function endProtocol(thisJob: Job) {
+	if (thisJob._childs) {
+		waitingChilds(thisJob)
+	}
+	else {
+		// exec onEnds
+	}
+}
+
+function cancelJob(thisJob: Job, callerJob: Job) {
+	thisJob.val = CANCELLED
+	removeFromNotifiers(thisJob)
+	linkJobs(thisJob, callerJob)
+	terminateJob(thisJob, callerJob)
+}
+
+function terminateJob(thisJob: Job, callerJob: Job) {
+	// cancel all childs
+	let childLink = thisJob._childs
+	while (childLink) {
+		const childJob = childLink.nt
+		cancelJob(childJob, thisJob)
+		childLink = childLink.nA
+	}
+	thisJob._state = WAITING_CHILDS
+	waitingChilds(thisJob)
+}
+
+function removeFromNotifiers(thisJob: Job) {
+	let notifierLink = thisJob._ntH
+	while (notifierLink) {
+		// remove as observer from notifier's LL
+		notifierLink.nB.pB = notifierLink.pB
+		notifierLink.pB.nB = notifierLink.nB
+
+		notifierLink = notifierLink.nA
+		disposeLink(notifierLink)
+	}
+}
+
+// if I failed and observer is job... ?
+function notifyObservers(thisJob: Job) {
+	// loop over ._obH linked list like removeFromNotifiers
+	let obsLink = thisJob._obH
+	while (obsLink) {
+		// remove as notifier from observer's LL
+		obsLink.nA.pA = obsLink.pA
+		obsLink.pA.nA = obsLink.nA
+
+		obsLink = obsLink.nB
+
+		// can check fast if I fail if _stateCtx is not undefined, has array errors,
+		//  (need to reset _stateCtx after out of PARKED)
+		// if .val == CANCELLED and _stateCtx is undefined (not have errors), then my result is ECancOK
+
+		const obs = obsLink.ob
+		obs._onNtDone(self.val, thisJob._failed)
+		disposeLink(obsLink)
+	}
+}
+
+
+/* Job Possible Input Events */
+
+// Exists because, otherwise, I'd to check in job._onNtDone(val) if val is
+// instance of Error (slow) and ALSO, a system var to check if thing just done
+// is a Job bc jobs don't fail if channels produce Error objects.
+function onNtJobFailed(thisJob: Job, val: unknown) {
+	// todo
+}
+
+function jobReturned(thisJob: Job, val: unknown) {
+	// go to waiting childs
+}
+
+function jobThrew(thisJob: Job, val: unknown) {
+}
+
+/* Job State Handlers */
+
+function waitingChilds(thisJob: Job) {
+	if (thisJob._childs) {
+		//
+	}
+}
+
+
+
+
+
+
+
+
+
 
 export function setRunning(job_m: Job) {
-	job_m.__state = RUNNING
+	job_m._state = RUNNING
 	job_m.val = undefined
 }
 
 export function setStateAndCtx<S extends State>(job_m: Job, state: S, stateCtx: StateCtxVal<S>) {
-	job_m.__state = state
+	job_m._state = state
 	job_m._stateCtx = stateCtx as StateCtxVal<State>
 }
 
 export function continueRunningJob(val?: unknown) {
-	iterResult.done = true
-	iterResult.value = val
+	iterRes.done = true
+	iterRes.value = val
 }
 
-export let iterResult = {
+export let iterRes = {
 	done: false,
 	value: 0 as unknown,
 }
 
 export type Iter<V> = Iterator<never, V, never>
 
-export const iter = {
+export const iterator = {
 	next() {
-		return iterResult
+		return iterRes
 	}
 }
 
@@ -550,7 +631,7 @@ export type NewTheIterable<V> = {
 
 export const NewtheIterable = {
 	[Symbol.iterator]() {
-		return iter
+		return iterator
 	}
 }
 
@@ -574,27 +655,78 @@ export function steal(toJob_m: Job, jobs: Job[]) {
 /* **********  Block/Wait Job Iterables  ********** */
 
 
-const blockJobIterable = {
+const TheJobIterable = {
 	[Symbol.iterator]() {
-		const { targetJob } = sys
+
 		const callerJob = sys.runningJob
-		if (targetJob._state !== "DONE") {
-			targetJob._onDone(doneJob => onJobDone(doneJob, callerJob))
-			return iter
+
+		if (self._state === DONE) {
+			if (self._failed) {
+				onNtJobFailed(callerJob, self.val)
+				iterRes.done = false
+			}
+			else {
+				iterRes.done = true
+				iterRes.value = self.val
+			}
+		}
+		else {
+			linkJobs(callerJob, self)
+			iterRes.done = false
 		}
 
-		// else, targetJob is already settled...
-		if (callerJob._state === "BLOCKED_$" && targetJob._failed) {
-			callerJob._endProtocol()
-		}
-		callerJob._setResume(targetJob.val)
-		return iter
+		return iterator
 	}
 }
 
+
+
+function linkJobs(observer: Observer, notifier: Job) {
+
+	let link = freshLink(observer, notifier)
+
+	subscribeToNotifier(observer, notifier, link)
+
+	// insert as head of observer's notifiers LL
+	let notifiersOldHead = observer._ntH
+	observer._ntH = link
+	if (notifiersOldHead) {
+		link.nA = notifiersOldHead
+		notifiersOldHead.pA = link
+	}
+
+}
+
+function subscribeToNotifier(observer: Observer, notifier: Job, link: Link<Observer, unknown>) {
+	// insert as head of notifier's observers LL
+	let observersOldHead = notifier._obH
+	notifier._obH = link
+	if (observersOldHead) {
+		link.nB = observersOldHead
+		observersOldHead.pB = link
+	}
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 function onJobDone(doneJob: Job, callerJob: Job) {
 	if (callerJob._state === "BLOCKED_$" && doneJob._failed) {
-		// eslint-disable-next-line functional/immutable-data
+
 		callerJob.val = new Err(doneJob.val, callerJob._name)
 		callerJob._endProtocol()
 	}
@@ -632,7 +764,7 @@ function execCancel(callCB = true): void {
 
 function onCancelJobIsDone(callerJob: Job, targetJob: Job): void {
 	if (targetJob._failed) {
-		// eslint-disable-next-line functional/immutable-data
+
 		callerJob.val = new Err(targetJob.val, callerJob._name)
 		callerJob._endProtocol()
 	}
@@ -725,8 +857,8 @@ function isProm(x: unknown): x is PromiseLike<unknown> {
 //* **********  The Iterable ********** *//
 
 
-export type TheIterable<V> = {
-	[Symbol.iterator]: () => Iterator<Yieldable, V>
+export type Iterable<V> = {
+	[Symbol.iterator]: () => Iterator<never, V>
 }
 
 export type TheIterator<V> = Iterator<unknown, V>

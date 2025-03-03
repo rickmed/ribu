@@ -43,7 +43,7 @@ export default ts_eslint.config({
 				ignoreClasses: true,
 				ignoreAccessorPattern: "**.*_m*.**",
 				ignoreNonConstDeclarations: {
-					treatParametersAsConst: true,
+					treatParametersAsConst: false,
 				},
 			},
 		],
