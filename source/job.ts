@@ -51,7 +51,7 @@ let self!: Job
 
 //* **********  Job Class  ********** *//
 
-export class Job<Ret = unknown, Errs = unknown> implements Linkable<Ret | Errs> {
+export class Job<Ret = unknown, Errs = unknown> {
 
 	_gen: Gen
 	_name: string
@@ -65,9 +65,9 @@ export class Job<Ret = unknown, Errs = unknown> implements Linkable<Ret | Errs> 
 	// when const res = yield* job.$, the caller shouldn't continue if called job settled with ECancOK.
 	// not sure if needed
 	_failed = false
-	_childs?: Link<unknown, Job>
+	_childs?: Link<Job, unknown>
 
-	// needed to be removed from parent's _childs LL
+	// needed to be removed from parent's _childs LL when child is done
 	_parent?: Link<Job, unknown>
 
 	_onEnds?: OnEnd | OnEnd[]
@@ -216,24 +216,6 @@ export class Job<Ret = unknown, Errs = unknown> implements Linkable<Ret | Errs> 
 		}
 	}
 
-	_onDone(cb: (job: this) => void) {
-		this._on(EV.JOB_DONE, cb)
-	}
-
-
-
-	get isReady() {
-		return this._state == DONE
-	}
-
-	/**
-	 * Fails caller if result is other than ECancOK
-	 */
-	cancel() {
-		this.val = CANCELLED as Ret  // reuse .val as a hack for context in .settle()
-		// todo return iterator
-	}
-
 	_endProtocol(errors?: Error[]) {
 		const { _sleepTO, _onEnds, _childs } = this
 
@@ -361,6 +343,11 @@ export class Job<Ret = unknown, Errs = unknown> implements Linkable<Ret | Errs> 
 	// 	// maybe a special Job class??
 	// }
 
+
+	_onDone(cb: (job: this) => void) {
+		// this._on(EV.JOB_DONE, cb)
+	}
+
 	onEnd(newV: OnEnd) {
 		let { _onEnds } = this
 		if (!_onEnds) {
@@ -399,19 +386,6 @@ export class Job<Ret = unknown, Errs = unknown> implements Linkable<Ret | Errs> 
 		this.#genFnReturned(val)
 	}
 
-	get promfy() {
-		return new Promise<Ret>((res, rej) => {
-			this._onDone(jobDone => {
-				if (jobDone._failed) {
-					rej(jobDone.val as Error)
-				}
-				else {
-					res(jobDone.val as Ret)
-				}
-			})
-		})
-	}
-
 	then(thenOK: (value: Ret) => Ret, thenErr: (reason: unknown) => Promise<never>): Promise<Ret> {
 		// todo maybe simplify this
 		return new Promise<Ret>((res, rej) => {
@@ -430,6 +404,8 @@ export class Job<Ret = unknown, Errs = unknown> implements Linkable<Ret | Errs> 
 	}
 
 
+
+
 	// need to know if I was cancelled originally i think
 	_onNtDone(val: unknown, notifierJobFailed = false, resIsECancOK = false) {
 		const { _state, _stateCtx } = this
@@ -445,6 +421,18 @@ export class Job<Ret = unknown, Errs = unknown> implements Linkable<Ret | Errs> 
 		// problem is that notifier could have ended with ECancOK but need
 		// to check here if i need to fail if I'm PARKED_END_IF_FAIL
 		// (instanceof is expensive) and this is called by channels and so on
+	}
+
+	/**
+	 * Fails caller if result is other than ECancOK
+	 */
+	cancel() {
+		const { _state, _stateCtx } = this
+		if (_state == DONE) {
+			
+		}
+		this.val = CANCELLED as Ret  // reuse .val as a hack for context in .settle()
+
 	}
 }
 
@@ -475,6 +463,8 @@ export function resumeJob(thisJob: Job) {
 		jobInProcess = jobStack.pop()!
 	}
 }
+
+
 /*
 .cancel()
 	unsub from notifiers (._ntH)
@@ -522,7 +512,7 @@ function terminateJob(thisJob: Job, callerJob: Job) {
 	// cancel all childs
 	let childLink = thisJob._childs
 	while (childLink) {
-		const childJob = childLink.nt
+		const childJob = childLink.a
 		cancelJob(childJob, thisJob)
 		childLink = childLink.nA
 	}
@@ -533,7 +523,7 @@ function terminateJob(thisJob: Job, callerJob: Job) {
 function removeFromNotifiers(thisJob: Job) {
 	let notifierLink = thisJob._ntH
 	while (notifierLink) {
-		// remove as observer from notifier's LL
+		// remove from notifier's observers LL
 		notifierLink.nB.pB = notifierLink.pB
 		notifierLink.pB.nB = notifierLink.nB
 
@@ -547,6 +537,7 @@ function notifyObservers(thisJob: Job) {
 	// loop over ._obH linked list like removeFromNotifiers
 	let obsLink = thisJob._obH
 	while (obsLink) {
+
 		// remove as notifier from observer's LL
 		obsLink.nA.pA = obsLink.pA
 		obsLink.pA.nA = obsLink.nA
@@ -557,7 +548,7 @@ function notifyObservers(thisJob: Job) {
 		//  (need to reset _stateCtx after out of PARKED)
 		// if .val == CANCELLED and _stateCtx is undefined (not have errors), then my result is ECancOK
 
-		const obs = obsLink.ob
+		const obs = obsLink.a
 		obs._onNtDone(self.val, thisJob._failed)
 		disposeLink(obsLink)
 	}

@@ -54,34 +54,34 @@ export type Linkable<Produces = unknown> = {
 
 export type Observer = {
 	_onNtDone: (val: unknown, notifierJobFailed?: boolean) => void
-	_ntH?: Link<unknown, Notifier>  // Head of notifiers LL that I'm awaiting a data/result (to be removed from if cancelled)
+	_ntH?: Link<Notifier, unknown>  // Head of notifiers LL that I'm awaiting a data/result (to be removed from if cancelled)
 }
 
 export type Notifier = {
-	_obH?: Link<Observer, unknown>  // Head of observers LL that needs to be notified
+	_obH?: Link<unknown, Observer>  // Head of observers LL that needs to be notified
 }
 
 /**
  * Used a LL Node for Observers <-> Notifiers and several other LLs (some as single LL)
- * A is Notifier or other
- * B is Observer or other
- * n is next
- * p is previous
+ * A is Notifier (or any target)
+ * B is Observer (or any counterpart)
+ * n is next Node
+ * p is previous Node
  */
 export class Link<A, B> {
 	constructor(
-		public ob: A,
-		public nt: B,
-		public ntf = true) {
-	}
+		public a: A,
+		public b: B,
+		public ntf = true
+	) {}
 	nA = undefined as unknown as this
 	pA = undefined as unknown as this
 	nB = undefined as unknown as this
 	pB = undefined as unknown as this
 }
 
-export type ObsLL<Obs> = Link<Obs, unknown>
-export type NtsLL<Nts> = Link<unknown, Nts>
+export type ObsLL<Obs> = Link<unknown, Obs>
+export type NtsLL<Nts> = Link<Nts, unknown>
 
 let linkPoolHead: Link<unknown, unknown> | undefined = undefined
 
@@ -92,27 +92,27 @@ export function disposeLink(link: Link<unknown, unknown>) {
 	link.nA = linkPoolHead ?? undefined as unknown as NoLink
 	linkPoolHead = link
 
-	link.ob = undefined as unknown as Job
-	link.nt = undefined as unknown as Job
+	link.a = undefined as unknown as Job
+	link.b = undefined as unknown as Job
 	link.ntf = false
 	link.pA = undefined as unknown as NoLink
 	link.nB = undefined as unknown as NoLink
 	link.pB = undefined as unknown as NoLink
 }
 
-export function freshLink<Ob extends Observer, Nt extends Notifier>(ob: Ob, nt: Nt, ntf = true) {
+export function freshLink<A, B>(a: A, b?: B, ntf = true) {
 	if (!linkPoolHead) {
-		return new Link(ob, nt, ntf)
+		return new Link(a, b, ntf)
 	}
 
 	let link = linkPoolHead
 
 	linkPoolHead = link.nA
-	link.nA = undefined as unknown as Link<Ob, Nt>
+	link.nA = undefined as unknown as Link<A, B>
 
-	link.ob = ob
-	link.nt = nt
+	link.a = a
+	link.b = b
 	link.ntf = ntf
 
-	return link as Link<Ob, Nt>
+	return link as Link<A, B>
 }
