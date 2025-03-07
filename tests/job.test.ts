@@ -48,11 +48,11 @@ describe("Job Errors. Job settles with the right error when:", () => {
 
 		const exp = {
 			name: "Err",
-			_op: "main",
+			fn: "main",
 			message: "",
 			cause: {
 				name: "Err",
-				_op: "inner",
+				fn: "inner",
 				message: "",
 				cause: {
 					name: "Error",
@@ -68,7 +68,7 @@ describe("Job Errors. Job settles with the right error when:", () => {
 				throw Error("boom")
 			}
 
-			yield* go(inner).$
+			yield* go(inner)
 		}
 
 		const rec = await go(main).promfyCont
@@ -137,7 +137,7 @@ describe("job can yield promises", () => {
 		const rec = await go(main).promfyCont
 
 		const exp = {
-			_op: "main",
+			fn: "main",
 			cause: {
 				name: "PromiseRejected",
 				cause: "Bad",

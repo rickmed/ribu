@@ -47,7 +47,7 @@ export function checkErrSpec(rec: unknown, spec: NonNullable<unknown>): void {
 	if ("_op" in spec) {
 
 		assertRibuErr(rec)
-		expect(rec._op).toBe(spec._op)
+		expect(rec._fn).toBe(spec._op)
 		expect(rec[ERR_TAG]).toBe(1)
 
 		if (!("name" in spec)) {

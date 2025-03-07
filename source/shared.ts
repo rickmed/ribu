@@ -1,6 +1,62 @@
 import { Chan } from "./channel.ts"
 import { type Job } from "./job.ts"
 
+
+
+/* When removing nodes from counterpart
+
+		target.llHead
+					\
+ undefined <-> [] <-> [] <-> [] <-> undefined
+					|		 |
+					|	  if removing this, no problem, prev and next will point to each other
+					|
+	          if removing head, need to update target.llHead to removingLink.next
+
+*/
+
+
+/* Should tail/heads wrap so Links p/n are never undefined? (no need to check)
+
+	adding B:
+
+		target.llHead
+					\
+			EL <-> A <-> EL
+
+		target.llHead
+				\
+		EL <-> B <-> A <-> EL
+
+** In channels need head.prev to point to tail (instead of EL)
+		so it can be dequeued from tail (queues in head)
+	- Consider this when removing links from Channel queues
+
+
+*/
+
+/* Subscribe to
+When target is done, it removes itself from observer's _tgH and calls ._onTgDone()
+
+job to job
+	observerJob: _onTgDone, _tgH
+	target: _obH
+job to chan
+	observerJob: _onTgDone, _tgH
+	target: has .putters and .receiverS
+job to timer
+	observerJob: _onTgDone, _tgH
+	target: _obH
+
+
+promise to job
+	observer: _onTgDone, _tgH (not necessary bc no cancellation)
+	target: _obH
+*/
+
+
+
+
 export const EMPTY = Symbol("EM")
 
 /* **************   System   ************************************************ */
@@ -32,13 +88,13 @@ export const sys = new System()
 /* **************   Linked Lists   ****************************************** */
 
 /* Lexicon
-Notifier = Job | Chan
+Target = Job | Chan
 Observer = Job | Chan
 LL: Linked List
 ob: Observer
-	Waits for a Notifier to notify back with data/result
-nt: Notifier
-	Notifies back to observer with data/result
+	Waits for a Target to call back with data/result
+nt: Target
+	Calls back to observer with data/result
 */
 
 
@@ -52,63 +108,81 @@ export type Linkable<Produces = unknown> = {
 	val: Produces
 } & Observer
 
-export type Observer = {
-	_onNtDone: (val: unknown, notifierJobFailed?: boolean) => void
-	_ntH?: Link<Notifier, unknown>  // Head of notifiers LL that I'm awaiting a data/result (to be removed from if cancelled)
-}
 
-export type Notifier = {
-	_obH?: Link<unknown, Observer>  // Head of observers LL that needs to be notified
+/**
+ * Waits for a Target to notify back with data/result
+ * tg: Target
+ */
+
+/**
+ *	  - Subscribe to a target to get data/result from.
+ */
+
+export type Observer = {
+	_onTgDone: (val: unknown, targetJobFailed?: boolean) => void
+}
+// _tgH: typeof EMPTY_LINK | Link<Target, unknown>  // Head of targets LL that I'm awaiting a data/result (to be removed from if cancelled)
+
+export type Target = {
+	_obH?: typeof EMPTY_LINK | Link<unknown, Observer>  // Head of observers LL that needs to be notified
 }
 
 /**
- * Used a LL Node for Observers <-> Notifiers and several other LLs (some as single LL)
- * A is Notifier (or any target)
- * B is Observer (or any counterpart)
- * n is next Node
- * p is previous Node
+ * Used as a LL Node ("Link") for Observers <-> Targets and several other LLs (some are single LL)
+ * A is Observer (or a generic object)
+ * B is Target
+ * nA is next Observer Link (towards the tail of LL)
+ * pA is previous Observer Link
+ * nB is next Target Link (towards the tail of LL)
+ * pB is previous Target Link
+ *
+ * todo: more documentation
  */
-export class Link<A, B> {
+export class Link<A = unknown, B = unknown> {
 	constructor(
 		public a: A,
 		public b: B,
 		public ntf = true
 	) {}
-	nA = undefined as unknown as this
-	pA = undefined as unknown as this
-	nB = undefined as unknown as this
-	pB = undefined as unknown as this
+	nA = EMPTY_LINK as Link<A, B>
+	pA = EMPTY_LINK as Link<A, B>
+	nB = EMPTY_LINK as Link<A, B>
+	pB = EMPTY_LINK as Link<A, B>
 }
 
-export type ObsLL<Obs> = Link<unknown, Obs>
-export type NtsLL<Nts> = Link<Nts, unknown>
+/**
+ * Pool of links to be reused.
+ * Is a single LL.
+ * We use Link's .nA to link to next available Link in pool.
+ */
 
-let linkPoolHead: Link<unknown, unknown> | undefined = undefined
+let linkPoolHead: Link | undefined = undefined
 
-type NoLink = Link<unknown, unknown>
+export const EMPTY_LINK: Link = new Link(EMPTY, EMPTY)
 
-export function disposeLink(link: Link<unknown, unknown>) {
+export function disposeLink(link: Link) {
 
-	link.nA = linkPoolHead ?? undefined as unknown as NoLink
+	link.nA = linkPoolHead ?? EMPTY_LINK
 	linkPoolHead = link
 
-	link.a = undefined as unknown as Job
-	link.b = undefined as unknown as Job
+	link.a = EMPTY
+	link.b = EMPTY
 	link.ntf = false
-	link.pA = undefined as unknown as NoLink
-	link.nB = undefined as unknown as NoLink
-	link.pB = undefined as unknown as NoLink
+	link.pA = EMPTY_LINK
+	link.nB = EMPTY_LINK
+	link.pB = EMPTY_LINK
 }
 
-export function freshLink<A, B>(a: A, b?: B, ntf = true) {
+export function freshLink<A, B>(a: A, b: B, ntf = true) {
 	if (!linkPoolHead) {
 		return new Link(a, b, ntf)
 	}
 
 	let link = linkPoolHead
 
-	linkPoolHead = link.nA
-	link.nA = undefined as unknown as Link<A, B>
+	const { nA } = link
+	linkPoolHead = nA === EMPTY_LINK ? undefined : nA
+	link.nA = link
 
 	link.a = a
 	link.b = b

@@ -1,10 +1,11 @@
 import { DONE, Job, iterator, State, cancel, go, onEnd, type NotErrs, iterRes } from "./job.ts"
-import { runningJob, sys } from "./system.ts"
+import { sys } from "./shared.ts"
 import { E, ECancOK, ETimedOut, Err, RibuE } from "./errors.ts"
 import { TIMEOUT } from "dns"
 import { sleep } from "./timers.ts"
 import { Queue } from "./linked-lists.ts"
 import { Ch, Chan } from "./channel.ts"
+import { EMPTY_LINK, Link } from "./shared.ts"
 
 
 //* **********  Job Combinators  ********** *//
@@ -15,25 +16,20 @@ import { Ch, Chan } from "./channel.ts"
 - Returns an empty array if the passed-in array in empty.
  */
 export function allOrErr<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
-
 	return go(function* _allOrErr() {
-
 		let results: Array<NotErrs<Jobs[number]["val"]>> = []
-
-		if (jobs.length === 0) {
+		let inflight = jobs.length
+		if (inflight == 0) {
 			return results
 		}
 
-		const ev = Ev()
-		for (const j of jobs) {
-			j._onDone(j => ev.emit(j))
-		}
+		const jobsDone = observe(jobs)
 
-		let inFlight = jobs.length
-		while (inFlight--) {
-			const job = (yield ev.wait) as Job
+		while (inflight > 0) {
+			const job = yield* jobsDone
+			inflight--
 			if (job.failed) {
-				yield cancel(jobs)
+				yield* cancel(jobs)
 				return E("AJobFailed", "allOrErr", "", job.val as RibuE)
 			}
 			results.push(job.val as typeof results[number])
@@ -42,83 +38,6 @@ export function allOrErr<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 		return results
 	})
 }
-
-
-
-export function allOrErr2<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
-}
-
-
-/* allOrErr
-
-- Doesn't support allOrErr2(job1, job2).cancel()
-	const res = yield* allOrErr(job1, job2).err
-	if (res instanceof Error) {
-		yield* cancel(jobs)
-	}
-
-
-- Supports only one observer
-
-	const allOrErrObj = allOrErr(job1, job2)
-	yield* allOrErrObj
-	yield* allOrErrObj  // this throws
-
-
-*/
-
-
-class allOrErr2_ {
-
-	private result: Array<NotErrs<Jobs[number]["val"]>> = []
-	private errorResult?: E<"AJobFailed">
-	private inFlight: number
-	private observer?: Job
-
-	constructor(jobs: Job[]) {
-		this.inFlight = jobs.length
-		for (const job of jobs) {
-			jobs.addObserver(this)
-		}
-	}
-
-	onObservableDone(job: Job) {
-		if (job.failed) {
-			const err = E("AJobFailed", "allOrErr", "", job.val as RibuE)
-			for (const observable of this.observables) {
-				observable.removeObserver(this)
-			}
-			this.errorResult = err
-			this.observer?.onObservableDone(err)
-			return
-		}
-		this.inFlight--
-		const { result, inFlight } = this
-		result.push(job.val as typeof result[number])
-		if (inFlight === 0) {
-			this.observer?.onObservableDone(results)
-		}
-	}
-
-	[Symbol.iterator]() {
-		if (this.errorResult || this.inFlight === 0) {
-			// unblock caller inmediately
-		}
-
-
-	}
-
-	get err() {
-		sys.runningJob.__state = State.PARKED_END_IF_ERR
-		return this
-	}
-
-	get val() {
-		return this.errorResult ?? this.result
-	}
-}
-
-
 
 
 /*
@@ -212,6 +131,36 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 }
 
 
+function observe(jobs: Job[]) {
+	return new ObserveSelectJobs(jobs)
+}
+
+class ObserveSelectJobs {
+	callerJob = sys.runningJob
+
+	constructor(jobs: Job[]) {
+		const len = jobs.length
+		for (let i = 0; i < len; i++) {
+			// link job to this
+		}
+	}
+
+	_onNtDone(job: Job) {
+		// resume caller
+	}
+}
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* **********  newJob  ********** */
 
@@ -293,7 +242,7 @@ class CancelAll {
 ** Job: blocked/subscribed to one job/Ch/Select
 ** Job: subscribed to many children (awaiting if done or cancelled)
 
-This supports O1 many-many subscriptions (O: Observer, N: Notifier, conn: Connection):
+This supports O1 many-many subscriptions (O: Observer, T: Target, conn: Connection):
 
 	job.connHead
 
@@ -332,12 +281,9 @@ This supports O1 many-many subscriptions (O: Observer, N: Notifier, conn: Connec
 		const { obsHead } = this
 		if (obsHead != null) {
 
-			// remove conn in notifier
+			// remove conn in target
 			obsHead.prevOb.nextOb = obsHead.nextOb
 			obsHead.nextOb.prevOb = obsHead.prevOb
-
-			// remove conn in observer
-
 
 			// notify Ob
 			sys.targetJustDone = this
@@ -359,7 +305,7 @@ This supports O1 many-many subscriptions (O: Observer, N: Notifier, conn: Connec
 
 	very cool since I just update conn.{p,n}N
 	so I if job is cancelled I can mutate/transition all childs nodes conn objects
-		so that notifier can notify back when done
+		so that target can notify back when done
 	Can transition from normal run -> awaiting for childs -> cancelling childs
 
 
@@ -374,15 +320,63 @@ This supports O1 many-many subscriptions (O: Observer, N: Notifier, conn: Connec
 		- when iterating, instead of checking if node.next = null, check if node.next === head
 		- Adding is from head. Maybe, will check the other iteration algos.
 
-**** All nodes need to be removed from ob LL when nt is done so conn is returned to pool
+**** All nodes need to be removed from ob LL when tg is done so conn is returned to pool
 
 */
 
 
 
+/* Select (Jobs)
+const res = yield* select(ch1, ch2)
+
+- check if any of the targets is "ready"
+	- job is easy (when state is DONE)
+	- ch when there's a putter (selecting put ops is not supported yet)
+
+	- fairness: what if more than one is ready?
+		- I think it should have an internal queue.
+		- Put all ready targets in a queue.
+		- When observer subscribes (yield*) dequeue
+
+	- PROBLEM: on select return, it should unsub from all targets.
+		- so it has no way to know at the next loop turn what was selected before
+
+	- SOLUTION: make it channel-like
+		- you construct it and then yield* the same object (like ch.rec)
+			(could potential add targets dynamically)
+		- QUESTION: how to dispose it? how are channels "disposed"?
+
+			const data = yield* ch.rec
+				when rec completes, callingJob is taken out of ch.receiverS LL
+				so there's no push pointer and GC works (same with job is cancelled)
+
+			- This should be the same for select
+
+		- IMPLEMENTATION: is like a channel where putters can be Ch as well.
+			- How are putters as ch same/different from putters as job?
+				- Is ch.receivers is empty, jobs are added in .putters (and resumed then receiver arrives)
+				- Select should be into ch.receivers and "resumed/notified" when a target have data.
+					- if no receivers in select, ch should be put in select.putters
+					- Problem is that job can be in only one .putters queue.
+						- Let's say a job puts to targetCh1
+						- targetCh1 has a selectObj in its .receivers
+							mmmm I think select should just insert callingJob as .receiver in targetCh1
 
 
+- if one ready, notify observer with val.
+- unsub from all targets.
+- needs to subscribe to all targets.
 
+
+- needs to unsubscribe from all targets when cancelled
+
+*/
+
+/* const res = yield* select(ch1, ch2, job1, job2)
+
+- subscribe to all targets
+
+*/
 
 
 

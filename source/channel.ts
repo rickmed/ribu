@@ -100,11 +100,6 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 		return null
 	}
 
-	isReady() {
-		const { putterS } = this
-		return putterS == EMPTY || (putterS instanceof Queue && putterS.isEmpty)
-	}
-
 }
 
 export function enQueue<V>(ch: Chan<V>, msg: PutVal<V>): void {
@@ -171,7 +166,9 @@ export function addAsWaiter<V>(value: unknown, hasAwaiterS_m: Chan<V>, kOfawaite
 }
 
 function resumeObserverAndMe(observer: Linkable, msgToObserver: unknown, msgToRunningJob: unknown) {
-	observer.onObservableDone(msgToObserver)
+	//.onTgDone() checks job.state, sets iterRer and .resumes() gen.next()
+	observer._onTgDone(msgToObserver)
+	// I think same here
 	continueRunningJob(msgToRunningJob)
 }
 
@@ -204,38 +201,4 @@ function processPut<V>(ch_m: Chan<V>) {
 function putterHasNoReceiver<V>(ch: Chan<V>) {
 	addAsWaiter<V>(sys.runningJob, ch, PUTS)
 	iterRes.done = false
-}
-
-
-/* ******************   Merge  ******************************************** */
-
-// todo: need a way to unsubscribe from chans (otherwise, maybe memory leak)
-export function merge(...chans: Chan[]) {
-	const outCh = Ch()
-
-	for (const ch of chans) {
-		go(function* () {
-			for (;;) {
-				const msg = yield* ch.rec
-				yield* outCh.put(msg)
-			}
-		})
-	}
-
-	return outCh
-}
-
-
-let waiting = 0
-
-const selectObj = select(ch1, ch2, ch3)
-
-while (waiting > 0) {
-	if (selectObj.isBlocked) {
-		doWork()
-		continue
-	}
-	const res = yield* selectObj
-	waiting--
-	// do whatever with res
 }

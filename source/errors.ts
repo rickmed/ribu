@@ -1,5 +1,5 @@
 /*
-_op: the name of the job's generator function or the name of the function if
+fn: the name of the job's generator function or the name of the function if
 	the user wants to return E objects in sync functions.
 - If something threw and it's not ::Error, then it's wapped in ::RibuE.
 
@@ -26,7 +26,7 @@ export class RibuE<Name extends string = string> implements Error {
 	constructor(
 		readonly name: Name,
 		readonly message: string,
-		readonly _op: string,
+		readonly fn: string,
 		cause?: CauseErr,
 		errors?: Error[],
 	) {
@@ -42,8 +42,8 @@ export class RibuE<Name extends string = string> implements Error {
 		return ""  // todo
 	}
 
-	E<Name extends string>(name: Name, op = "", msg = "") {
-		return E(name, op, msg, this)
+	E<Name extends string>(name: Name, fn = "", msg = "") {
+		return E(name, fn, msg, this)
 	}
 }
 
@@ -53,13 +53,13 @@ Object.setPrototypeOf(RibuE.prototype, Error.prototype)
 // todo: Error & RibuE<Name> ??
 export type E<Name extends string = string> = Error & RibuE<Name>
 
-export function E<Name extends string>(name: Name, op = "", msg = "", cause?: unknown): E<Name> {
-	return new RibuE<Name>(name, msg, op, cause)
+export function E<Name extends string>(name: Name, fn = "", msg = "", cause?: unknown): E<Name> {
+	return new RibuE<Name>(name, msg, fn, cause)
 }
 
 export class ECancOK extends RibuE<"CancOK"> {
-	constructor(op: string, msg: string) {
-		super("CancOK", msg, op)
+	constructor(fn: string, msg: string) {
+		super("CancOK", msg, fn)
 	}
 }
 
@@ -70,8 +70,8 @@ export class Err extends RibuE<"Err"> {
 }
 
 export class ETimedOut extends RibuE<"TimedOut"> {
-	constructor(op: string) {
-		super("TimedOut", "", op)
+	constructor(fn: string) {
+		super("TimedOut", "", fn)
 	}
 }
 
