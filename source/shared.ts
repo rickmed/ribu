@@ -106,7 +106,7 @@ nt: Target
 */
 export type Linkable<Produces = unknown> = {
 	val: Produces
-} & Observer
+} & Ob
 
 
 /**
@@ -118,13 +118,38 @@ export type Linkable<Produces = unknown> = {
  *	  - Subscribe to a target to get data/result from.
  */
 
-export type Observer = {
+/** Observer
+ * _onTgDone = onTargetDone
+ * 	target calls this to notify observer it's result.
+ * _tgH = targets LL Head
+ * 	head of targets LL that I'm awaiting a data/result (to be removed from if cancelled)
+ * rmTg = removeTarget
+ * 	method to remove target from observer's LL
+ */
+export type Ob = {
 	_onTgDone: (val: unknown, targetJobFailed?: boolean) => void
+	_tg: Link<Ob, Job>  // Head of targets LL that I'm awaiting a data/result (to be removed from if cancelled)
+	rmTg: (link: Link<Ob, Job>) => void
 }
-// _tgH: typeof EMPTY_LINK | Link<Target, unknown>  // Head of targets LL that I'm awaiting a data/result (to be removed from if cancelled)
+
+export abstract class ObBase implements Ob {
+	_tg = EMPTY_LINK as Link<Ob, Job>
+
+	rmTg(link: Link<Ob, Job>) {
+		link.pB.nB = link.nB
+		link.nB.pB = link.pB
+		if (link.pB == EMPTY_LINK) {
+			this._tg = link.nB
+		}
+		disposeLink(link)
+	}
+
+	abstract _onTgDone(val: unknown): void
+}
 
 export type Target = {
-	_obH?: typeof EMPTY_LINK | Link<unknown, Observer>  // Head of observers LL that needs to be notified
+	_obH?: typeof EMPTY_LINK | Link<unknown, Ob>  // Head of observers LL that needs to be notified
+	// addOb: (ob: Obs) => void
 }
 
 /**
@@ -158,7 +183,7 @@ export class Link<A = unknown, B = unknown> {
 
 let linkPoolHead: Link | undefined = undefined
 
-export const EMPTY_LINK: Link = new Link(EMPTY, EMPTY)
+export const EMPTY_LINK = new Link(EMPTY, EMPTY) as Link<unknown, unknown>
 
 export function disposeLink(link: Link) {
 

@@ -64,8 +64,16 @@ export class ECancOK extends RibuE<"CancOK"> {
 }
 
 export class Err extends RibuE<"Err"> {
+
 	constructor(cause?: CauseErr, jobName = "", errors?: Error[], msg = "") {
 		super("Err", msg, jobName, cause, errors)
+	}
+
+	addError(err: Error) {
+		if (!this.errors) {
+			this.errors = []
+		}
+		this.errors.push(err)
 	}
 }
 
