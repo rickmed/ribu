@@ -22,7 +22,7 @@ describe(`jobs blocks and resumes waiting for other jobs to finish`, () => {
 		expect(rec).toBe("child one")
 	})
 
-	it("using .cont, the target job unblocks the caller job with its return value, including possible errors", async () => {
+	it("using .err, caller job gets union of target job returns and all possible errors", async () => {
 
 		function* child() {
 			yield* sleep(1)

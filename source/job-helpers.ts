@@ -1,4 +1,4 @@
-import { DONE, Job, iterator, State, cancel, go, onEnd, type NotErrs, iterRes } from "./job.ts"
+import { DONE, Job, iter, State, cancel, go, onEnd, type NotErrs, iterRes } from "./job.ts"
 import { sys } from "./shared.ts"
 import { E, ECancOK, ETimedOut, Err, RibuE } from "./errors.ts"
 import { TIMEOUT } from "dns"

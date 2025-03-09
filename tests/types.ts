@@ -19,7 +19,7 @@ export function* dummyToUseYield() {
 
 	/* When using .$, the returned type exclude Error types */
 	type Exp1 = false | 1
-	const rec1 = yield* job.$
+	const rec1 = yield* job
 	check_Eq<Exp1>()(rec1)
 
 
@@ -60,7 +60,6 @@ export function newJob() {
 type SuperType<S, T extends S> = [S] extends [T] ? T : never
 
 function check_Eq<Exp>() {
-	return function <T extends Exp>(rec: SuperType<Exp, T>) {
-		rec
+	return function <T extends Exp>(_rec: SuperType<Exp, T>) {
 	}
 }

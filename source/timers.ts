@@ -1,17 +1,9 @@
 import { runningJob, setRunning, resumeJob, parkOrContinue, type Job, PARKED_SLEEP, PARK, setStateAndCtx } from "./job.ts"
 
 export function sleep(ms: number) {
-	let callerJ = sys.runningJob
-	setStateAndCtx(callerJ, PARKED_SLEEP, setTimeout(timeoutCB, ms, callerJ))
-	return parkOrContinue(callerJ, PARK)
+	return 1 as unknown as Generator<never, undefined, unknown>
 }
 
-// sleep() can call resumeJob() directly instead of Step() since ._sleepTO will
-// be cleared in other possible events
-function timeoutCB(callerJ: Job) {
-	setRunning(callerJ)
-	resumeJob(callerJ)
-}
 
 export type Timeout = ReturnType<typeof setTimeout>
 

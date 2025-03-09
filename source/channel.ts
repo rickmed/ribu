@@ -1,4 +1,4 @@
-import { Job, continueRunningJob, iterator, type Iterable, Iter, iterRes, go } from "./job.ts"
+import { Job, continueRunningJob, iter, type Iterable, Iter, iterRes, go } from "./job.ts"
 import { sys } from "./system.ts"
 import { Queue } from "./linked-lists.ts"
 import { EMPTY, Linkable } from "./shared.ts"
@@ -84,7 +84,7 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 		else {
 			processPut(this)
 		}
-		return iterator as Iter<V>
+		return iter as Iter<V>
 	}
 
 	enQ(msg: PutVal<V>) {

@@ -2,61 +2,6 @@ import { Chan } from "./channel.ts"
 import { type Job } from "./job.ts"
 
 
-
-/* When removing nodes from counterpart
-
-		target.llHead
-					\
- undefined <-> [] <-> [] <-> [] <-> undefined
-					|		 |
-					|	  if removing this, no problem, prev and next will point to each other
-					|
-	          if removing head, need to update target.llHead to removingLink.next
-
-*/
-
-
-/* Should tail/heads wrap so Links p/n are never undefined? (no need to check)
-
-	adding B:
-
-		target.llHead
-					\
-			EL <-> A <-> EL
-
-		target.llHead
-				\
-		EL <-> B <-> A <-> EL
-
-** In channels need head.prev to point to tail (instead of EL)
-		so it can be dequeued from tail (queues in head)
-	- Consider this when removing links from Channel queues
-
-
-*/
-
-/* Subscribe to
-When target is done, it removes itself from observer's _tgH and calls ._onTgDone()
-
-job to job
-	observerJob: _onTgDone, _tgH
-	target: _obH
-job to chan
-	observerJob: _onTgDone, _tgH
-	target: has .putters and .receiverS
-job to timer
-	observerJob: _onTgDone, _tgH
-	target: _obH
-
-
-promise to job
-	observer: _onTgDone, _tgH (not necessary bc no cancellation)
-	target: _obH
-*/
-
-
-
-
 export const EMPTY = Symbol("EM")
 
 /* **************   System   ************************************************ */
@@ -88,72 +33,46 @@ export const sys = new System()
 /* **************   Linked Lists   ****************************************** */
 
 /* Lexicon
-Target = Job | Chan
-Observer = Job | Chan
+Observer = Job, Select..
+Target = Job, Chan, Sleep, Select...
 LL: Linked List
 ob: Observer
 	Waits for a Target to call back with data/result
-nt: Target
+tg: Target
 	Calls back to observer with data/result
 */
 
 
-// todo: maybe Ch does not need .val
-/**
- * A Job or a Channel that can:
- *   - Notify a result (as a Job) or data (as a Channel) to its observers.
- *	  - Subscribe to a notifier to get data/result from.
-*/
-export type Linkable<Produces = unknown> = {
-	val: Produces
-} & Ob
-
-
-/**
- * Waits for a Target to notify back with data/result
- * tg: Target
- */
-
-/**
- *	  - Subscribe to a target to get data/result from.
- */
-
 /** Observer
  * _onTgDone = onTargetDone
- * 	target calls this to notify observer it's result.
- * _tgH = targets LL Head
- * 	head of targets LL that I'm awaiting a data/result (to be removed from if cancelled)
- * rmTg = removeTarget
- * 	method to remove target from observer's LL
+ * 	Target calls this to notify me with data/result.
+ * _tg = targets LL Head
+ * 	Head of targets LL that I'm awaiting data/result.
+ *		Needed to remove Observer from all targets if cancelled.
+ * _addTg = addTarget to ._tg
+ * _rmTg = removeTarget from ._tg
  */
 export type Ob = {
-	_onTgDone: (val: unknown, targetJobFailed?: boolean) => void
-	_tg: Link<Ob, Job>  // Head of targets LL that I'm awaiting a data/result (to be removed from if cancelled)
-	rmTg: (link: Link<Ob, Job>) => void
+	_onTgDone: (val: unknown) => void
+	_tg: Link<Ob, Tg>
+	_addTg: (link: Link<Ob, Tg>) => void
+	_rmTg: (link: Link<Ob, Tg>) => void
 }
 
-export abstract class ObBase implements Ob {
-	_tg = EMPTY_LINK as Link<Ob, Job>
-
-	rmTg(link: Link<Ob, Job>) {
-		link.pB.nB = link.nB
-		link.nB.pB = link.pB
-		if (link.pB == EMPTY_LINK) {
-			this._tg = link.nB
-		}
-		disposeLink(link)
-	}
-
-	abstract _onTgDone(val: unknown): void
+/** Target
+ * _ob: Link<Ob, Tg>
+ * 	Head of observers LL that I will call back with data/result
+ * _addOb = addObserver to ._ob
+ * _rmOb = removeObserver from ._ob
+ */
+export type Tg = {
+	_ob: Link<Ob, Tg>
+	// _addOb: (ob: Ob, link: Link<Ob, Tg>) => void
+	_rmOb: (link: Link<Ob, Tg>) => void
 }
 
-export type Target = {
-	_obH?: typeof EMPTY_LINK | Link<unknown, Ob>  // Head of observers LL that needs to be notified
-	// addOb: (ob: Obs) => void
-}
-
-/**
- * Used as a LL Node ("Link") for Observers <-> Targets and several other LLs (some are single LL)
+/** Link
+ * Used as a LL Node for Observers <-> Targets and several other LLs (some are single LL)
  * A is Observer (or a generic object)
  * B is Target
  * nA is next Observer Link (towards the tail of LL)
@@ -180,7 +99,6 @@ export class Link<A = unknown, B = unknown> {
  * Is a single LL.
  * We use Link's .nA to link to next available Link in pool.
  */
-
 let linkPoolHead: Link | undefined = undefined
 
 export const EMPTY_LINK = new Link(EMPTY, EMPTY) as Link<unknown, unknown>
@@ -214,4 +132,16 @@ export function freshLink<A, B>(a: A, b: B, ntf = true) {
 	link.ntf = ntf
 
 	return link as Link<A, B>
+}
+
+export function linkComponents(ob: Ob, tg: Tg) {
+	const link = freshLink(ob, tg)
+	tg._addOb(ob, link)
+	ob._addTg(tg, link)
+}
+
+export function unlinkComponents(link: Link<Ob, Tg>, ob: Ob, tg: Tg) {
+	tg._rmOb(link)
+	ob._rmTg(link)
+	disposeLink(link)
 }
