@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { go, onEnd, sleep } from "../source/index.ts"
-import { Err, isE } from "../source/errors.ts"
+import { __Err, isE } from "../source/errors.ts"
 import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.ts"
 
 
@@ -75,7 +75,7 @@ describe("Job Errors. Job settles with the right error when:", () => {
 
 		assertRibuErr(rec)
 		expect(rec).toMatchObject(exp)
-		expect(rec.cause).toBeInstanceOf(Err)
+		expect(rec.cause).toBeInstanceOf(__Err)
 	})
 })
 

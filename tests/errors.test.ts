@@ -6,3 +6,4 @@ describe.todo("", () => {
 
 
 
+// todo: if genFn returne Err, it signals failure (doesn't work with ::Error)

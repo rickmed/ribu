@@ -58,14 +58,14 @@ tg: Target
  * _rmTg = removeTarget from ._tg
  */
 export type Ob = {
-	_onTgDone: (val: unknown) => void
+	_onTgDone: (val: unknown, tg: Tg) => void
 	_tg: Link<Ob, Tg>
 	_addTg: (link: Link<Ob, Tg>) => void
 	_rmTg: (link: Link<Ob, Tg>) => void
 }
 
 /** Target
- * _ob: Link<Ob, Tg>
+ * _ob: Link<Ob, Tg>,
  * 	Head of observers LL that I will call back with data/result
  * _addOb = addObserver to ._ob
  * _rmOb = removeObserver from ._ob
@@ -74,6 +74,7 @@ export type Tg = {
 	_ob: Link<Ob, Tg>
 	_addOb: (link: Link<Ob, Tg>) => void
 	_rmOb: (link: Link<Ob, Tg>) => void
+	_st: number
 }
 
 /** Link

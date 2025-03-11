@@ -78,21 +78,20 @@ export class Err extends RibuE<"Err"> {
 	}
 }
 
+export class ThrownValIsNotError extends RibuE<"ThrownValIsNotError"> {
+	constructor(cause: unknown) {
+		super("ThrownValIsNotError", "", "", cause)
+	}
+}
+
 export class ETimedOut extends RibuE<"TimedOut"> {
 	constructor(fn: string) {
 		super("TimedOut", "", fn)
 	}
 }
 
-export function JSError(name: string, message: string, cause?: unknown) {
-	let err = new Error(message)
-	err.name = name
-	err.cause = cause
-	return err
-}
-
 export function isE(x: unknown): x is RibuE {
-	return x !=== null && typeof x === "object" && ERR_TAG in x
+	return x !== null && typeof x === "object" && ERR_TAG in x
 }
 
 export const isRibuE = isE
@@ -100,7 +99,7 @@ export const isRibuE = isE
 type EE = RibuE<string>
 
 export function errIsNot<X, T extends Extract<X, EE>["name"]>(x: X, name: T): x is Extract<X, EE> & Exclude<X, RibuE<T>> {
-	return x instanceof Error && x.name !=== name
+	return x instanceof Error && x.name !== name
 }
 
 export function errIs<X, T extends Extract<X, EE>["name"]>(x: X, name: T): x is Extract<X, RibuE<T>> {

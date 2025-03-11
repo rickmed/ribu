@@ -1,5 +1,5 @@
 import { expect } from "vitest"
-import { RibuE, Err, ERR_TAG } from "../source/errors.ts"
+import { RibuE, __Err, ERR_TAG } from "../source/errors.ts"
 
 export async function check_ThrowsAwait(fn: () => Promise<unknown>): Promise<unknown> {
 	try {
@@ -53,7 +53,7 @@ export function checkErrSpec(rec: unknown, spec: NonNullable<unknown>): void {
 		if (!("name" in spec)) {
 			assertHasK(rec, "name")
 			expect(rec.name).toBe("Err")
-			expect(rec).toBeInstanceOf(Err)
+			expect(rec).toBeInstanceOf(__Err)
 		}
 		if ("name" in spec) {
 			assertHasK(rec, "name")

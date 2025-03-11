@@ -1,5 +1,5 @@
-export { go, onEnd, type Job, cancel, self as me } from "./job.ts"
+export { go, onEnd, type Job, me } from "./job.ts"
 export { sleep } from "./timers.ts"
 export { Ch } from "./channel.ts"
 export { E } from "./errors.ts"
-export { all as allDone, allOrFail as allOneFail, first, firstOK, Ev } from "./job-helpers.ts"
+export { cancel } from "./job-helpers.ts"

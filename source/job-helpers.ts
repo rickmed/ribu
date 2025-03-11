@@ -1,8 +1,7 @@
 import { DONE, Job, iter, State, cancel, go, onEnd, type NotErrs, iterRes } from "./job.ts"
-import { sys } from "./shared.ts"
-import { E, ECancOK, ETimedOut, Err, RibuE } from "./errors.ts"
+import { Tg, Ob, sys } from "./shared.ts"
+import { E, ECancOK, ETimedOut, __Err, RibuE } from "./errors.ts"
 import { TIMEOUT } from "dns"
-import { sleep } from "./timers.ts"
 import { Queue } from "./linked-lists.ts"
 import { Ch, Chan } from "./channel.ts"
 import { EMPTY_LINK, Link } from "./shared.ts"
@@ -166,8 +165,8 @@ class ObserveSelectJobs {
 
 const dummyGen = (function* dummyGenFn() {})()
 
-export function newJob<Ret = unknown, Errs = ECancOK | ETimedOut | Err>(jobName = "") {
-	return new Job<Ret, Errs | ECancOK | ETimedOut | Err>(dummyGen, jobName)
+export function newJob<Ret = unknown, Errs = ECancOK | ETimedOut | __Err>(jobName = "") {
+	return new Job<Ret, Errs | ECancOK | ETimedOut | __Err>(dummyGen, jobName)
 }
 
 
@@ -192,43 +191,20 @@ export function promToJob<T>(p: Promise<T>) {
 /* **************************************************************** */
 
 
-function cancel(jobs: Job[]) {
+export function cancel(...jobs: Job[]) {
 	const ctx = new CancelManager()
 	for (const job of jobs) {
 		// start cancelling the job and notifies result back to ctx
 		cancelJob(job, ctx)
 	}
 
-	return ctx
+	return ctx as unknown as Iterable<ECancOK>
 }
 
 
-class CancelAll {
+class CancelAll implements Ob, Tg {
+	// tri
 
-	_state: -1 | State.DONE = -1
-	targets: Job[]
-	waitingJobsCount: number
-	observer = sys.runningJob
-	ObservedJobsErrors: Err[] | undefined
-
-	constructor(jobs: Job[]) {
-		this.targets = jobs
-		this.waitingJobsCount = jobs.length
-	}
-
-	onObservedDone(observed: Selectable) {
-		this.waitingJobsCount--
-		if (this.waitingJobsCount === 0) {
-			this._state = DONE
-			this.observer.onObservedDone()
-		}
-	}
-
-	removeFromObservers(observer: Observer) {
-		for (const target of this.targets) {
-			target.removeObserver(observer)
-		}
-	}
 
 	// iterator method that behaves like .$
 }

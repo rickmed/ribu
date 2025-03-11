@@ -1,8 +1,7 @@
 import { sys, type Link, EMPTY, disposeLink, freshLink, EMPTY_LINK, Tg, Ob, Iter, iterRes, linkObAndTg, unlinkObAndTg } from "./shared.ts"
-import { Err, ECancOK, JSError } from "./errors.ts"
+import { Err, ECancOK, ThrownValIsNotError } from "./errors.ts"
 
-// todo: can use extra flags instead of checking if job.val is instance of Err
-// to add error
+// todo: clean-up documentation
 
 /* ***************  Connect Observers <-> Targets via LLs  *********************
 EL: Empty Link
@@ -62,7 +61,7 @@ type AsyncFn = () => Promise<unknown>
 type OnEnd = SyncFn | AsyncFn | RibuGenFn
 type OnEndLink = Link<SyncFn, 1> | Link<AsyncFn, 2> | Link<RibuGenFn, 3>
 
-// Job states
+// Job Flags
 const RUNNING = 1 << 0
 const PARKED_CONTINUE = 1 << 1
 const PARKED_JOB = 1 << 2
@@ -72,12 +71,15 @@ export const PARKED_CH_PUT = 1 << 5
 const WAITING_CHILDREN = 1 << 6
 const WAITING_ONENDS = 1 << 7
 const CANCELLING = 1 << 8
-const DONE_OK = 1 << 9
+// Even if DONE is set, can have other flags indicating, eg, it settled with an error
+const DONE = 1 << 9
 const DONE_ECANCOK = 1 << 10
+// DONE_ERR is set if job settled with ::Err other than ECancOK
 const DONE_ERR = 1 << 11
 
 const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_CH_PUT
-const DONE = DONE_OK | DONE_ECANCOK | DONE_ERR
+const DONE_ANY_ERR = DONE_ERR | DONE_ECANCOK
+
 
 /* Job Class
  *  _gn = generator
@@ -123,11 +125,12 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 		}
 	}
 
-	_onTgDone(val: unknown) {
+	_onTgDone(val: unknown, tg: Tg) {
 		const { _st } = this
+		const { _st: tgSt } = tg
 
 		if (_st & PARKED_JOB) {
-			if (val instanceof Err) {
+			if (tgSt & DONE_ANY_ERR) {
 				this.val = new Err(val, this._nm) as All
 				endProtocol(this, true)
 				return
@@ -136,11 +139,11 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 			return
 		}
 		if (_st & PARKED_JOB_CANCEL) {
-			if (val instanceof ECancOK) {
+			if (tgSt & DONE_ECANCOK) {
 				resumeJob(this, val)
 				return
 			}
-			// should receive only ECancOK or Error at PARKED_JOB_CANCEL
+			// cancelled target should only settle with ECancOK or Err
 			endProtocol(this, true)
 			return
 		}
@@ -149,7 +152,7 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 			return
 		}
 		if (_st & WAITING_CHILDREN) {
-			waitingChildren(this, val)
+			waitingChildren(this, val, tg)
 			return
 		}
 	}
@@ -188,7 +191,7 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 		callerJob._st |= PARKED_JOB_CANCEL
 		cancelJob(this)
 		self = this
-		return jobIterable as Iterable<undefined>
+		return jobIterable as Iterable<ECancOK>
 	}
 
 	onEnd(onEndFn: OnEnd) {
@@ -196,8 +199,8 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 	}
 
 	then(res: (val: NotErrs) => void, rej: (err: unknown) => void) {
-		const observer = new CustomObserver((val) => {
-			void ((val instanceof Err) ? rej(val) : res(val as NotErrs))
+		const observer = new CustomObserver((val, tg) => {
+			void ((tg._st & DONE_ANY_ERR) ? rej(val) : res(val as NotErrs))
 		})
 		linkObAndTg(observer, this)
 	}
@@ -306,14 +309,20 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 	try {
 		const { done, value} = thisJob._gn.next()
 		if (done) {
+			if (value instanceof Err) {
+				thisJob._st |= DONE_ERR
+			}
 			thisJob.val = value
 			endProtocol(thisJob)
+			return
 		}
 		if (value !== YIELD) {
-			throw Error(`Invalid yield value: ${String(value)} from ${thisJob._nm}`)
+			// eslint-disable-next-line @typescript-eslint/only-throw-error
+			throw `Invalid yield value: ${String(value)} from ${thisJob._nm}`
 		}
 	}
 	catch (e) {
+		thisJob._st |= DONE_ERR
 		thisJob.val = new Err(e, thisJob._nm)
 		endProtocol(thisJob, true)
 	}
@@ -322,7 +331,7 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 	}
 }
 
-function waitingChildren(thisJob: Job, tgVal: unknown) {
+function waitingChildren(thisJob: Job, tgVal: unknown, tg: Tg) {
 	let { _tg } = thisJob
 
 	if (_tg === EMPTY_LINK) {
@@ -333,17 +342,22 @@ function waitingChildren(thisJob: Job, tgVal: unknown) {
 
 	thisJob._st |= WAITING_CHILDREN
 
-	const childFailed = tgVal instanceof Err && !(tgVal instanceof ECancOK)
-
-	if (childFailed) {
-		addErrorToJobVal(thisJob, tgVal)
+	// if child settled with DONE_ECANCOK, it's ok
+	if (tg._st & DONE_ERR) {
+		addErrorToJobVal(thisJob, tgVal as Err)
 		endProtocol(thisJob, true)
 	}
 }
 
 function addErrorToJobVal(thisJob: Job, err: Error) {
-	const { val } = thisJob
-	thisJob.val = val instanceof Err ? val.addError(err) : new Err(err, thisJob._nm)
+	const { _st } = thisJob
+	if (_st & DONE_ERR) {
+		(thisJob.val as Err).addError(err)
+	}
+	else {
+		thisJob.val = new Err(err, thisJob._nm)
+		thisJob._st |= DONE_ERR
+	}
 }
 
 function execOnEnds(thisJob: Job) {
@@ -369,7 +383,7 @@ function execOnEnds(thisJob: Job) {
 		catch (e) {
 			retVal = wrapIfNotError(e)
 		}
-		if (retVal instanceof Error) {
+		if (retVal instanceof Err) {
 			addErrorToJobVal(thisJob, retVal)
 		}
 		execOnEnds(thisJob)
@@ -387,9 +401,9 @@ function execOnEnds(thisJob: Job) {
 	}
 	else {  // It's a Generator
 		const job = new Job((onEnd as RibuGenFn)(), onEnd.name)
-		const observer = new CustomObserver((val) => {
-			if (val instanceof Error) {
-				addErrorToJobVal(thisJob, val)
+		const observer = new CustomObserver((val, tg) => {
+			if (tg._st & DONE_ERR) {
+				addErrorToJobVal(thisJob, val as Err)
 			}
 			execOnEnds(thisJob)
 		})
@@ -400,25 +414,27 @@ function execOnEnds(thisJob: Job) {
 
 class CustomObserver implements Ob {
 	declare _tg: Link<Ob, Tg>
-	constructor(private onTgDone: (val: unknown) => void) {}
-	_onTgDone(val: unknown) {
-		this.onTgDone(val)
+	constructor(private onTgDone: (val: unknown, tg: Tg) => void) {}
+	_onTgDone(val: unknown, tg: Tg) {
+		this.onTgDone(val, tg)
 	}
 	_addTg() {}
 	_rmTg() {}
 }
 
 function wrapIfNotError(x: unknown): Error {
-	return x instanceof Error ? x :
-		JSError("ThrownUnknownError", "Thrown value is not of type Error", x)
+	return x instanceof Error ? x : new ThrownValIsNotError(x)
 }
 
 function settle(thisJob: Job) {
 	const { _st, val } = thisJob
 
-	if (_st & CANCELLING && !(val instanceof Err)) {
+	if (_st & CANCELLING && !(_st & DONE_ERR)) {
+		thisJob._st = DONE_ECANCOK
 		thisJob.val = new ECancOK(thisJob._nm)
 	}
+
+	thisJob._st |= DONE
 
 	const parentLink = thisJob._prnt
 	if (parentLink != EMPTY_LINK) {
@@ -427,14 +443,11 @@ function settle(thisJob: Job) {
 		disposeLink(parentLink)
 	}
 
-	// Notify observers
 	for (let link = thisJob._ob; link != EMPTY_LINK; link = link.nA) {
 		const ob = link.a
 		unlinkObAndTg(link)
-		ob._onTgDone(val)
+		ob._onTgDone(val, thisJob)
 	}
-
-	thisJob._st = DONE
 }
 
 
@@ -445,10 +458,11 @@ const jobIterator = {
 		if (thisJobSt & DONE) {
 			const callerJobSt = callerJob._st
 			if (
-				(callerJobSt & PARKED_JOB) && !(thisJobSt & DONE_OK) ||
-				(callerJobSt & PARKED_JOB_CANCEL) && !(thisJobSt & DONE_ERR)
+				(callerJobSt & PARKED_JOB) && (thisJobSt & DONE_ANY_ERR) ||
+				(callerJobSt & PARKED_JOB_CANCEL) && (thisJobSt & DONE_ERR)
 			) {
 				callerJob.val = new Err(val, callerJob._nm)
+				callerJob._st |= DONE_ERR
 				endProtocol(callerJob, true)
 				iterRes.done = false
 			}
@@ -474,6 +488,7 @@ const jobIterable = {
 		return jobIterator
 	}
 }
+
 
 
 

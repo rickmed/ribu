@@ -55,6 +55,7 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 	putterS: unknown = EMPTY  // Queue<Job | unknown> | Job | unknown
 	receiverS: Receivers = EMPTY
 	_done = false
+	_st = 0
 
 	done() {
 		this._done = true
