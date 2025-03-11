@@ -49,8 +49,12 @@ let self!: Job
 //* ************************  Job Class  *********************************** *//
 
 type Gen<Ret = unknown> = Generator<unknown, Ret, unknown>
-type OnEnd = () => unknown
-type AsyncOnEnd =	RibuGenFn | (() => Promise<unknown>)
+
+type SyncFn = () => unknown
+type AsyncFn = () => Promise<unknown>
+type GenFn = RibuGenFn
+type OnEnd = SyncFn | AsyncFn | GenFn
+type OnEndLink = Link<SyncFn, 1> | Link<AsyncFn, 2> | Link<GenFn, 3>
 
 type State = number
 
@@ -72,9 +76,9 @@ export const PARKED_CONTINUE = 1 << 0
 export const PARKED_JOB = 1 << 1
 export const PARKED_JOB_CANCEL = 1 << 2
 export const PARKED_SLEEP = 1 << 3
-export const CANCELLING = 1 << 4
-export const WAITING_CHILDREN = 1 << 5
-export const WAITING_ONENDS = 1 << 6
+export const WAITING_CHILDREN = 1 << 4
+export const WAITING_ONENDS = 1 << 5
+export const CANCELLING = 1 << 6
 export const DONE = 1 << 7
 
 export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_SLEEP
@@ -109,7 +113,7 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 	_ob = EMPTY_LINK as Link<Ob, Tg>
 	_chd = EMPTY_LINK as Link<Job, Job>
 	_prnt = EMPTY_LINK as Link<Job, Job>
-	_ends = EMPTY_LINK as Link<OnEnd | AsyncOnEnd, boolean>
+	_ends = EMPTY_LINK as OnEndLink
 	val = EMPTY as NotErrs | All
 
 	constructor(gen: Gen, genFnName: string, parent?: Job) {
@@ -129,7 +133,7 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 		if (_st & PARKED_JOB) {
 			if (val instanceof Err) {
 				this.val = new Err(val, this._nm) as NotErrs | All
-				endProtocol(this, true)
+				execWaitChildren(this, true)
 				return
 			}
 			resumeJob(this, val)
@@ -141,7 +145,7 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 				return
 			}
 			// should receive only ECancOK or Error at PARKED_JOB_CANCEL
-			endProtocol(this, true)
+			execWaitChildren(this, true)
 			return
 		}
 		if (_st & PARKED_CONTINUE) {
@@ -150,10 +154,6 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 		}
 		if (_st & WAITING_CHILDREN) {
 			waitingChildren(this, val)
-			return
-		}
-		if (_st & WAITING_ONENDS) {
-			waitingOnEnds(this, val)
 			return
 		}
 	}
@@ -170,6 +170,14 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 		removeLinkFromLL(this, "_ob", link)
 	}
 
+	[Symbol.iterator]() {
+		const callerJob = sys.runningJob
+		callerJob._st &= ~PARKED
+		callerJob._st |= PARKED_JOB
+		self = this
+		return jobIter as Iter<NotErrs>
+	}
+
 	get err() {
 		// todo implement
 		return jobIterable as Iterable<All>
@@ -184,20 +192,8 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 		return jobIterable as Iterable<undefined>
 	}
 
-	[Symbol.iterator]() {
-		const callerJob = sys.runningJob
-		callerJob._st &= ~PARKED
-		callerJob._st |= PARKED_JOB
-		self = this
-		return jobIter as Iter<NotErrs>
-	}
-
 	onEnd(onEndFn: OnEnd) {
 		addOnEnd(this, onEndFn)
-	}
-
-	asyncOnEnd(onEndFn: AsyncOnEnd) {
-		addOnEnd(this, onEndFn, false)
 	}
 
 	then(res: (val: NotErrs) => void, rej: (err: unknown) => void) {
@@ -208,8 +204,13 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 	}
 }
 
-function addOnEnd(thisJob: Job, onEndFn: OnEnd, isSync = true) {
-	const link = freshLink(onEndFn, isSync)
+function addOnEnd(thisJob: Job, onEndFn: OnEnd) {
+	const fnCtorName = onEndFn.constructor.name
+	const linkTypeSignal =
+		fnCtorName === "AsyncFunction" ? 2 :
+			fnCtorName === "GeneratorFunction" ? 3
+				: 1
+	const link = freshLink(onEndFn, linkTypeSignal)
 	addLinkToLLAsHead(thisJob, "_ends", link)
 }
 
@@ -218,6 +219,7 @@ function addOnEnd(thisJob: Job, onEndFn: OnEnd, isSync = true) {
 
 
 cancel:
+- set CANCELLING
 - unsub from current yield* target
 - trigger children cancellation and await for them
 - exec/wait for onEnds
@@ -233,13 +235,15 @@ function cancelJob(thisJob: Job) {
 
 	thisJob._st |= CANCELLING
 
-	if (_st & WAITING_ONENDS) {
-		return
+	if (_st & PARKED) {
+		// Unsubscribe from the single target blocking this job.
+		const targetLink = thisJob._tg
+		targetLink.b._rmOb(targetLink)
+		disposeLink(targetLink)
+		thisJob._st &= ~PARKED
+		thisJob._tg = EMPTY_LINK as Link<Ob, Tg>
 	}
-
-	thisJob._st &= ~PARKED
-
-	if (_st & WAITING_CHILDREN) {
+	else if (_st & WAITING_CHILDREN) {
 		// At WAITING_CHILDREN state, children are in ._tg, not in ._chd, and
 		// thisJob in their ._ob, not in their ._prnt.
 		// So we just iterate over them and trigger their cancellation and they'll
@@ -249,32 +253,37 @@ function cancelJob(thisJob: Job) {
 		}
 		return
 	}
+	else if (_st & WAITING_ONENDS) {
+		return
+	}
 
-	// Unsubscribe from the single target blocking this job.
-	const targetLink = thisJob._tg
-	targetLink.b._rmOb(targetLink)
-	disposeLink(targetLink)
-	thisJob._tg = EMPTY_LINK as Link<Ob, Tg>
-
-	// Cancel and observe all children for their cancellation result.
-	observeChildren(thisJob, true)
-	thisJob._st |= WAITING_CHILDREN
+	execWaitChildren(thisJob, true)
 }
 
-function observeChildren(thisJob: Job, cancelChildren = false) {
-	for (let childLink = thisJob._chd; childLink != EMPTY_LINK; childLink = childLink.nA) {
+function execWaitChildren(thisJob: Job, cancelChildren = false) {
+	let { _chd: childLink } = thisJob
+	if (childLink == EMPTY_LINK) {
+		execOnEnds(thisJob)
+		return
+	}
+
+	thisJob._st |= WAITING_CHILDREN
+
+	do {
 		let childJob = childLink.b
 		if (cancelChildren) {
 			cancelJob(childJob)
 		}
+
 		// can reuse the same parent-child link but move it into ob/tg LLs
 		thisJob._addTg(childLink)
 		childJob._addOb(childLink)
 		childJob._prnt = EMPTY_LINK as Link<Job, Job>
-	}
+
+		childLink = childLink.nA
+	} while (childLink != EMPTY_LINK)
 
 	thisJob._chd = EMPTY_LINK as Link<Job, Job>
-	thisJob._st |= WAITING_CHILDREN
 }
 
 function resumeJob(thisJob: Job, val?: unknown) {
@@ -301,33 +310,16 @@ function resumeJob(thisJob: Job, val?: unknown) {
 		const { done, value} = thisJob._gn.next()
 		if (done) {
 			thisJob.val = value
-			endProtocol(thisJob)
+			execWaitChildren(thisJob)
 		}
 	}
 	catch (e) {
 		thisJob.val = new Err(e, thisJob._nm)
-		endProtocol(thisJob, true)
+		execWaitChildren(thisJob, true)
 	}
 	finally {
 		sys.runningJob = jobStack.pop()!
 	}
-}
-
-function endProtocol(thisJob: Job, cancelChildren = false) {
-	thisJob._st = 0
-
-	if (thisJob._chd != EMPTY_LINK) {
-		observeChildren(thisJob, cancelChildren)
-		return
-	}
-
-	if (thisJob._ends != EMPTY_LINK) {
-		thisJob._st |= WAITING_ONENDS
-		execOnEnds(thisJob)
-		return
-	}
-
-	settle(thisJob)
 }
 
 function waitingChildren(thisJob: Job, tgVal: unknown) {
@@ -345,7 +337,7 @@ function waitingChildren(thisJob: Job, tgVal: unknown) {
 
 	if (childFailed) {
 		addErrorToJobVal(thisJob, tgVal)
-		cancelJob(thisJob)
+		execWaitChildren(thisJob, true)
 	}
 }
 
@@ -356,7 +348,6 @@ function addErrorToJobVal(thisJob: Job, err: Error) {
 
 function execOnEnds(thisJob: Job) {
 	if (thisJob._ends == EMPTY_LINK) {
-		thisJob._st &= ~WAITING_ONENDS
 		settle(thisJob)
 		return
 	}
@@ -365,15 +356,15 @@ function execOnEnds(thisJob: Job) {
 
 	const link = thisJob._ends
 	const onEnd = link.a
-	const isSync = link.b
+	const type = link.b
 
 	thisJob._ends = link.nA
 	disposeLink(link)
 
-	if (isSync) {
+	if (type == 1) {
 		try {
 			// eslint-disable-next-line no-var
-			var retVal = (onEnd as OnEnd)()
+			var retVal = (onEnd as SyncFn)()
 		}
 		catch (e) {
 			retVal = wrapIfNotError(e)
@@ -383,31 +374,27 @@ function execOnEnds(thisJob: Job) {
 		}
 		execOnEnds(thisJob)
 	}
-	else {  // async onEnd
-		const thing = (onEnd as AsyncOnEnd)()
-
-		if ("then" in thing) {  // It's a Promise
-			thing.then(
-				() => {
-					execOnEnds(thisJob)
-				},
-				(err) => {
-					addErrorToJobVal(thisJob, wrapIfNotError(err))
-					execOnEnds(thisJob)
-				}
-			)
-		}
-		else {  // It's a Generator
-			const job = new Job(thing, onEnd.name)
-			const observer = new CustomObserver((val) => {
-				if (val instanceof Error) {
-					addErrorToJobVal(thisJob, val)
-				}
+	else if (type == 2) {
+		(onEnd as AsyncFn)().then(
+			() => {
 				execOnEnds(thisJob)
-			})
-			linkObAndTg(observer, job)
-			resumeJob(job)
-		}
+			},
+			(err) => {
+				addErrorToJobVal(thisJob, wrapIfNotError(err))
+				execOnEnds(thisJob)
+			}
+		)
+	}
+	else {  // It's a Generator
+		const job = new Job((onEnd as GenFn)(), onEnd.name)
+		const observer = new CustomObserver((val) => {
+			if (val instanceof Error) {
+				addErrorToJobVal(thisJob, val)
+			}
+			execOnEnds(thisJob)
+		})
+		linkObAndTg(observer, job)
+		resumeJob(job)
 	}
 }
 
@@ -460,7 +447,7 @@ export const jobIter = {
 				const { _st } = callerJob
 				if (_st & PARKED_JOB || (_st & PARKED_JOB_CANCEL && !(val instanceof ECancOK))) {
 					callerJob.val = new Err(val, callerJob._nm)
-					cancelJob(callerJob)
+					execWaitChildren(callerJob, true)
 				}
 				iterRes.done = false
 				return
@@ -514,8 +501,4 @@ export function me(): Job {
 
 export function onEnd(newOnEnd: OnEnd) {
 	addOnEnd(sys.runningJob, newOnEnd)
-}
-
-export function asyncOnEnd(newOnEnd: AsyncOnEnd) {
-	addOnEnd(sys.runningJob, newOnEnd, false)
 }

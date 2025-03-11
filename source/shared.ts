@@ -1,4 +1,3 @@
-import { Chan } from "./channel.ts"
 import { type Job } from "./job.ts"
 
 
@@ -9,12 +8,7 @@ export const EMPTY = Symbol("EM")
 class System {
 	#stack: Array<Job> = []  // todo: optimize to Linked List
 	runningJob!: Job
-	justDone!: Chan | Job
-
 	deadline = 5000
-	targetJob!: Job
-	cancelCallerJob!: Job
-	cancelTargetJobs!: Job[]
 
 	// todo: optimize to Node based LL
 	pushJob(job: Job) {
