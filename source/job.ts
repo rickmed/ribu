@@ -1,29 +1,10 @@
-import { sys, type Link, EMPTY, disposeLink, freshLink, EMPTY_LINK, Tg, Ob } from "./shared.ts"
-import { Err, ECancOK } from "./errors.ts"
+import { sys, type Link, EMPTY, disposeLink, freshLink, EMPTY_LINK, Tg, Ob, Iter, iterRes, linkObAndTg, unlinkObAndTg } from "./shared.ts"
+import { Err, ECancOK, JSError } from "./errors.ts"
 
 // todo: sleep
 
-/* ***********************  Lexicon  ******************************************
-
-tg: Target
-	- (potentially) blocks Observer and unblocks/calls-back with data/result.
-	- Job, Chan, Sleep, Select, etc.
-
-ob: Observer
-	- Waits for a Target to call back with data/result.
-	- Has references to observing targets so it can remove itself from them
-		if cancelled.
-	- Job, Select, etc.
-
-LL: Linked List
-
-EL: Empty Link
-
-*/
-
-
-
 /* ***************  Connect Observers <-> Targets via LLs  *********************
+EL: Empty Link
 
 Insert Link B:
 
@@ -55,21 +36,9 @@ function removeLinkFromLL<T>(obj: T, propName: keyof T, link: Link): void {
 	}
 }
 
-function linkJobs<Ob, Tg>(ob: Ob, ob_K: keyof Ob, tg: Tg, tg_K: keyof Tg) {
-	const link = freshLink(ob, tg)
-	addLinkToLLAsHead(tg, tg_K, link)
-	addLinkToLLAsHead(ob, ob_K, link)
-}
-
-function unlinkJobs<Ob, Tg>(link: Link<Ob, Tg>, ob: Ob, ob_K: keyof Ob, tg: Tg, tg_K: keyof Tg) {
-	removeLinkFromLL(tg, tg_K, link)
-	removeLinkFromLL(ob, ob_K, link)
-	disposeLink(link)
-}
 
 
-
-//* *********************  System variables  ******************************* *//
+//* *********************  Ambient variables  ****************************** *//
 
 // todo: change stack to LL
 let jobStack: Array<Job> = []
@@ -79,40 +48,25 @@ let self!: Job
 
 //* ************************  Job Class  *********************************** *//
 
+type Gen<Ret = unknown> = Generator<unknown, Ret, unknown>
 type OnEnd = () => unknown
 type AsyncOnEnd =	RibuGenFn | (() => Promise<unknown>)
 
-// asyncOnEnds optimization: separate sync and async onEnds into different
-// workflows, since async are much expensive to process (need to setup exec +
-// wait resources). Also, since expectation is that async onEnds are much rarer
-// than sync onEnds, are placed in a Map to reduce memory of Job.
-// Map.get() isn't much slower than job._asyncOnEnds.
-const asyncOnEnds = new Map<Job, Link<AsyncOnEnd, undefined>>()
+type State = number
 
-
-type Gen<Ret = unknown> =
-	Generator<unknown, Ret, unknown>
-
-
-/* Job continue/fail semantics
+/* Job continue/fail _st semantics
 
 	- const res = yield* job.err   // res is All
-		set flag PARKED_CONTINUE
+		PARKED_CONTINUE
 
-	- const res = yield* job    // caller fails if all ::Errors
-		set flag PARKED_JOB
+	- const res = yield* job    // caller faisls at ::Error
+		PARKED_JOB
 
-	- const res = yield* job.cancelErr()    // res is All
-		set flag PARKED_CONTINUE
-
-	- yield* job.cancel()    // caller resumes at EcancOK even though it is ::Error
-		set flag PARKED_JOB_CANCEL
-
-	- const yield* cancel(jobs)  // caller resumes at EcancOK even though it is ::Error
-		set flag PARKED_JOB_CANCEL
+	- yield* job.cancel()
+	- yield* cancel(jobs)
+		// caller resumes at EcancOK even though EcancOK is ::Error
+		PARKED_JOB_CANCEL
 */
-
-type State = number
 
 export const PARKED_CONTINUE = 1 << 0
 export const PARKED_JOB = 1 << 1
@@ -120,11 +74,10 @@ export const PARKED_JOB_CANCEL = 1 << 2
 export const PARKED_SLEEP = 1 << 3
 export const CANCELLING = 1 << 4
 export const WAITING_CHILDREN = 1 << 5
-export const WAITING_ASYNC_ONENDS = 1 << 6
+export const WAITING_ONENDS = 1 << 6
 export const DONE = 1 << 7
 
 export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_SLEEP
-
 
 /* Job Class
  *  _gn = generator
@@ -142,6 +95,7 @@ export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_
  *  _chd = children jobs LL Head
  *  _prnt = parent job LL Head (even though jobs have max 1 parent)
  *  _ends = synchronous onEnds LL Head
+ * 	.b in Link is true if onEnd is synchronous
  *  val = inbox/outbox for values like ch.put/rec, the final result of the job...
  *  _onTgDone = onTargetDone
  * 	Target calls this to notify job with data/result.
@@ -150,55 +104,68 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 
 	_gn: Gen
 	_nm: string
-	_st = 100 as State
-	// todo: change types below bc maybe I'm not observing only Jobs for example
+	_st = 0 as State
 	_tg = EMPTY_LINK as Link<Ob, Tg>
 	_ob = EMPTY_LINK as Link<Ob, Tg>
 	_chd = EMPTY_LINK as Link<Job, Job>
 	_prnt = EMPTY_LINK as Link<Job, Job>
-	_ends = EMPTY_LINK as Link<OnEnd, undefined>
+	_ends = EMPTY_LINK as Link<OnEnd | AsyncOnEnd, boolean>
 	val = EMPTY as NotErrs | All
 
 	constructor(gen: Gen, genFnName: string, parent?: Job) {
 		this._gn = gen
 		this._nm = genFnName
 		if (parent) {
-			addJobAsChildOfParentJob(parent, this)
+			// link parent-child
+			const link = freshLink(parent, this)
+			this._prnt = link
+			addLinkToLLAsHead(parent, "_chd", link)
 		}
 	}
 
 	_onTgDone(val: unknown) {
-		const { _st, _tg } = this
+		const { _st } = this
 
-		if (_st & PARKED_CONTINUE) {
+		if (_st & PARKED_JOB) {
+			if (val instanceof Err) {
+				this.val = new Err(val, this._nm) as NotErrs | All
+				endProtocol(this, true)
+				return
+			}
 			resumeJob(this, val)
 			return
 		}
-		if (val instanceof Error) {
-			if (_st & PARKED_JOB || (_st & PARKED_JOB_CANCEL && !(val instanceof ECancOK))) {
-				this.val = new Err(val, this._nm) as NotErrs
-				cancelJob(this)
+		if (_st & PARKED_JOB_CANCEL) {
+			if (val instanceof ECancOK) {
+				resumeJob(this, val)
 				return
 			}
+			// should receive only ECancOK or Error at PARKED_JOB_CANCEL
+			endProtocol(this, true)
+			return
+		}
+		if (_st & PARKED_CONTINUE) {
+			resumeJob(this, val)
+			return
 		}
 		if (_st & WAITING_CHILDREN) {
 			waitingChildren(this, val)
 			return
 		}
-		if (_st & WAITING_ASYNC_ONENDS) {
+		if (_st & WAITING_ONENDS) {
 			waitingOnEnds(this, val)
 			return
 		}
 	}
-
 	_addTg(link: Link<Ob, Tg>) {
 		addLinkToLLAsHead(this, "_tg", link)
 	}
-
 	_rmTg(link: Link<Ob, Tg>) {
 		removeLinkFromLL(this, "_tg", link)
 	}
-
+	_addOb(link: Link<Ob, Tg>) {
+		addLinkToLLAsHead(this, "_ob", link)
+	}
 	_rmOb(link: Link<Ob, Tg>) {
 		removeLinkFromLL(this, "_ob", link)
 	}
@@ -208,50 +175,55 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 		return jobIterable as Iterable<All>
 	}
 
-	/* To handle cancel errors manually, use:
-		job.cancel()
-		const res = yield* job.err
-	*/
 	cancel() {
-		sys.runningJob._st |= PARKED_JOB_CANCEL
+		const callerJob = sys.runningJob
+		callerJob._st &= ~PARKED
+		callerJob._st |= PARKED_JOB_CANCEL
 		cancelJob(this)
+		self = this
 		return jobIterable as Iterable<undefined>
 	}
 
 	[Symbol.iterator]() {
 		const callerJob = sys.runningJob
-
-
-		return iter as Iter<NotErrs>
+		callerJob._st &= ~PARKED
+		callerJob._st |= PARKED_JOB
+		self = this
+		return jobIter as Iter<NotErrs>
 	}
 
-	// todo maybe simplify this
-	then(thenOK: (value: NotErrs) => NotErrs, thenErr: (reason: unknown) => Promise<never>): Promise<NotErrs> {
-		const self = this
-		return new Promise<NotErrs>((res, rej) => {
+	onEnd(onEndFn: OnEnd) {
+		addOnEnd(this, onEndFn)
+	}
 
-			const promObserver = {
-				_onTgDone(val: unknown) {
-					void (val instanceof Error) ? rej(val) : res(val as NotErrs)
-				},
-				_tg: EMPTY_LINK as Link<Ob, Job>,
-				_addTg(tg: Tg, link: Link<Ob, Tg>) {},
-				_rmTg(link: Link<Ob, Tg>) {},
-			}
+	asyncOnEnd(onEndFn: AsyncOnEnd) {
+		addOnEnd(this, onEndFn, false)
+	}
 
-			// self._addOb(promObserver, freshLink(promObserver, self))
-
-		}).then(thenOK, thenErr)
+	then(res: (val: NotErrs) => void, rej: (err: unknown) => void) {
+		const observer = new CustomObserver((val) => {
+			void ((val instanceof Err) ? rej(val) : res(val as NotErrs))
+		})
+		linkObAndTg(observer, this)
 	}
 }
 
-function checkCallerJobStateToFailOrContinue(thisJob: Job) {
-	const { _st } = thisJob
-	if (_st & PARKED_CONTINUE) {
-		resumeJob(thisJob)
-		return
-	}
+function addOnEnd(thisJob: Job, onEndFn: OnEnd, isSync = true) {
+	const link = freshLink(onEndFn, isSync)
+	addLinkToLLAsHead(thisJob, "_ends", link)
 }
+
+
+/* todo, cancel() needs to trigger endProtocol():
+
+
+cancel:
+- unsub from current yield* target
+- trigger children cancellation and await for them
+- exec/wait for onEnds
+
+*/
+
 
 function cancelJob(thisJob: Job) {
 	const { _st } = thisJob
@@ -259,27 +231,24 @@ function cancelJob(thisJob: Job) {
 		return
 	}
 
-	thisJob._st &= ~PARKED  // remove all PARKED related flags
-	thisJob._st |= CANCELLING  // add CANCELLING flag
+	thisJob._st |= CANCELLING
+
+	if (_st & WAITING_ONENDS) {
+		return
+	}
+
+	thisJob._st &= ~PARKED
 
 	if (_st & WAITING_CHILDREN) {
 		// At WAITING_CHILDREN state, children are in ._tg, not in ._chd, and
 		// thisJob in their ._ob, not in their ._prnt.
 		// So we just iterate over them and trigger their cancellation and they'll
 		// notify thisJob when their cancellation is done.
-		let childLink = thisJob._tg
-		do {
+		for (let childLink = thisJob._tg; childLink != EMPTY_LINK; childLink = childLink.nA) {
 			cancelJob(childLink.b as Job)
-			childLink = childLink.nA
-		} while (childLink != EMPTY_LINK)
-
+		}
 		return
 	}
-
-
-	// No check if (_st & WAITING_ONENDS) because there's nothing to do but wait
-	// for onEnds to finish (there would be no children to cancel).
-
 
 	// Unsubscribe from the single target blocking this job.
 	const targetLink = thisJob._tg
@@ -292,54 +261,20 @@ function cancelJob(thisJob: Job) {
 	thisJob._st |= WAITING_CHILDREN
 }
 
-function observeChildren(thisJob: Job, cancelChilds = false) {
-	let childLink = thisJob._chd
-	do {
+function observeChildren(thisJob: Job, cancelChildren = false) {
+	for (let childLink = thisJob._chd; childLink != EMPTY_LINK; childLink = childLink.nA) {
 		let childJob = childLink.b
-
-		if (cancelChilds) {
+		if (cancelChildren) {
 			cancelJob(childJob)
 		}
-
-		// We can reuse the Links of ._prnt/._chdn relationship and add them in
-		// child observers LL since now that parent needs a result from child.
-		// Only need to add childs as targets of parent, so childs can remove
-		// themselves as targets of parent like settling any other way.
-		insertAsTargetToJob(thisJob, childJob, childLink)
-
-		// This so when child settles, it will not mess we the links we are
-		// reusing. See removeJobFromParent()
+		// can reuse the same parent-child link but move it into ob/tg LLs
+		thisJob._addTg(childLink)
+		childJob._addOb(childLink)
 		childJob._prnt = EMPTY_LINK as Link<Job, Job>
-
-		childLink = childLink.nA
-
-	} while (childLink != EMPTY_LINK)
+	}
 
 	thisJob._chd = EMPTY_LINK as Link<Job, Job>
-}
-
-function addJobAsChildOfParentJob(parent: Job, childJob: Job) {
-	// as if parent is observer and child is target (convenient in cancelJob())
-	const link = freshLink(parent, childJob)
-	addLinkToLLAsHead(parent, "_chd", link)
-
-}
-
-// check this function
-function removeJobFromParent(job: Job) {
-	let link = job._prnt
-	if (link != EMPTY_LINK) {
-		link.pA.nA = link.nA
-		link.nA.pA = link.pA
-
-		// if link is head of LL, update the head of the LL we're removing from
-		if (link.pA == EMPTY_LINK) {
-			link.a._chd = link.nA
-		}
-
-		job._prnt = EMPTY_LINK as Link<Job, Job>
-		disposeLink(link)
-	}
+	thisJob._st |= WAITING_CHILDREN
 }
 
 function resumeJob(thisJob: Job, val?: unknown) {
@@ -371,24 +306,23 @@ function resumeJob(thisJob: Job, val?: unknown) {
 	}
 	catch (e) {
 		thisJob.val = new Err(e, thisJob._nm)
-		cancelJob(thisJob)
+		endProtocol(thisJob, true)
 	}
 	finally {
 		sys.runningJob = jobStack.pop()!
 	}
 }
 
-function endProtocol(thisJob: Job) {
+function endProtocol(thisJob: Job, cancelChildren = false) {
 	thisJob._st = 0
 
 	if (thisJob._chd != EMPTY_LINK) {
-		thisJob._st |= WAITING_CHILDREN
-		observeChildren(thisJob)
+		observeChildren(thisJob, cancelChildren)
 		return
 	}
 
 	if (thisJob._ends != EMPTY_LINK) {
-		thisJob._st |= WAITING_ASYNC_ONENDS
+		thisJob._st |= WAITING_ONENDS
 		execOnEnds(thisJob)
 		return
 	}
@@ -396,14 +330,120 @@ function endProtocol(thisJob: Job) {
 	settle(thisJob)
 }
 
+function waitingChildren(thisJob: Job, tgVal: unknown) {
+	let { _st, _tg } = thisJob
+
+	if (_tg == EMPTY_LINK) {
+		thisJob._st &= ~WAITING_CHILDREN
+		execOnEnds(thisJob)
+		return
+	}
+
+	thisJob._st |= WAITING_CHILDREN
+
+	const childFailed = tgVal instanceof Err && !(tgVal instanceof ECancOK)
+
+	if (childFailed) {
+		addErrorToJobVal(thisJob, tgVal)
+		cancelJob(thisJob)
+	}
+}
+
+function addErrorToJobVal(thisJob: Job, err: Error) {
+	const { val } = thisJob
+	thisJob.val = val instanceof Err ? val.addError(err) : new Err(err, thisJob._nm)
+}
+
+function execOnEnds(thisJob: Job) {
+	if (thisJob._ends == EMPTY_LINK) {
+		thisJob._st &= ~WAITING_ONENDS
+		settle(thisJob)
+		return
+	}
+
+	thisJob._st |= WAITING_ONENDS
+
+	const link = thisJob._ends
+	const onEnd = link.a
+	const isSync = link.b
+
+	thisJob._ends = link.nA
+	disposeLink(link)
+
+	if (isSync) {
+		try {
+			// eslint-disable-next-line no-var
+			var retVal = (onEnd as OnEnd)()
+		}
+		catch (e) {
+			retVal = wrapIfNotError(e)
+		}
+		if (retVal instanceof Error) {
+			addErrorToJobVal(thisJob, retVal)
+		}
+		execOnEnds(thisJob)
+	}
+	else {  // async onEnd
+		const thing = (onEnd as AsyncOnEnd)()
+
+		if ("then" in thing) {  // It's a Promise
+			thing.then(
+				() => {
+					execOnEnds(thisJob)
+				},
+				(err) => {
+					addErrorToJobVal(thisJob, wrapIfNotError(err))
+					execOnEnds(thisJob)
+				}
+			)
+		}
+		else {  // It's a Generator
+			const job = new Job(thing, onEnd.name)
+			const observer = new CustomObserver((val) => {
+				if (val instanceof Error) {
+					addErrorToJobVal(thisJob, val)
+				}
+				execOnEnds(thisJob)
+			})
+			linkObAndTg(observer, job)
+			resumeJob(job)
+		}
+	}
+}
+
+class CustomObserver implements Ob {
+	declare _tg: Link<Ob, Tg>
+	constructor(private onTgDone: (val: unknown) => void) {}
+	_onTgDone(val: unknown) {
+		this.onTgDone(val)
+	}
+	_addTg() {}
+	_rmTg() {}
+}
+
+function wrapIfNotError(x: unknown): Error {
+	return x instanceof Error ? x :
+		JSError("ThrownUnknownError", "Thrown value is not of type Error", x)
+}
+
 function settle(thisJob: Job) {
 	const { _st, val } = thisJob
-	removeJobFromParent(thisJob)
+
+	if (_st & CANCELLING && !(val instanceof Err)) {
+		thisJob.val = new ECancOK(thisJob._nm)
+	}
+
+	const parentLink = thisJob._prnt
+	if (parentLink != EMPTY_LINK) {
+		thisJob._prnt = EMPTY_LINK as Link<Job, Job>
+		removeLinkFromLL(parentLink.a, "_chd", parentLink)
+		disposeLink(parentLink)
+	}
 
 	// Notify observers
 	for (let link = thisJob._ob; link != EMPTY_LINK; link = link.nA) {
 		const ob = link.a
-		unlinkComponents(link, ob, thisJob)
+		unlinkObAndTg(link)
 		ob._onTgDone(val)
 	}
 
@@ -411,161 +451,46 @@ function settle(thisJob: Job) {
 }
 
 
-function waitingChildren(thisJob: Job, tgVal: unknown) {
-	let { _st, _tg, val } = thisJob
-
-	const childFailed = tgVal instanceof Error && !(tgVal instanceof ECancOK)
-
-	if (childFailed) {
-		addErrorToJobVal(thisJob, tgVal)
-		cancelJob(thisJob)
-	}
-
-	if (_tg == EMPTY_LINK) {
-		transitionStates(thisJob, WAITING_CHILDREN, WAITING_ASYNC_ONENDS)
-		execOnEnds(thisJob)
-	}
-}
-
-function addErrorToJobVal(thisJob: Job, err: Error) {
-	const { val } = thisJob
-	if (val instanceof Err) {
-		val.addError(err)
-	}
-	else {
-		thisJob.val = new Err(err, thisJob._nm)
-	}
-}
-
-function execOnEnds(thisJob: Job) {
-	let { _ends: link} = thisJob
-
-	while (link != EMPTY_LINK) {
-		const onEnd = link.a
-
-		try {
-			// eslint-disable-next-line no-var
-			var retVal = onEnd()
-		}
-		catch (e) {
-			retVal = wrapIfNotError(e)
-		}
-
-		if (retVal instanceof Error) {
-			addErrorToJobVal(thisJob, retVal)
-		}
-
-		link = link.nA
-		disposeLink(link)
-	}
-
-	thisJob._ends = EMPTY_LINK as Link<OnEnd, Job>
-}
-
-function execAsyncOnEnds(thisJob: Job) {
-	let link = asyncOnEnds.get(thisJob)
-
-	if (!link) {
-		return
-	}
-
-	while (link != EMPTY_LINK) {
-		const onEnd = link.a
-		const x = onEnd()
-		if ("then" in x) {
-			const promObserver = new PromiseAsOb(x)
-			x.then(() => onDone(), e => onDone(wrapIfNotError(e)))
+export const jobIter = {
+	next() {
+		let callerJob = sys.runningJob
+		const { _st, val } = self
+		if (_st & DONE) {
+			if (val instanceof Err) {
+				const { _st } = callerJob
+				if (_st & PARKED_JOB || (_st & PARKED_JOB_CANCEL && !(val instanceof ECancOK))) {
+					callerJob.val = new Err(val, callerJob._nm)
+					cancelJob(callerJob)
+				}
+				iterRes.done = false
+				return
+			}
+			// callerJob is at PARKED_CONTINUE
+			iterRes.done = true
+			iterRes.value = val
 		}
 		else {
-			const job = new Job(x, onEnd.name)
-			resumeJob(job)
-			insertAsObserverToJob(thisJob, job, freshLink(thisJob, job))
+			linkObAndTg(callerJob, "_tg", self, "_ob")
+			iterRes.done = false
 		}
-
-		link = link.nA
-		disposeLink(link)
-	}
-
-	asyncOnEnds.delete(thisJob)
-}
-
-function linkPromiseAsJobTarget(prom: Promise<unknown>, thisJob: Job) {
-
-	const dummyObs: Ob = {
-		_tg: EMPTY_LINK as Link<Ob, Job>,
-		_onTgDone(val: unknown) {},
-		_rmTg(link: Link<Ob, Job>) {}
-	}
-
-	insertAsTargetToJob(dummyObs, thisJob, freshLink(dummyObs, thisJob))
-
-	// When promise completes, notify the parent job and remove from targets
-	prom.then(
-		(val) => {
-			thisJob._onTgDone(val)
-			// Find and remove this observer from parent's targets
-			for (let link = dummyObs._tg; link != EMPTY_LINK; link = link.nA) {
-				if (link.b === thisJob) {
-					dummyObs._rmTg(link)
-					break
-				}
-			}
-		},
-		(err) => {
-			const wrappedErr = wrapIfNotError(err)
-			thisJob._onTgDone(wrappedErr)
-			// Find and remove this observer from parent's targets
-			for (let link = dummyObs._tg; link != EMPTY_LINK; link = link.nA) {
-				if (link.b === thisJob) {
-					dummyObs._rmTg(link)
-					break
-				}
-			}
-		}
-	)
-
-	return handlePromiseAsTarget(prom, thisJob)
-
-}
-
-function waitingOnEnds(thisJob: Job, tgVal: unknown) {
-
-}
-
-function transitionStates(thisJob: Job, from: State, to: State) {
-	thisJob._st &= ~from
-	thisJob._st |= to
-}
-
-
-
-
-
-//* ************************  The Iterator  ******************************** *//
-
-export let iterRes = {
-	done: false,
-	value: 0 as unknown,
-}
-
-export type Iter<V> = Iterator<unknown, V>
-export const iter = {
-	next() {
 		return iterRes
 	}
 }
 
 export type Iterable<V> = {
-	[Symbol.iterator]: () => Iterator<never, V>
+	[Symbol.iterator]: () => Iter<V>
 }
-
 
 const jobIterable = {
 	[Symbol.iterator]() {
-		// what to do here?
-		return iter
+		return jobIter
 	}
 }
+
+// todo:
+// Case of target job is already done.
+// callerJob fail/continue logic is callerJob._st + target.val
+// I think I need to extract _onTgDone() logic and reuse.
 
 
 
@@ -575,7 +500,6 @@ type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
 	(...args: Args) => Gen<Ret>
 
 export type NotErrs<Ret> = Exclude<Ret, Error>
-type OnlyErrs<Ret> = Extract<Ret, Error>
 
 export function go<Args extends unknown[], Ret>(genFn: RibuGenFn<Ret, Args>, ...args: Args) {
 	const gen = genFn(...args)
@@ -589,46 +513,9 @@ export function me(): Job {
 }
 
 export function onEnd(newOnEnd: OnEnd) {
-	let job = sys.runningJob
-	const { _ends: oldHead } = job
-	let newLink = freshLink(newOnEnd, undefined)
-	job._ends = newLink
-	newLink.nA = oldHead
+	addOnEnd(sys.runningJob, newOnEnd)
 }
 
 export function asyncOnEnd(newOnEnd: AsyncOnEnd) {
-	const job = sys.runningJob
-	const oldHead = asyncOnEnds.get(job)
-	let newLink = freshLink(newOnEnd, undefined)
-	newLink.nA = oldHead || EMPTY_LINK as Link<AsyncOnEnd, undefined>
-	asyncOnEnds.set(job, newLink)
-}
-
-
-
-
-
-// const res = yield* job
-// ECancOK is not in res
-
-// const res = yield* job.cancel()
-// res in undefined
-
-// const res = yield* job.err
-// Ret | ECancOK | Err
-
-// const res = yield* job.cancel().err
-// Errs without ECancOK
-
-
-
-
-//* **********  Utils  ********** *//
-
-function wrapIfNotError(x: unknown): Error {
-	return x instanceof Error ? x : {
-		name: "ThrownUnknownError",
-		message: "Thrown value is not of type Error",
-		cause: x
-	}
+	addOnEnd(sys.runningJob, newOnEnd, false)
 }

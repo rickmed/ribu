@@ -145,7 +145,7 @@ class ObserveSelectJobs {
 		}
 	}
 
-	_onNtDone(job: Job) {
+	_onTgDone(job: Job) {
 		// resume caller
 	}
 }
@@ -237,146 +237,12 @@ class CancelAll {
 
 
 
-/* Subscriptions architecture
-
-** Job: blocked/subscribed to one job/Ch/Select
-** Job: subscribed to many children (awaiting if done or cancelled)
-
-This supports O1 many-many subscriptions (O: Observer, T: Target, conn: Connection):
-
-	job.connHead
-
-	1) Observer makes its own LL and inserts itself into all target's LL
-
-		for target of targets:
-
-			// make my own subscription LL
-
-			const conn = {
-				Ob: Job | Ch,
-				pNt: prevSubObj,      // keep in function scope
-				nNt: null,            // next moves towards tail
-				pOb: null,
-				nOb: null,
-			}
-
-			prevSubObj.nextSub = subscriptionObj
-
-			// insert subscriptionObj into target's LL tail:
-
-			const targetTail = target.obsTail
-			if (targetTail != null) {
-				targetTail.nextWatcher = subscriptionObj
-				subscriptionObj.prevWatcher = targetTail
-			}
-			else {
-				targetTail.nextWatcher = subscriptionObj
-				subscriptionObj.prevWatcher = targetTail
-			}
-
-			target.obsTail = subscriptionObj
-
-	2) When target is done (iterate from .obsHead)
-
-		const { obsHead } = this
-		if (obsHead != null) {
-
-			// remove conn in target
-			obsHead.prevOb.nextOb = obsHead.nextOb
-			obsHead.nextOb.prevOb = obsHead.prevOb
-
-			// notify Ob
-			sys.targetJustDone = this
-			obsHead.owner.onDone(val)
-		}
-
-
-	3) Obs can unsubscribe from all targets by just iterating over its
-		.obsHead LL and removing nodes from all targets LL
-		when its cancelled or a target is done.
-
-
-** jobs._childs: How to use LL?
-	- child needs to remove itself from parent's LL when done
-		but when done, parent doesn't need to be resumed (parent.onDone())
-	- child could also have observers that DO need to be notified when done (await child)
-
-		So maybe a conn.nfy = boolean
-
-	very cool since I just update conn.{p,n}N
-	so I if job is cancelled I can mutate/transition all childs nodes conn objects
-		so that target can notify back when done
-	Can transition from normal run -> awaiting for childs -> cancelling childs
-
-
-** onEnds list: Can reuse job.connHead (and nodes)
-	- Needs to be executed Last In First Out
-		- Now, all nodes head conn.pNt = tailConn (this way I can iterate from tail to head)
-
-
-** Ch:
-	Needs  dequeu <= []-[]-[] <= queue
-		- so if ch.conn: head, need head.prevOb = tail
-		- when iterating, instead of checking if node.next = null, check if node.next === head
-		- Adding is from head. Maybe, will check the other iteration algos.
-
-**** All nodes need to be removed from ob LL when tg is done so conn is returned to pool
-
-*/
 
 
 
-/* Select (Jobs)
-const res = yield* select(ch1, ch2)
-
-- check if any of the targets is "ready"
-	- job is easy (when state is DONE)
-	- ch when there's a putter (selecting put ops is not supported yet)
-
-	- fairness: what if more than one is ready?
-		- I think it should have an internal queue.
-		- Put all ready targets in a queue.
-		- When observer subscribes (yield*) dequeue
-
-	- PROBLEM: on select return, it should unsub from all targets.
-		- so it has no way to know at the next loop turn what was selected before
-
-	- SOLUTION: make it channel-like
-		- you construct it and then yield* the same object (like ch.rec)
-			(could potential add targets dynamically)
-		- QUESTION: how to dispose it? how are channels "disposed"?
-
-			const data = yield* ch.rec
-				when rec completes, callingJob is taken out of ch.receiverS LL
-				so there's no push pointer and GC works (same with job is cancelled)
-
-			- This should be the same for select
-
-		- IMPLEMENTATION: is like a channel where putters can be Ch as well.
-			- How are putters as ch same/different from putters as job?
-				- Is ch.receivers is empty, jobs are added in .putters (and resumed then receiver arrives)
-				- Select should be into ch.receivers and "resumed/notified" when a target have data.
-					- if no receivers in select, ch should be put in select.putters
-					- Problem is that job can be in only one .putters queue.
-						- Let's say a job puts to targetCh1
-						- targetCh1 has a selectObj in its .receivers
-							mmmm I think select should just insert callingJob as .receiver in targetCh1
 
 
-- if one ready, notify observer with val.
-- unsub from all targets.
-- needs to subscribe to all targets.
 
-
-- needs to unsubscribe from all targets when cancelled
-
-*/
-
-/* const res = yield* select(ch1, ch2, job1, job2)
-
-- subscribe to all targets
-
-*/
 
 
 

@@ -29,6 +29,17 @@ class System {
 
 export const sys = new System()
 
+export let iterRes = {
+	done: false,
+	value: 0 as unknown,
+}
+export type Iter<V> = Iterator<unknown, V>
+export const iter = {
+	next() {
+		return iterRes
+	}
+}
+
 
 /* **************   Linked Lists   ****************************************** */
 
@@ -67,7 +78,7 @@ export type Ob = {
  */
 export type Tg = {
 	_ob: Link<Ob, Tg>
-	// _addOb: (ob: Ob, link: Link<Ob, Tg>) => void
+	_addOb: (link: Link<Ob, Tg>) => void
 	_rmOb: (link: Link<Ob, Tg>) => void
 }
 
@@ -86,7 +97,6 @@ export class Link<A = unknown, B = unknown> {
 	constructor(
 		public a: A,
 		public b: B,
-		public ntf = true
 	) {}
 	nA = EMPTY_LINK as Link<A, B>
 	pA = EMPTY_LINK as Link<A, B>
@@ -110,15 +120,14 @@ export function disposeLink(link: Link) {
 
 	link.a = EMPTY
 	link.b = EMPTY
-	link.ntf = false
 	link.pA = EMPTY_LINK
 	link.nB = EMPTY_LINK
 	link.pB = EMPTY_LINK
 }
 
-export function freshLink<A, B>(a: A, b: B, ntf = true) {
+export function freshLink<A, B>(a: A, b: B) {
 	if (!linkPoolHead) {
-		return new Link(a, b, ntf)
+		return new Link(a, b)
 	}
 
 	let link = linkPoolHead
@@ -129,19 +138,20 @@ export function freshLink<A, B>(a: A, b: B, ntf = true) {
 
 	link.a = a
 	link.b = b
-	link.ntf = ntf
 
 	return link as Link<A, B>
 }
 
-export function linkComponents(ob: Ob, tg: Tg) {
+
+
+export function linkObAndTg(ob: Ob, tg: Tg) {
 	const link = freshLink(ob, tg)
-	tg._addOb(ob, link)
-	ob._addTg(tg, link)
+	ob._addTg(link)
+	tg._addOb(link)
 }
 
-export function unlinkComponents(link: Link<Ob, Tg>, ob: Ob, tg: Tg) {
-	tg._rmOb(link)
-	ob._rmTg(link)
+export function unlinkObAndTg(link: Link<Ob, Tg>) {
+	link.a._rmTg(link)
+	link.b._rmOb(link)
 	disposeLink(link)
 }

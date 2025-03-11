@@ -5,6 +5,14 @@ import { assertRibuErr, checkErrSpec } from "./utils.ts"
 
 //todo: test "Cancelled by " message.
 
+
+/* To handle cancel errors manually, use:
+	job.cancel()
+	const res = yield* job.err
+
+	todo: add test.
+*/
+
 describe(".cancel()", () => {
 
 	it.only("a job can cancel another job", async () => {

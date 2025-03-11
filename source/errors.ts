@@ -58,8 +58,8 @@ export function E<Name extends string>(name: Name, fn = "", msg = "", cause?: un
 }
 
 export class ECancOK extends RibuE<"CancOK"> {
-	constructor(fn: string, msg: string) {
-		super("CancOK", msg, fn)
+	constructor(fnName: string) {
+		super("CancOK", "", fnName)
 	}
 }
 
@@ -74,6 +74,7 @@ export class Err extends RibuE<"Err"> {
 			this.errors = []
 		}
 		this.errors.push(err)
+		return this
 	}
 }
 
@@ -83,6 +84,12 @@ export class ETimedOut extends RibuE<"TimedOut"> {
 	}
 }
 
+export function JSError(name: string, message: string, cause?: unknown) {
+	let err = new Error(message)
+	err.name = name
+	err.cause = cause
+	return err
+}
 
 export function isE(x: unknown): x is RibuE {
 	return x !== null && typeof x === "object" && ERR_TAG in x
