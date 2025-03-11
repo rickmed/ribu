@@ -19,7 +19,7 @@ export function allOrErr<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 	return go(function* _allOrErr() {
 		let results: Array<NotErrs<Jobs[number]["val"]>> = []
 		let inflight = jobs.length
-		if (inflight == 0) {
+		if (inflight === 0) {
 			return results
 		}
 

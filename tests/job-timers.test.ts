@@ -10,7 +10,7 @@ describe("sleep()", () => {
 		let jobDone = false
 
 		go(function* main() {
-			yield* sleep(1)
+			yield sleep(1)
 			jobDone = true
 		})
 

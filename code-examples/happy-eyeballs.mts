@@ -38,7 +38,7 @@ export async function* happyEyeBalls(hostName: string, port: number, delay: numb
 		if (result instanceof Socket) {
 			return result
 		}
-		if (result == "FAILED") {
+		if (result === "FAILED") {
 			inFlight--
 		}
 	} while (inFlight > 0)
@@ -91,7 +91,7 @@ export async function* happyEyeBalls_V2(hostName: string, port: number, delay: n
 
 	const launchJob = go(function* launcher() {
 		for (;;) {
-			if (addresses.length == 0) {
+			if (addresses.length === 0) {
 				return
 			}
 			inFlight++

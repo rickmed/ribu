@@ -1,7 +1,6 @@
 import { sys, type Link, EMPTY, disposeLink, freshLink, EMPTY_LINK, Tg, Ob, Iter, iterRes, linkObAndTg, unlinkObAndTg } from "./shared.ts"
 import { Err, ECancOK, JSError } from "./errors.ts"
 
-// todo: sleep
 // todo: can use extra flags instead of checking if job.val is instance of Err
 // to add error
 
@@ -50,42 +49,34 @@ let self!: Job
 
 //* ************************  Job Class  *********************************** *//
 
-type Gen<Ret = unknown> = Generator<unknown, Ret, unknown>
+export const YIELD = 5343
+
+type RibuGen<Ret = unknown> =
+	Generator<unknown, Ret, unknown>
+
+type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
+	(...args: Args) => RibuGen<Ret>
 
 type SyncFn = () => unknown
 type AsyncFn = () => Promise<unknown>
-type GenFn = RibuGenFn
-type OnEnd = SyncFn | AsyncFn | GenFn
-type OnEndLink = Link<SyncFn, 1> | Link<AsyncFn, 2> | Link<GenFn, 3>
+type OnEnd = SyncFn | AsyncFn | RibuGenFn
+type OnEndLink = Link<SyncFn, 1> | Link<AsyncFn, 2> | Link<RibuGenFn, 3>
 
-type State = number
+// Job states
+const RUNNING = 1 << 0
+const PARKED_CONTINUE = 1 << 1
+const PARKED_JOB = 1 << 2
+const PARKED_JOB_CANCEL = 1 << 3
+export const PARKED_SLEEP = 1 << 4
+export const PARKED_CH_PUT = 1 << 5
+const WAITING_CHILDREN = 1 << 6
+const WAITING_ONENDS = 1 << 7
+const CANCELLING = 1 << 8
+const DONE_OK = 1 << 9
+const DONE_ECANCOK = 1 << 10
+const DONE_ERR = 1 << 11
 
-/* Job continue/fail _st semantics
-
-	- const res = yield* job.err   // res is All
-		PARKED_CONTINUE
-
-	- const res = yield* job    // caller faisls at ::Error
-		PARKED_JOB
-
-	- yield* job.cancel()
-	- yield* cancel(jobs)
-		// caller resumes at EcancOK even though EcancOK is ::Error
-		PARKED_JOB_CANCEL
-*/
-
-const PARKED_CONTINUE = 1 << 0
-const PARKED_JOB = 1 << 1
-const PARKED_JOB_CANCEL = 1 << 2
-const PARKED_SLEEP = 1 << 3
-const WAITING_CHILDREN = 1 << 4
-const WAITING_ONENDS = 1 << 5
-const CANCELLING = 1 << 6
-const DONE_OK = 1 << 7
-const DONE_ECANCOK = 1 << 8
-const DONE_ERR = 1 << 9
-
-const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_SLEEP
+const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_CH_PUT
 const DONE = DONE_OK | DONE_ECANCOK | DONE_ERR
 
 /* Job Class
@@ -111,17 +102,17 @@ const DONE = DONE_OK | DONE_ECANCOK | DONE_ERR
  */
 export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 
-	_gn: Gen
+	_gn: RibuGen
 	_nm: string
-	_st = 0 as State
-	_tg = EMPTY_LINK as Link<Ob, Tg>
+	_st = RUNNING
+	_tg = EMPTY_LINK as Link<Ob, Tg>  // or NodeJS.Timeout if _st === PARKED_SLEEP
 	_ob = EMPTY_LINK as Link<Ob, Tg>
 	_chd = EMPTY_LINK as Link<Job, Job>
 	_prnt = EMPTY_LINK as Link<Job, Job>
 	_ends = EMPTY_LINK as OnEndLink
 	val = EMPTY as NotErrs | All
 
-	constructor(gen: Gen, genFnName: string, parent?: Job) {
+	constructor(gen: RibuGen, genFnName: string, parent?: Job) {
 		this._gn = gen
 		this._nm = genFnName
 		if (parent) {
@@ -230,6 +221,11 @@ function cancelJob(thisJob: Job) {
 
 	thisJob._st |= CANCELLING
 
+	if (_st & PARKED_SLEEP) {
+		clearTimeout(thisJob._tg as unknown as NodeJS.Timeout)
+		thisJob._tg = EMPTY_LINK as Link<Ob, Tg>
+	}
+
 	if (_st & PARKED) {
 		// Unsubscribe from the single target blocking this job.
 		const targetLink = thisJob._tg
@@ -257,7 +253,7 @@ function cancelJob(thisJob: Job) {
 
 function endProtocol(thisJob: Job, cancelChildren = false) {
 	let { _chd: childLink } = thisJob
-	if (childLink == EMPTY_LINK) {
+	if (childLink === EMPTY_LINK) {
 		execOnEnds(thisJob)
 		return
 	}
@@ -276,12 +272,15 @@ function endProtocol(thisJob: Job, cancelChildren = false) {
 		childJob._prnt = EMPTY_LINK as Link<Job, Job>
 
 		childLink = childLink.nA
+
 	} while (childLink != EMPTY_LINK)
 
 	thisJob._chd = EMPTY_LINK as Link<Job, Job>
 }
 
-function resumeJob(thisJob: Job, val?: unknown) {
+export function resumeJob(thisJob: Job, val?: unknown) {
+
+	thisJob._st = RUNNING
 
 	jobStack.push(thisJob)
 	sys.runningJob = thisJob
@@ -298,6 +297,9 @@ function resumeJob(thisJob: Job, val?: unknown) {
 	// js runtime will call the same delegated iterator, which will return the
 	// same iteratorResult object, but now mutated to resume the job.
 
+	// Operations that yield (not yield*) are side effect only, so iterRes will
+	// be ignored.
+
 	iterRes.done = true
 	iterRes.value = val
 
@@ -306,6 +308,9 @@ function resumeJob(thisJob: Job, val?: unknown) {
 		if (done) {
 			thisJob.val = value
 			endProtocol(thisJob)
+		}
+		if (value !== YIELD) {
+			throw Error(`Invalid yield value: ${String(value)} from ${thisJob._nm}`)
 		}
 	}
 	catch (e) {
@@ -318,9 +323,9 @@ function resumeJob(thisJob: Job, val?: unknown) {
 }
 
 function waitingChildren(thisJob: Job, tgVal: unknown) {
-	let { _st, _tg } = thisJob
+	let { _tg } = thisJob
 
-	if (_tg == EMPTY_LINK) {
+	if (_tg === EMPTY_LINK) {
 		thisJob._st &= ~WAITING_CHILDREN
 		execOnEnds(thisJob)
 		return
@@ -342,7 +347,7 @@ function addErrorToJobVal(thisJob: Job, err: Error) {
 }
 
 function execOnEnds(thisJob: Job) {
-	if (thisJob._ends == EMPTY_LINK) {
+	if (thisJob._ends === EMPTY_LINK) {
 		settle(thisJob)
 		return
 	}
@@ -356,7 +361,7 @@ function execOnEnds(thisJob: Job) {
 	thisJob._ends = link.nA
 	disposeLink(link)
 
-	if (type == 1) {
+	if (type === 1) {
 		try {
 			// eslint-disable-next-line no-var
 			var retVal = (onEnd as SyncFn)()
@@ -369,7 +374,7 @@ function execOnEnds(thisJob: Job) {
 		}
 		execOnEnds(thisJob)
 	}
-	else if (type == 2) {
+	else if (type === 2) {
 		(onEnd as AsyncFn)().then(
 			() => {
 				execOnEnds(thisJob)
@@ -381,7 +386,7 @@ function execOnEnds(thisJob: Job) {
 		)
 	}
 	else {  // It's a Generator
-		const job = new Job((onEnd as GenFn)(), onEnd.name)
+		const job = new Job((onEnd as RibuGenFn)(), onEnd.name)
 		const observer = new CustomObserver((val) => {
 			if (val instanceof Error) {
 				addErrorToJobVal(thisJob, val)
@@ -473,9 +478,6 @@ const jobIterable = {
 
 
 //* ************************  User API  ************************************ *//
-
-type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
-	(...args: Args) => Gen<Ret>
 
 export type NotErrs<Ret> = Exclude<Ret, Error>
 

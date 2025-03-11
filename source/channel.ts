@@ -76,7 +76,7 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 	}
 
 	[Symbol.iterator]() {
-		if (op == REC) {
+		if (op === REC) {
 			processRec(this)
 		}
 		else {
@@ -119,7 +119,7 @@ type KOfawaiterS = Recs | Puts
 function processRec<V>(ch_m: Chan<V>) {
 	const { putterS } = ch_m
 
-	if (putterS == EMPTY) {
+	if (putterS === EMPTY) {
 		receiverHasNoPutter(ch_m)
 		return
 	}
@@ -130,7 +130,7 @@ function processRec<V>(ch_m: Chan<V>) {
 	}
 	if (putterS instanceof Queue) {
 		const putVal: unknown = putterS.deQ()
-		return putVal == EMPTY ?
+		return putVal === EMPTY ?
 			receiverHasNoPutter(ch_m) :
 			putVal instanceof Job ?
 				resumeObserverAndMe(putVal, undefined, putVal.val) :
@@ -175,7 +175,7 @@ function processPut<V>(ch_m: Chan<V>) {
 
 	const { receiverS } = ch_m
 
-	if (receiverS == EMPTY) {
+	if (receiverS === EMPTY) {
 		putterHasNoReceiver(ch_m)
 		return
 	}
@@ -187,7 +187,7 @@ function processPut<V>(ch_m: Chan<V>) {
 
 	const receiver = receiverS.deQ()
 
-	if (receiver == EMPTY) {
+	if (receiver === EMPTY) {
 		putterHasNoReceiver(ch_m)
 		return
 	}

@@ -22,7 +22,7 @@ export function sleepProm(ms: number): Promise<void> {
 
 export function checkErrSpec(rec: unknown, spec: NonNullable<unknown>): void {
 
-	if (typeof spec !== "object") {
+	if (typeof spec !=== "object") {
 		expect(rec).toBe(spec)
 		return
 	}

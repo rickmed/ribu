@@ -9,16 +9,16 @@ describe(`jobs blocks and resumes waiting for other jobs to finish`, () => {
 	it.only("using .$, the target job unblocks the caller job with its return value", async () => {
 
 		function* child() {
-			yield* sleep(1)
+			yield sleep(1)
 			return "child one"
 		}
 
 		function* main() {
-			const res = yield* go(child).$
+			const res = yield* go(child)
 			return res
 		}
 
-		const rec = await go(main).promfy
+		const rec = await go(main)
 		expect(rec).toBe("child one")
 	})
 
