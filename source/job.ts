@@ -2,6 +2,8 @@ import { sys, type Link, EMPTY, disposeLink, freshLink, EMPTY_LINK, Tg, Ob, Iter
 import { Err, ECancOK, JSError } from "./errors.ts"
 
 // todo: sleep
+// todo: can use extra flags instead of checking if job.val is instance of Err
+// to add error
 
 /* ***************  Connect Observers <-> Targets via LLs  *********************
 EL: Empty Link
@@ -72,16 +74,19 @@ type State = number
 		PARKED_JOB_CANCEL
 */
 
-export const PARKED_CONTINUE = 1 << 0
-export const PARKED_JOB = 1 << 1
-export const PARKED_JOB_CANCEL = 1 << 2
-export const PARKED_SLEEP = 1 << 3
-export const WAITING_CHILDREN = 1 << 4
-export const WAITING_ONENDS = 1 << 5
-export const CANCELLING = 1 << 6
-export const DONE = 1 << 7
+const PARKED_CONTINUE = 1 << 0
+const PARKED_JOB = 1 << 1
+const PARKED_JOB_CANCEL = 1 << 2
+const PARKED_SLEEP = 1 << 3
+const WAITING_CHILDREN = 1 << 4
+const WAITING_ONENDS = 1 << 5
+const CANCELLING = 1 << 6
+const DONE_OK = 1 << 7
+const DONE_ECANCOK = 1 << 8
+const DONE_ERR = 1 << 9
 
-export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_SLEEP
+const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_SLEEP
+const DONE = DONE_OK | DONE_ECANCOK | DONE_ERR
 
 /* Job Class
  *  _gn = generator
@@ -132,8 +137,8 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 
 		if (_st & PARKED_JOB) {
 			if (val instanceof Err) {
-				this.val = new Err(val, this._nm) as NotErrs | All
-				execWaitChildren(this, true)
+				this.val = new Err(val, this._nm) as All
+				endProtocol(this, true)
 				return
 			}
 			resumeJob(this, val)
@@ -145,7 +150,7 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 				return
 			}
 			// should receive only ECancOK or Error at PARKED_JOB_CANCEL
-			execWaitChildren(this, true)
+			endProtocol(this, true)
 			return
 		}
 		if (_st & PARKED_CONTINUE) {
@@ -175,11 +180,14 @@ export class Job<NotErrs = unknown, All = unknown> implements Ob, Tg {
 		callerJob._st &= ~PARKED
 		callerJob._st |= PARKED_JOB
 		self = this
-		return jobIter as Iter<NotErrs>
+		return jobIterator as Iter<NotErrs>
 	}
 
 	get err() {
-		// todo implement
+		const callerJob = sys.runningJob
+		callerJob._st &= ~PARKED
+		callerJob._st |= PARKED_CONTINUE
+		self = this
 		return jobIterable as Iterable<All>
 	}
 
@@ -214,19 +222,6 @@ function addOnEnd(thisJob: Job, onEndFn: OnEnd) {
 	addLinkToLLAsHead(thisJob, "_ends", link)
 }
 
-
-/* todo, cancel() needs to trigger endProtocol():
-
-
-cancel:
-- set CANCELLING
-- unsub from current yield* target
-- trigger children cancellation and await for them
-- exec/wait for onEnds
-
-*/
-
-
 function cancelJob(thisJob: Job) {
 	const { _st } = thisJob
 	if (_st & CANCELLING) {
@@ -257,10 +252,10 @@ function cancelJob(thisJob: Job) {
 		return
 	}
 
-	execWaitChildren(thisJob, true)
+	endProtocol(thisJob, true)
 }
 
-function execWaitChildren(thisJob: Job, cancelChildren = false) {
+function endProtocol(thisJob: Job, cancelChildren = false) {
 	let { _chd: childLink } = thisJob
 	if (childLink == EMPTY_LINK) {
 		execOnEnds(thisJob)
@@ -310,12 +305,12 @@ function resumeJob(thisJob: Job, val?: unknown) {
 		const { done, value} = thisJob._gn.next()
 		if (done) {
 			thisJob.val = value
-			execWaitChildren(thisJob)
+			endProtocol(thisJob)
 		}
 	}
 	catch (e) {
 		thisJob.val = new Err(e, thisJob._nm)
-		execWaitChildren(thisJob, true)
+		endProtocol(thisJob, true)
 	}
 	finally {
 		sys.runningJob = jobStack.pop()!
@@ -337,7 +332,7 @@ function waitingChildren(thisJob: Job, tgVal: unknown) {
 
 	if (childFailed) {
 		addErrorToJobVal(thisJob, tgVal)
-		execWaitChildren(thisJob, true)
+		endProtocol(thisJob, true)
 	}
 }
 
@@ -438,26 +433,27 @@ function settle(thisJob: Job) {
 }
 
 
-export const jobIter = {
+const jobIterator = {
 	next() {
 		let callerJob = sys.runningJob
-		const { _st, val } = self
-		if (_st & DONE) {
-			if (val instanceof Err) {
-				const { _st } = callerJob
-				if (_st & PARKED_JOB || (_st & PARKED_JOB_CANCEL && !(val instanceof ECancOK))) {
-					callerJob.val = new Err(val, callerJob._nm)
-					execWaitChildren(callerJob, true)
-				}
+		const { _st: thisJobSt, val } = self
+		if (thisJobSt & DONE) {
+			const callerJobSt = callerJob._st
+			if (
+				(callerJobSt & PARKED_JOB) && !(thisJobSt & DONE_OK) ||
+				(callerJobSt & PARKED_JOB_CANCEL) && !(thisJobSt & DONE_ERR)
+			) {
+				callerJob.val = new Err(val, callerJob._nm)
+				endProtocol(callerJob, true)
 				iterRes.done = false
-				return
 			}
-			// callerJob is at PARKED_CONTINUE
-			iterRes.done = true
-			iterRes.value = val
+			else {
+				iterRes.done = true
+				iterRes.value = val
+			}
 		}
 		else {
-			linkObAndTg(callerJob, "_tg", self, "_ob")
+			linkObAndTg(callerJob, self)
 			iterRes.done = false
 		}
 		return iterRes
@@ -470,14 +466,9 @@ export type Iterable<V> = {
 
 const jobIterable = {
 	[Symbol.iterator]() {
-		return jobIter
+		return jobIterator
 	}
 }
-
-// todo:
-// Case of target job is already done.
-// callerJob fail/continue logic is callerJob._st + target.val
-// I think I need to extract _onTgDone() logic and reuse.
 
 
 
