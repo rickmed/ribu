@@ -1,4 +1,4 @@
-import { Job, type Iterable } from "./job.ts"
+import { Job, YIELD, type Iterable } from "./job.ts"
 import { sys, Iter, iterRes, EMPTY, iter } from "./shared.ts"
 
 // channel resumes job if job._state != DONE
@@ -145,6 +145,7 @@ function processRec<V>(ch_m: Chan<V>) {
 function receiverHasNoPutter<V>(ch: Chan<V>) {
 	addAsWaiter(sys.runningJob, ch, RECS)
 	iterRes.done = false
+	iterRes.value = YIELD
 }
 
 export function addAsWaiter<V>(value: Receivers, hasAwaiterS_m: Chan<V>, kOfawaiterS: Recs): void
@@ -200,4 +201,5 @@ function processPut<V>(ch_m: Chan<V>) {
 function putterHasNoReceiver<V>(ch: Chan<V>) {
 	addAsWaiter<V>(sys.runningJob, ch, PUTS)
 	iterRes.done = false
+	iterRes.value = YIELD
 }

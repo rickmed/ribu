@@ -6,6 +6,8 @@ import { Err, ECancOK, ThrownValIsNotError } from "./errors.ts"
 
 //* **********************  Base Job Class  ******************************** *//
 
+export const YIELD = 5678
+
 // State Flags
 const RUNNING = 1 << 0
 const PARKED_CONTINUE = 1 << 1
@@ -350,6 +352,9 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 			endProtocol(thisJob)
 			return
 		}
+		if (value !== YIELD) {
+			// todo: yell at user
+		}
 	}
 	catch (e) {
 		thisJob._st |= DONE_ERR
@@ -512,7 +517,7 @@ export const jobIterator = {
 				callerJob._st |= DONE_ERR
 				endProtocol(callerJob, true)
 				iterRes.done = false
-
+				iterRes.value = YIELD
 			}
 			else {
 				iterRes.done = true
@@ -522,6 +527,7 @@ export const jobIterator = {
 		else {
 			linkObAndTg(callerJob, sys.targetJob)
 			iterRes.done = false
+			iterRes.value = YIELD
 		}
 		return iterRes
 	}
