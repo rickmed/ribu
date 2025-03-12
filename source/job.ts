@@ -343,7 +343,6 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 
 	try {
 		const { done, value} = thisJob._gn.next()
-		thisJob._st &= ~RUNNING
 		if (done) {
 			if (value instanceof Err) {
 				thisJob._st |= DONE_ERR
@@ -362,6 +361,7 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 		endProtocol(thisJob, true)
 	}
 	finally {
+		thisJob._st &= ~RUNNING
 		sys.popJob()
 	}
 }
@@ -495,11 +495,14 @@ function removeLinkFromParent(link: Link<Job, Job>) {
 	}
 }
 
-export function notifyObservers(job: JobBase, tgVal: unknown) {
-	for (let link = job._ob; link; link = link.nA) {
+export function notifyObservers(tgJob: JobBase, tgVal: unknown) {
+	let link = tgJob._ob
+	while (link) {
 		const ob = link.a
+		const nextLink = link.nA
+		ob._onTgDone(tgVal, tgJob)
 		unlinkObAndTg(link)
-		ob._onTgDone(tgVal, job)
+		link = nextLink
 	}
 }
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
-import { go, onEnd, sleep } from "../source/index.ts"
-import { isE } from "../source/errors.ts"
-import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.ts"
+import { go, sleep } from "../source/index.ts"
+import { Err, isE } from "../source/errors.ts"
+import { assertRibuErr, checkErrSpec } from "./utils.ts"
 
 
 describe(`jobs blocks and resumes waiting for other jobs to finish`, () => {
@@ -44,7 +44,7 @@ describe(`jobs blocks and resumes waiting for other jobs to finish`, () => {
 
 describe("Job Errors. Job settles with the right error when:", () => {
 
-	it("using yield* .$", async () => {
+	it("using yield*", async () => {
 
 		const exp = {
 			name: "Err",
@@ -75,44 +75,10 @@ describe("Job Errors. Job settles with the right error when:", () => {
 
 		assertRibuErr(rec)
 		expect(rec).toMatchObject(exp)
-		expect(rec.cause).toBeInstanceOf(__Err)
+		expect(rec.cause).toBeInstanceOf(Err)
 	})
 })
 
-describe("onEnds run when job's generator function returns", () => {
-
-	it("works with sync fn, async fn and job. Are executed in reverse added order", async () => {
-
-		let onEnds: string[] = []
-
-		function* main() {
-
-			onEnd(() => {
-				onEnds.push("sync cleanup")
-			})
-
-			onEnd(async () => {
-				onEnds.push("async cleanup")
-				await sleepProm(1)
-			})
-
-			onEnd(function* () {
-				onEnds.push("job cleanup")
-				yield* sleep(1)
-			})
-
-			onEnd(() => go(function* () {
-				onEnds.push("job2 cleanup")
-				yield* sleep(1)
-			}).timeout(3))
-
-			yield* sleep(1)
-		}
-
-		await go(main).promfy
-		expect(onEnds).toStrictEqual(["job2 cleanup", "job cleanup", "async cleanup", "sync cleanup"])
-	})
-})
 
 describe("job can yield promises", () => {
 
@@ -123,7 +89,7 @@ describe("job can yield promises", () => {
 			return res
 		}
 
-		const rec = await go(main).promfyCont
+		const rec = await go(main)
 		expect(rec).toBe(1)
 	})
 
