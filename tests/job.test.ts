@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest"
 import { go, onEnd, sleep } from "../source/index.ts"
-import { __Err, isE } from "../source/errors.ts"
+import { isE } from "../source/errors.ts"
 import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.ts"
 
 
 describe(`jobs blocks and resumes waiting for other jobs to finish`, () => {
 
-	it.only("using .$, the target job unblocks the caller job with its return value", async () => {
+	it("yield* the target job unblocks the caller job with its return value", async () => {
 
 		function* child() {
 			yield sleep(1)
@@ -22,22 +22,22 @@ describe(`jobs blocks and resumes waiting for other jobs to finish`, () => {
 		expect(rec).toBe("child one")
 	})
 
-	it("using .err, caller job gets union of target job returns and all possible errors", async () => {
+	it("using .err, caller job gets union of what target job returns and all possible errors", async () => {
 
 		function* child() {
-			yield* sleep(1)
+			yield sleep(1)
 			return "child done"
 		}
 
 		function* main() {
 			const res = yield* go(child).err
-			if (isE(res)) {  // just to demo basic usage
+			if (isE(res)) {  // basic demo usage
 				return res
 			}
 			return res
 		}
 
-		const rec = await go(main).promfy
+		const rec = await go(main)
 		expect(rec).toBe("child done")
 	})
 })
@@ -64,14 +64,14 @@ describe("Job Errors. Job settles with the right error when:", () => {
 		function* main() {
 
 			function* inner() {
-				yield* sleep(1)
+				yield sleep(1)
 				throw Error("boom")
 			}
 
 			yield* go(inner)
 		}
 
-		const rec = await go(main).promfyCont
+		const rec = await go(main).pErr
 
 		assertRibuErr(rec)
 		expect(rec).toMatchObject(exp)

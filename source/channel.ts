@@ -1,5 +1,5 @@
-import { Job, continueRunningJob, iter, type Iterable } from "./job.ts"
-import { sys, Iter, iterRes, EMPTY } from "./shared.ts"
+import { Job, type Iterable } from "./job.ts"
+import { sys, Iter, iterRes, EMPTY, iter } from "./shared.ts"
 
 // channel resumes job if job._state != DONE
 // else, it skips it and pulls another one

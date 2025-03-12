@@ -1,5 +1,7 @@
-import { ECancOK, Err } from "../source/errors.ts"
-import { go, sleep, E, cancel} from "../source/index.ts"
+import { ECancOK, Err, type E as EType } from "../source/errors.ts"
+import { go, sleep, E} from "../source/index.ts"
+import { EmptyArgsErr, allOrErr } from "../source/job-helpers.ts"
+import { NotErrs } from "../source/job.ts"
 
 function* jobFn(x?: number) {
 	yield sleep(1)
@@ -15,8 +17,12 @@ function* jobFn(x?: number) {
 	return E("Error2")
 }
 
+type All = false | 1 | E<"Error1"> | E<"Error2"> | ECancOK | Err
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const tests = {
+
+	/* ********** Basic Job Tests ********** */
 
 	*["yield* job: the returned type exclude all Error types"]() {
 		type Exp1 = false | 1
@@ -29,25 +35,32 @@ const tests = {
 		generic Ribu Err from thrown values.
 	*/
 	*["yield* job.err"]() {
-		type Exp2 = false | 1 | E<"Error1"> | E<"Error2"> | ECancOK | Err
 		const x2 = yield* go(jobFn).err
-		check_Eq<Exp2>()(x2)
+		check_Eq<All>()(x2)
 	},
 
 	*["yield* job.cancel()"]() {
-		type Exp3 = ECancOK
+		type Exp = ECancOK
 		const x3 = yield* go(jobFn).cancel()
-		check_Eq<Exp3>()(x3)
+		check_Eq<Exp>()(x3)
 	},
 
 
-	*["yield* cancel(jobs)"]() {
-		type Exp3 = ECancOK
-		const x3 = yield* cancel(go(jobFn), go(jobFn))
-		check_Eq<Exp3>()(x3)
-	},
+	/* ********** Job Helpers Tests ********** */
 
+	*["yield* allOrErr()"]() {
+		type Exp = Array<NotErrs<All>>
+		const x3 = yield* allOrErr(go(jobFn), go(jobFn))
+		check_Eq<Exp>()(x3)
+	},
+	*["yield* allOrErr().err"]() {
+		type Exp = Array<NotErrs<All>> | EmptyArgsErr | Err
+		const x3 = yield* allOrErr(go(jobFn), go(jobFn)).err
+		check_Eq<Exp>()(x3)
+	},
 }
+
+
 
 type SuperType<S, T extends S> = [S] extends [T] ? T : never
 

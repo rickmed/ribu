@@ -1,41 +1,69 @@
-import { DONE, Job, iter, State, cancel, go, onEnd, type NotErrs, iterRes } from "./job.ts"
-import { Tg, Ob, sys } from "./shared.ts"
-import { E, ECancOK, ETimedOut, __Err, RibuE } from "./errors.ts"
-import { TIMEOUT } from "dns"
-import { Queue } from "./linked-lists.ts"
-import { Ch, Chan } from "./channel.ts"
-import { EMPTY_LINK, Link } from "./shared.ts"
+import { DONE, DONE_ANY_ERR, Job, JobBase, RibuErrs, addErrorToJobVal, cancel, go, notifyObservers, removeLinkFromLL, subscribeToAllJobs, type NotErrs } from "./job.ts"
+import { E, ECancOK, ETimedOut, Err } from "./errors.ts"
+import { EMPTY_LINK, Link, Ob, Tg, unlinkObAndTg } from "./shared.ts"
 
 
-//* **********  Job Combinators  ********** *//
+abstract class JobHelper<YieldRet, ErrRet> extends JobBase<YieldRet, ErrRet> {
+	// When caller Job is cancelled, it calls tg.rmOb()
+	// so jobHelper can unlink from all targets
+	_rmOb(link: Link<Ob, Tg>) {
+		removeLinkFromLL(this, "_ob", link)
+		unLinkFromAllTargets(this)
+	}
+}
+
+function unLinkFromAllTargets(ob: Ob) {
+	for (let link = ob._tg; link !== EMPTY_LINK; link = link.nA) {
+		unlinkObAndTg(link)
+	}
+}
+
+const EmptyArgsErr = E("EmptyArguments")
+export type EmptyArgsErr = typeof EmptyArgsErr
 
 /*
-- Returns an array of the settled values of the passed-in jobs.
+- Returns an array of the settled not ::Error values of the passed-in jobs.
 - If one job fails, it returns Error (fails callerJob if not using .err)
-- Returns an empty array if the passed-in array in empty.
+- Resolves to an empty array if the passed-in array in empty.
  */
 export function allOrErr<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
-	return go(function* _allOrErr() {
-		let results: Array<NotErrs<Jobs[number]["val"]>> = []
-		let inflight = jobs.length
-		if (inflight === 0) {
-			return results
+	type YieldRet = NotErrs<Jobs[number]["val"]>
+	return new AllOrErr<YieldRet>(jobs)
+}
+
+class AllOrErr<T> extends JobHelper<T[], T[] | EmptyArgsErr | Err> {
+	_nm = "allOrErr"
+	val: T[] = []
+
+	constructor(jobs: Job<unknown>[]) {
+		super()
+		if (jobs.length === 0) {
+			addErrorToJobVal(this, EmptyArgsErr)
+			this._st |= DONE
+			return
+		}
+		subscribeToAllJobs(jobs, this)
+	}
+
+	_onTgDone(tgVal: unknown, tg: Tg) {
+		const { _tg, val } = this
+
+		if (tg._st & DONE_ANY_ERR) {
+			addErrorToJobVal(this, tgVal as Err)
+			unLinkFromAllTargets(this)
+			this._st |= DONE
+			notifyObservers(this, this.val)
+			return
 		}
 
-		const jobsDone = observe(jobs)
+		val.push(tgVal as T)
 
-		while (inflight > 0) {
-			const job = yield* jobsDone
-			inflight--
-			if (job.failed) {
-				yield* cancel(jobs)
-				return E("AJobFailed", "allOrErr", "", job.val as RibuE)
-			}
-			results.push(job.val as typeof results[number])
+		if (_tg === EMPTY_LINK) {
+			this._st |= DONE
+			notifyObservers(this, val)
+			return
 		}
-
-		return results
-	})
+	}
 }
 
 
@@ -45,28 +73,40 @@ export function allOrErr<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 - Returns an empty array if the passed-in array in empty.
  */
 export function all<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
+	if (jobs.length === 0) {
+		return []
+	}
+	const observer = new All<NotErrs<Jobs[number]["val"]>>()
+	subscribeToAllJobs(jobs, observer)
+	return observer
+}
 
-	return go(function* _all() {
+class All<OkVals> extends JobBase<OkVals[]> {
+	_nm = "all"
+	val: OkVals[] = []
 
-		let results: Array<NotErrs<Jobs[number]["val"]>> = []
+	_onTgDone(tgVal: unknown, tg: Tg) {
+		const { _tg, val } = this
 
-		if (jobs.length === 0) {
-			return results
+		if (tg._st & DONE_ANY_ERR) {
+			addErrorToJobVal(this, tgVal as Err)
+			// unsubscribe from rest of jobs
+			for (let link = _tg; link !== EMPTY_LINK; link = link.nA) {
+				unlinkObAndTg(link)
+			}
+			this._st |= DONE
+			notifyObservers(this, this.val)
+			return
 		}
 
-		const ev = Ev()
-		for (const j of jobs) {
-			j._onDone(j => ev.emit(j))
-		}
+		val.push(tgVal as OkVals)
 
-		let inFlight = jobs.length
-		while (inFlight--) {
-			const job = (yield ev.wait) as Job
-			results.push(job.val as typeof results[number])
+		if (_tg === EMPTY_LINK) {
+			this._st |= DONE
+			notifyObservers(this, val)
+			return
 		}
-
-		return results
-	})
+	}
 }
 
 
@@ -130,24 +170,6 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 }
 
 
-function observe(jobs: Job[]) {
-	return new ObserveSelectJobs(jobs)
-}
-
-class ObserveSelectJobs {
-	callerJob = sys.runningJob
-
-	constructor(jobs: Job[]) {
-		const len = jobs.length
-		for (let i = 0; i < len; i++) {
-			// link job to this
-		}
-	}
-
-	_onTgDone(job: Job) {
-		// resume caller
-	}
-}
 
 
 
@@ -182,105 +204,4 @@ export function promToJob<T>(p: Promise<T>) {
 	)
 
 	return job
-}
-
-
-
-
-
-/* **************************************************************** */
-
-
-export function cancel(...jobs: Job[]) {
-	const ctx = new CancelManager()
-	for (const job of jobs) {
-		// start cancelling the job and notifies result back to ctx
-		cancelJob(job, ctx)
-	}
-
-	return ctx as unknown as Iterable<ECancOK>
-}
-
-
-class CancelAll implements Ob, Tg {
-	// tri
-
-
-	// iterator method that behaves like .$
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/* **************************** CANCEL ALL ******************************** */
-
-/* job.cance() implementation:
-
-	const cancelJob = job.cancel()  // starts side effect of triggering child.cancel() (then onEnds)
-	yield* cancelJob  // subscribe to result (cancel)
-	cancel.cancel()  // noop (job is already in CANCELLING state)
-*/
-
-function cancelAll(jobs: Job[]) {
-	const res = Ch()
-	const onInnerJobCancel = Ch()
-	let waiting = jobs.length
-
-	for (const job of jobs) {
-		go(function* () {
-			const res = yield* job.cancel()
-			yield* onInnerJobCancel.put(res)
-			waiting--
-		})
-	}
-
-	return go(function* () {
-
-		let errors = []
-
-		while (waiting > 0) {
-			const res = yield* onInnerJobCancel.rec
-			waiting--
-			if (res instanceof Error) {
-				errors.push(res)
-			}
-		}
-
-		return errors.length > 0 ? errors : ECancOK
-	})
-
-}
-
-
-
-/* Todo Optimize timer */
-
-function timer(ms: number) {
-	const ch = Ch<TIMEOUT>()
-	const timeout = setTimeout(() => ch.enQ(TIMEOUT), ms)
-	return go(function* _timeout() {
-		onEnd(() => clearTimeout(timeout))
-		yield* ch.rec
-		return TIMEOUT
-	})
 }

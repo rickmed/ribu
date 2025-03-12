@@ -20,7 +20,7 @@ export default ts_eslint.config({
 	},
 	rules: {
 		semi: ["error", "never"],
-		indent: ["error", "tab"],
+		indent: ["error", "tab", { "flatTernaryExpressions": true }],
 		"no-trailing-spaces": "error",
 		"no-mixed-spaces-and-tabs": "error",
 		quotes: [

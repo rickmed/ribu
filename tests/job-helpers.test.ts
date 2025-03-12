@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { go, sleep } from "../source/index.ts"
-import { all, allOrFail, first, firstOK, promToJob } from "../source/job-helpers.ts"
+import { all, allOrErr, first, firstOK, promToJob } from "../source/job-helpers.ts"
 import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.ts"
 import { isE } from "../source/errors.ts"
 
@@ -24,7 +24,7 @@ describe("allDone()", () => {
 		}
 
 		function* main() {
-			res = yield* all(go(job1), go(job2)).$
+			res = yield* all(go(job1), go(job2))
 			yield* sleep(0)
 		}
 
@@ -35,31 +35,27 @@ describe("allDone()", () => {
 	})
 })
 
-describe("allOrFail()", () => {
+describe("allOrErr(): waits for jobs concurrently and return their results in an array", () => {
 
-	it("waits for jobs concurrently and return their results in an array", async () => {
-
-		let res: Array<string| number> = []
+	it("no jobs fail", async () => {
 
 		function* job1() {
-			yield* sleep(10)
-			return "job1"
+			yield sleep(2)
+			return "one"
 		}
 
 		function* job2() {
-			yield* sleep(10)
+			yield sleep(1)
 			return 2
 		}
 
 		function* main() {
-			res = yield* allOrFail(go(job1), go(job2)).$
-			yield* sleep(0)
+			const res = yield* allOrErr(go(job1), go(job2))
+			return res
 		}
 
-		go(main)
-		// sleepProm(15) ensures that job1 and job2 are ran concurrently
-		await sleepProm(15)
-		expect(res).toStrictEqual(["job1", 2])
+		const rec = await go(main)
+		expect(rec).toStrictEqual([2, "one"])
 	})
 
 	it("settles with correct error if a passed-in job fails (others are cancelled)", async () => {

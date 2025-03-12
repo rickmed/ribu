@@ -1,4 +1,4 @@
-import { type Job } from "./job.ts"
+import { JobBase, type Job } from "./job.ts"
 
 
 export const EMPTY = Symbol("EM")
@@ -9,6 +9,7 @@ class System {
 	#stack: Array<Job> = []  // todo: optimize to Linked List
 	runningJob!: Job
 	deadline = 5000
+	targetJob!: JobBase
 
 	// todo: optimize to Node based LL
 	pushJob(job: Job) {
@@ -17,7 +18,8 @@ class System {
 	}
 
 	popJob() {
-		return this.runningJob = this.#stack.pop()
+		this.#stack.pop()
+		return this.runningJob = this.#stack.at(-1)!
 	}
 }
 
@@ -58,10 +60,10 @@ tg: Target
  * _rmTg = removeTarget from ._tg
  */
 export type Ob = {
-	_onTgDone: (val: unknown, tg: Tg) => void
-	_tg: Link<Ob, Tg>
+	_tg: Maybe<Link<Ob, Tg>>
 	_addTg: (link: Link<Ob, Tg>) => void
 	_rmTg: (link: Link<Ob, Tg>) => void
+	_onTgDone: (val: unknown, tg: Tg) => void
 }
 
 /** Target
@@ -71,11 +73,13 @@ export type Ob = {
  * _rmOb = removeObserver from ._ob
  */
 export type Tg = {
-	_ob: Link<Ob, Tg>
+	_ob: Maybe<Link<Ob, Tg>>
 	_addOb: (link: Link<Ob, Tg>) => void
 	_rmOb: (link: Link<Ob, Tg>) => void
 	_st: number
 }
+
+export type Maybe<T> = T | null
 
 /** Link
  * Used as a LL Node for Observers <-> Targets and several other LLs (some are single LL)
@@ -93,31 +97,31 @@ export class Link<A = unknown, B = unknown> {
 		public a: A,
 		public b: B,
 	) {}
-	nA = EMPTY_LINK as Link<A, B>
-	pA = EMPTY_LINK as Link<A, B>
-	nB = EMPTY_LINK as Link<A, B>
-	pB = EMPTY_LINK as Link<A, B>
+	nA: Maybe<Link<A, B>> = null
+	pA: Maybe<Link<A, B>> = null
+	nB: Maybe<Link<A, B>> = null
+	pB: Maybe<Link<A, B>> = null
 }
+
+export type MaybeLink = Maybe<Link>
 
 /**
  * Pool of links to be reused.
  * Is a single LL.
  * We use Link's .nA to link to next available Link in pool.
  */
-let linkPoolHead: Link | undefined = undefined
-
-export const EMPTY_LINK = new Link(EMPTY, EMPTY) as Link<unknown, unknown>
+let linkPoolHead: Maybe<Link> = null
 
 export function disposeLink(link: Link) {
 
-	link.nA = linkPoolHead ?? EMPTY_LINK
+	link.nA = linkPoolHead
 	linkPoolHead = link
 
-	link.a = EMPTY
-	link.b = EMPTY
-	link.pA = EMPTY_LINK
-	link.nB = EMPTY_LINK
-	link.pB = EMPTY_LINK
+	link.a = null
+	link.b = null
+	link.pA = null
+	link.nB = null
+	link.pB = null
 }
 
 export function freshLink<A, B>(a: A, b: B) {
@@ -126,10 +130,8 @@ export function freshLink<A, B>(a: A, b: B) {
 	}
 
 	let link = linkPoolHead
-
-	const { nA } = link
-	linkPoolHead = nA === EMPTY_LINK ? undefined : nA
-	link.nA = link
+	linkPoolHead = link.nA
+	link.nA = null
 
 	link.a = a
 	link.b = b
