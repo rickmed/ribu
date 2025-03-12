@@ -1,4 +1,4 @@
-import { ECancOK, Err, type E as EType } from "../source/errors.ts"
+import { ECancOK, _Err, type userErrCtor as EType } from "../source/errors.ts"
 import { go, sleep, E} from "../source/index.ts"
 import { EmptyArgsErr, allOrErr } from "../source/job-helpers.ts"
 import { NotErrs } from "../source/job.ts"
@@ -17,7 +17,7 @@ function* jobFn(x?: number) {
 	return E("Error2")
 }
 
-type All = false | 1 | E<"Error1"> | E<"Error2"> | ECancOK | Err
+type All = false | 1 | E<"Error1"> | E<"Error2"> | ECancOK | _Err
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const tests = {
@@ -54,7 +54,7 @@ const tests = {
 		check_Eq<Exp>()(x3)
 	},
 	*["yield* allOrErr().err"]() {
-		type Exp = Array<NotErrs<All>> | EmptyArgsErr | Err
+		type Exp = Array<NotErrs<All>> | EmptyArgsErr | _Err
 		const x3 = yield* allOrErr(go(jobFn), go(jobFn)).err
 		check_Eq<Exp>()(x3)
 	},

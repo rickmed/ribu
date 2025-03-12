@@ -1,5 +1,5 @@
 import { DONE, DONE_ANY_ERR, Job, JobBase, RibuErrs, addErrorToJobVal, cancel, go, notifyObservers, removeLinkFromLL, subscribeToAllJobs, type NotErrs } from "./job.ts"
-import { E, ECancOK, ETimedOut, Err } from "./errors.ts"
+import { userErrCtor, ECancOK, ETimedOut, _Err } from "./errors.ts"
 import { EMPTY_LINK, Link, Ob, Tg, unlinkObAndTg } from "./shared.ts"
 
 
@@ -18,7 +18,7 @@ function unLinkFromAllTargets(ob: Ob) {
 	}
 }
 
-const EmptyArgsErr = E("EmptyArguments")
+const EmptyArgsErr = userErrCtor("EmptyArguments")
 export type EmptyArgsErr = typeof EmptyArgsErr
 
 /*
@@ -31,7 +31,7 @@ export function allOrErr<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 	return new AllOrErr<YieldRet>(jobs)
 }
 
-class AllOrErr<T> extends JobHelper<T[], T[] | EmptyArgsErr | Err> {
+class AllOrErr<T> extends JobHelper<T[], T[] | EmptyArgsErr | _Err> {
 	_nm = "allOrErr"
 	val: T[] = []
 
@@ -49,7 +49,7 @@ class AllOrErr<T> extends JobHelper<T[], T[] | EmptyArgsErr | Err> {
 		const { _tg, val } = this
 
 		if (tg._st & DONE_ANY_ERR) {
-			addErrorToJobVal(this, tgVal as Err)
+			addErrorToJobVal(this, tgVal as _Err)
 			unLinkFromAllTargets(this)
 			this._st |= DONE
 			notifyObservers(this, this.val)
@@ -89,7 +89,7 @@ class All<OkVals> extends JobBase<OkVals[]> {
 		const { _tg, val } = this
 
 		if (tg._st & DONE_ANY_ERR) {
-			addErrorToJobVal(this, tgVal as Err)
+			addErrorToJobVal(this, tgVal as _Err)
 			// unsubscribe from rest of jobs
 			for (let link = _tg; link !== EMPTY_LINK; link = link.nA) {
 				unlinkObAndTg(link)
@@ -120,7 +120,7 @@ export function first<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 	return go(function* _first() {
 
 		if (jobs.length === 0) {
-			return E("EmptyArguments", "first")
+			return userErrCtor("EmptyArguments", "first")
 		}
 
 		const ev = Ev()
@@ -147,7 +147,7 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 	return go(function* _firstOK() {
 
 		if (jobs.length === 0) {
-			return E("EmptyArguments", "firstOK")
+			return userErrCtor("EmptyArguments", "firstOK")
 		}
 
 		const ev = Ev()
@@ -165,7 +165,7 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 			return job.val as NotErrs<Jobs[number]["val"]>
 		}
 
-		return E("AllJobsFailed", "firstOK")
+		return userErrCtor("AllJobsFailed", "firstOK")
 	})
 }
 
@@ -200,7 +200,7 @@ export function promToJob<T>(p: Promise<T>) {
 
 	p.then(
 		ok => job.settle(ok),
-		e => job.settle(E("PromiseRejected", "fromProm", "", e))
+		e => job.settle(userErrCtor("PromiseRejected", "fromProm", "", e))
 	)
 
 	return job

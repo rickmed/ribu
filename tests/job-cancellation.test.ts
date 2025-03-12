@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest"
 import { go, onEnd, cancel } from "../source/job.ts"
 import { sleep } from "../source/timers.ts"
-import { assertRibuErr, checkErrSpec } from "./utils.ts"
+import { assertRibuErr } from "./utils.ts"
+import { _Err } from "../source/errors.ts"
 
 //todo: test "Cancelled by " message.
 
@@ -100,7 +101,8 @@ describe(".cancel()", () => {
 
 		const rec = await go(main).promfyCont
 		assertRibuErr(rec)
-		checkErrSpec(rec, exp)
+		expect(rec).toMatchObject(exp)
+		expect(rec.cause).toBeInstanceOf(_Err)
 	})
 })
 
@@ -192,7 +194,8 @@ describe("cancel(jobs)", () => {
 
 		expect(childsReturned).toBe(0)
 		assertRibuErr(rec)
-		checkErrSpec(rec, exp)
+		expect(rec).toMatchObject(exp)
+		expect(rec.cause).toBeInstanceOf(_Err)
 	})
 })
 

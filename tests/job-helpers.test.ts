@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest"
 import { go, sleep } from "../source/index.ts"
 import { all, allOrErr, first, firstOK, promToJob } from "../source/job-helpers.ts"
-import { assertRibuErr, checkErrSpec, sleepProm } from "./utils.ts"
-import { isE } from "../source/errors.ts"
+import { assertRibuErr, sleepProm } from "./utils.ts"
+import { isErr } from "../source/errors.ts"
 
 
 //* ********** Job Combinators  ********** *//
@@ -92,7 +92,7 @@ describe("allOrErr(): waits for jobs concurrently and return their results in an
 		function* main() {
 			const res = yield* allOrFail(go(job1), go(job2)).err
 			yield* sleep(1)
-			if (isE(res)) {
+			if (isErr(res)) {
 				return res.E("ProgramFailed")
 			}
 			return res
@@ -101,7 +101,8 @@ describe("allOrErr(): waits for jobs concurrently and return their results in an
 		const rec = await go(main).promfyCont
 
 		assertRibuErr(rec)
-		checkErrSpec(rec, exp)
+		expect(rec).toMatchObject(exp)
+		expect(rec.cause).toBeInstanceOf(Err)
 		expect(job1WasCancelled).toBe(true)
 	})
 })
@@ -201,7 +202,8 @@ describe("firstOK()", () => {
 			}
 		}
 		assertRibuErr(rec)
-		checkErrSpec(rec, exp)
+		expect(rec).toMatchObject(exp)
+		expect(rec.cause).toBeInstanceOf(Err)
 
 	})
 })
@@ -243,6 +245,7 @@ describe("yield* fromProm()", () => {
 			}
 		}
 		assertRibuErr(rec)
-		checkErrSpec(rec, exp)
+		expect(rec).toMatchObject(exp)
+		expect(rec.cause).toBeInstanceOf(Err)
 	})
 })

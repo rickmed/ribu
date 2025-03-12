@@ -1,5 +1,5 @@
 import { sys, type Link, EMPTY, disposeLink, freshLink, Tg, Ob, Iter, iterRes, linkObAndTg, unlinkObAndTg, Maybe } from "./shared.ts"
-import { Err, ECancOK, ThrownValIsNotError } from "./errors.ts"
+import { _Err, Err, ECancOK, ThrownValIsNotError } from "./errors.ts"
 
 // todo: remove Job stack from sys, put it here and use LL
 // todo: clean-up documentation
@@ -167,7 +167,7 @@ export class Job<YieldRet = unknown, ErrRet = unknown> extends JobBase<YieldRet,
 
 		if (_st & PARKED_JOB) {
 			if (tgSt & DONE_ANY_ERR) {
-				this.val = new Err(val, this._nm) as YieldRet
+				this.val = _Err(val, this._nm) as YieldRet
 				endProtocol(this, true)
 				return
 			}
@@ -346,8 +346,11 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 		if (done) {
 			if (value instanceof Err) {
 				thisJob._st |= DONE_ERR
+				thisJob.val = _Err(value, thisJob._nm)
 			}
-			thisJob.val = value
+			else {
+				thisJob.val = value
+			}
 			endProtocol(thisJob)
 			return
 		}
@@ -357,7 +360,7 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 	}
 	catch (e) {
 		thisJob._st |= DONE_ERR
-		thisJob.val = new Err(e, thisJob._nm)
+		thisJob.val = _Err(e, thisJob._nm)
 		endProtocol(thisJob, true)
 	}
 	finally {
@@ -390,7 +393,7 @@ export function addErrorToJobVal(jobish: JobBase, err: Error) {
 		(jobish.val as Err).addError(err)
 	}
 	else {
-		jobish.val = new Err(err, jobish._nm)
+		jobish.val = _Err(err, jobish._nm)
 		jobish._st |= DONE_ERR
 	}
 }
@@ -496,13 +499,11 @@ function removeLinkFromParent(link: Link<Job, Job>) {
 }
 
 export function notifyObservers(tgJob: JobBase, tgVal: unknown) {
-	let link = tgJob._ob
-	while (link) {
-		const ob = link.a
-		const nextLink = link.nA
-		ob._onTgDone(tgVal, tgJob)
+	while (tgJob._ob) {
+		const link = tgJob._ob
+		link.a._onTgDone(tgVal, tgJob)
+		tgJob._ob = link.nA
 		unlinkObAndTg(link)
-		link = nextLink
 	}
 }
 
@@ -516,7 +517,7 @@ export const jobIterator = {
 				(callerJobSt & PARKED_JOB) && (thisJobSt & DONE_ANY_ERR) ||
 				(callerJobSt & PARKED_JOB_CANCEL) && (thisJobSt & DONE_ERR)
 			) {
-				callerJob.val = new Err(val, callerJob._nm)
+				callerJob.val = _Err(val, callerJob._nm)
 				callerJob._st |= DONE_ERR
 				endProtocol(callerJob, true)
 				iterRes.done = false

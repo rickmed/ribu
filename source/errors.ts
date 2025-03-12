@@ -1,72 +1,28 @@
-/*
-fn: the name of the job's generator function or the name of the function if
-	the user wants to return E objects in sync functions.
-- If something threw and it's not ::Error, then it's wapped in ::RibuE.
+/**
+ * Ribu Err Class
+ *
+ * Is instanceof Error but does not call super() because constructing an Error
+ * is slow.
+ *
+ * @param fn The name of the job's generator function or the name of the function if
+ *           the user wants to return Err objects in sync functions.
+ */
+export class Err<Name extends string = string> implements Error {
 
-- User can extend RibuE object with additional properties, eg, like Nodejs:
-	{
-		errno: -2,
-		code: 'ENOENT',
-		syscall: 'open',
-		path: './dummy.txt',
-	}
-*/
+	readonly name: Name
+	readonly message: string
+	readonly fn: string
+	readonly cause?: unknown
+	errors?: Error[]
 
-// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
-type CauseErr = RibuE | Error | unknown
-
-export const ERR_TAG = "{err!}"
-
-export class RibuE<Name extends string = string> implements Error {
-
-	[ERR_TAG] = 1 as const
-	declare errors?: Error[]
-	declare cause?: CauseErr
-
-	constructor(
-		readonly name: Name,
-		readonly message: string,
-		readonly fn: string,
-		cause?: CauseErr,
-		errors?: Error[],
-	) {
-		if (cause) {
-			this.cause = cause
-		}
-		if (errors) {
-			this.errors = errors
-		}
+	constructor(name: Name, message: string, fn: string, cause?: unknown, errors?: Error[]) {
+		this.name = name
+		this.message = message
+		this.fn = fn
+		this.cause = cause
+		this.errors = errors
 	}
 
-	get stack(): string {
-		return ""  // todo
-	}
-
-	E<Name extends string>(name: Name, fn = "", msg = "") {
-		return E(name, fn, msg, this)
-	}
-}
-
-// make "instanceof Error" work
-Object.setPrototypeOf(RibuE.prototype, Error.prototype)
-
-// todo: Error & RibuE<Name> ??
-export type E<Name extends string = string> = Error & RibuE<Name>
-
-export function E<Name extends string>(name: Name, fn = "", msg = "", cause?: unknown): E<Name> {
-	return new RibuE<Name>(name, msg, fn, cause)
-}
-
-export class ECancOK extends RibuE<"CancOK"> {
-	constructor(fnName: string) {
-		super("CancOK", "", fnName)
-	}
-}
-
-export class Err extends RibuE<"Err"> {
-	constructor(cause?: CauseErr, jobName = "", errors?: Error[], msg = "") {
-		super("Err", msg, jobName, cause, errors)
-	}
 	addError(err: Error) {
 		if (!this.errors) {
 			this.errors = []
@@ -74,32 +30,57 @@ export class Err extends RibuE<"Err"> {
 		this.errors.push(err)
 		return this
 	}
+
+	get stack(): string {
+		return ""  // todo
+	}
+
+	Err<Name extends string>(name: Name, fn = "", msg = "") {
+		return userErrCtor(name, fn, msg, this)
+	}
 }
 
-export class ThrownValIsNotError extends RibuE<"ThrownValIsNotError"> {
+// make (errInstance instanceof Error) === true
+Object.setPrototypeOf(Err.prototype, Error.prototype)
+
+export function _Err(cause: unknown, fn: string) {
+	return new Err("Err", "", fn, cause)
+}
+
+export class ECancOK extends Err<"CancOK"> {
+	constructor(fnName: string) {
+		super("CancOK", "", fnName)
+	}
+}
+
+export class ThrownValIsNotError extends Err<"ThrownValIsNotError"> {
 	constructor(cause: unknown) {
 		super("ThrownValIsNotError", "", "", cause)
 	}
 }
 
-export class ETimedOut extends RibuE<"TimedOut"> {
+export class ETimedOut extends Err<"TimedOut"> {
 	constructor(fn: string) {
 		super("TimedOut", "", fn)
 	}
 }
 
-export function isE(x: unknown): x is RibuE {
-	return x !== null && typeof x === "object" && ERR_TAG in x
+
+
+export function userErrCtor<Name extends string>(name: Name, fn = "", msg = "", cause?: unknown): Err<Name> {
+	return new Err<Name>(name, msg, fn, cause)
 }
 
-export const isRibuE = isE
+export function isErr(x: unknown): x is Err<string> {
+	return x instanceof Err
+}
 
-type EE = RibuE<string>
+type EE = Err<string>
 
-export function errIsNot<X, T extends Extract<X, EE>["name"]>(x: X, name: T): x is Extract<X, EE> & Exclude<X, RibuE<T>> {
+export function errIsNot<X, T extends Extract<X, EE>["name"]>(x: X, name: T): x is Extract<X, EE> & Exclude<X, Err<T>> {
 	return x instanceof Error && x.name !== name
 }
 
-export function errIs<X, T extends Extract<X, EE>["name"]>(x: X, name: T): x is Extract<X, RibuE<T>> {
+export function errIs<X, T extends Extract<X, EE>["name"]>(x: X, name: T): x is Extract<X, Err<T>> {
 	return x instanceof Error && x.name === name
 }

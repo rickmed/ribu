@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { go, sleep } from "../source/index.ts"
-import { assertRibuErr, checkErrSpec } from "./utils.ts"
+import { assertRibuErr } from "./utils.ts"
+import { _Err } from "../source/errors.ts"
 
 describe("job auto-waits for children to finish", () => {
 
@@ -58,6 +59,7 @@ describe("job auto-waits for children to finish", () => {
 
 		expect(child2Finished).toBe(false)
 		assertRibuErr(rec)
-		checkErrSpec(rec, exp)
+		expect(rec).toMatchObject(exp)
+		expect(rec.cause).toBeInstanceOf(_Err)
 	})
 })

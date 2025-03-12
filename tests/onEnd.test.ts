@@ -1,6 +1,6 @@
 import { describe, it } from "vitest"
 import { go, sleep, onEnd } from "../source/index.ts"
-import { assertRibuErr, checkErrSpec } from "./utils.ts"
+import { assertRibuErr, expect } from "./utils.ts"
 
 describe("non-cancellation scenarios", () => {
 
@@ -36,6 +36,7 @@ describe("non-cancellation scenarios", () => {
 		const rec = await go(main).promfyCont
 
 		assertRibuErr(rec)
-		checkErrSpec(rec, exp)
+		expect(rec).toMatchObject(exp)
+		expect(rec.cause).toBeInstanceOf(Err)
 	})
 })
