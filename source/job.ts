@@ -113,8 +113,10 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 	}
 
 	[Symbol.iterator]() {
-		prepareCallerJobToFailIfIFail()
-		sys.targetJob = this
+		let callerJob = sys.runningJob
+		callerJob._st &= ~PARKED
+		callerJob._st |= PARKED_JOB
+		sys.target = this
 		return jobIterator as Iter<OkRet>
 	}
 
@@ -122,17 +124,10 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 		const callerJob = sys.runningJob
 		callerJob._st &= ~PARKED
 		callerJob._st |= PARKED_CONTINUE
-		sys.targetJob = this
+		sys.target = this
 		return jobIterable as Iterable<GetterErr>
 	}
 }
-
-export function prepareCallerJobToFailIfIFail() {
-	let callerJob = sys.runningJob
-	callerJob._st &= ~PARKED
-	callerJob._st |= PARKED_JOB
-}
-
 
 
 //* ************************  Job Class  *********************************** *//
@@ -180,7 +175,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 
 		if (_st & PARKED_JOB) {
 			if (tgSt & DONE_ERR_OR_CANCOK) {
-				this.val = _Err(val, this._nm) as OkRet
+				this.val = _Err(val, this._nm) as GetterErr
 				endProtocol(this, true)
 				return
 			}
@@ -242,7 +237,7 @@ function execCancel(thisJob: Job, callerJobSt: number) {
 	callerJob._st &= ~PARKED
 	callerJob._st |= callerJobSt
 	cancelJob(thisJob)
-	sys.targetJob = thisJob
+	sys.target = thisJob
 }
 
 function linkParentChild(parent: Job, child: Job) {
@@ -295,19 +290,6 @@ function cancelJob(thisJob: Job) {
 		disposeLink(targetLink)
 		thisJob._st &= ~PARKED
 		thisJob._tg = null
-	}
-	else if (_st & WAITING_CHILDREN) {
-		// At WAITING_CHILDREN state, children are in ._tg, not in ._chd, and
-		// thisJob in their ._ob, not in their ._prnt.
-		// So we just iterate over them and trigger their cancellation and they'll
-		// notify thisJob when their cancellation is done.
-		for (let childLink = thisJob._tg; childLink; childLink = childLink.nA) {
-			cancelJob(childLink.b as Job)
-		}
-		return
-	}
-	else if (_st & WAITING_ONENDS) {
-		return
 	}
 
 	endProtocol(thisJob, true)
@@ -557,7 +539,7 @@ const jobIterable = {
 
 function processYield(simpleYield = false) {
 	let callerJob = sys.runningJob
-	const { _st: tgJobSt, val: tgVal } = sys.targetJob
+	const { _st: tgJobSt, val: tgVal } = sys.target
 	if (tgJobSt & DONE) {
 		const callerJobSt = callerJob._st
 		if (
@@ -580,7 +562,7 @@ function processYield(simpleYield = false) {
 		}
 	}
 	else {
-		linkObAndTg(callerJob, sys.targetJob)
+		linkObAndTg(callerJob, sys.target)
 		iterRes.done = false
 	}
 }
@@ -590,8 +572,12 @@ function processYield(simpleYield = false) {
 //* **********************  cancel(...jobs) ******************************** *//
 
 export function cancel(...jobs: Job[]) {
-	prepareCallerJobToFailIfIFail()
-	subscribeToAllJobs(jobs, new CancelAll(), true)
+	let callerJob = sys.runningJob
+	callerJob._st &= ~PARKED
+	callerJob._st |= PARKED_JOB_CANCEL
+	const observer = new CancelAll()
+	subscribeToAllJobs(jobs, observer, true)
+	return YIELD
 }
 
 class CancelAll extends JobBase {
@@ -603,7 +589,7 @@ class CancelAll extends JobBase {
 		if (tg._st & DONE_ERR) {
 			addErrorToJobVal(this, tgVal as Err)
 		}
-		if (_tg) {
+		if (!_tg) {
 			this._st |= DONE
 			notifyObservers(this, val)
 		}
@@ -613,10 +599,13 @@ class CancelAll extends JobBase {
 export function subscribeToAllJobs(jobs: Job[], observer: Ob, cancel = false) {
 	for (let i = 0; i < jobs.length; i++) {
 		const job = jobs[i] as Job
+		if (job._st & DONE) {
+			return
+		}
+		linkObAndTg(observer, job)
 		if (cancel) {
 			cancelJob(job)
 		}
-		linkObAndTg(observer, job)
 	}
 }
 

@@ -9,7 +9,7 @@ class System {
 	#stack: Array<Job> = []  // todo: optimize to Linked List
 	runningJob!: Job
 	deadline = 5000
-	targetJob!: JobBase
+	target!: Tg
 
 	// todo: optimize to Node based LL
 	pushJob(job: Job) {
