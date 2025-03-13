@@ -1,4 +1,15 @@
-import { _Err } from "../source/errors.ts"
+import { expect } from "vitest"
+import { Err, _Err } from "../source/errors.ts"
+
+export function checkErr(rec: unknown, exp: unknown) {
+	assertRibuErr(rec)
+	expect(rec).toEqual(exp)
+	expect(rec).toBeInstanceOf(Err)
+}
+
+export function assertRibuErr(x: unknown): asserts x is Err {
+	expect(x).toBeInstanceOf(Err)
+}
 
 export async function checkAsyncFnThrows(fn: () => Promise<unknown>) {
 	try {

@@ -5,7 +5,7 @@ import { sleepProm } from "./utils.ts"
 
 describe("sleep()", () => {
 
-	it("job can sleep() without blocking", async () => {
+	it("job can sleep() for a specified duration without blocking the main thread", async () => {
 
 		let jobDone = false
 

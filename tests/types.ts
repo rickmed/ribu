@@ -1,7 +1,6 @@
-import { ECancOK, _Err, type userErrCtor as EType } from "../source/errors.ts"
-import { go, sleep, E} from "../source/index.ts"
+import { CancOK, Err } from "../source/errors.ts"
+import { go, sleep, Err as newErr} from "../source/index.ts"
 import { EmptyArgsErr, allOrErr } from "../source/job-helpers.ts"
-import { NotErrs } from "../source/job.ts"
 
 function* jobFn(x?: number) {
 	yield sleep(1)
@@ -12,12 +11,13 @@ function* jobFn(x?: number) {
 		return 1
 	}
 	if (x < 10) {
-		return E("Error1")
+		return newErr("Error1")
 	}
-	return E("Error2")
+	return newErr("Error2")
 }
 
-type All = false | 1 | E<"Error1"> | E<"Error2"> | ECancOK | _Err
+type NotErrs = false | 1
+type All = NotErrs | Err<"Error1"> | Err<"Error2"> | Err | CancOK
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const tests = {
@@ -40,21 +40,21 @@ const tests = {
 	},
 
 	*["yield* job.cancel()"]() {
-		type Exp = ECancOK
+		type Exp = CancOK
 		const x3 = yield* go(jobFn).cancel()
 		check_Eq<Exp>()(x3)
 	},
 
 
-	/* ********** Job Helpers Tests ********** */
+	/* *************** Job Helpers Tests ************************************* */
 
 	*["yield* allOrErr()"]() {
-		type Exp = Array<NotErrs<All>>
+		type Exp = NotErrs[]
 		const x3 = yield* allOrErr(go(jobFn), go(jobFn))
 		check_Eq<Exp>()(x3)
 	},
 	*["yield* allOrErr().err"]() {
-		type Exp = Array<NotErrs<All>> | EmptyArgsErr | _Err
+		type Exp = NotErrs[] | EmptyArgsErr | Err
 		const x3 = yield* allOrErr(go(jobFn), go(jobFn)).err
 		check_Eq<Exp>()(x3)
 	},

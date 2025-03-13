@@ -1,5 +1,5 @@
-import { DONE, DONE_ANY_ERR, Job, JobBase, RibuErrs, addErrorToJobVal, cancel, go, notifyObservers, removeLinkFromLL, subscribeToAllJobs, type NotErrs } from "./job.ts"
-import { userErrCtor, ECancOK, ETimedOut, _Err } from "./errors.ts"
+import { DONE, DONE_ERR_OR_CANCOK, Job, JobBase, RibuErrs, addErrorToJobVal, cancel, go, notifyObservers, removeLinkFromLL, subscribeToAllJobs, type NotErrs } from "./job.ts"
+import { userErrCtor, CANC_OK, ETimedOut, _Err } from "./errors.ts"
 import { EMPTY_LINK, Link, Ob, Tg, unlinkObAndTg } from "./shared.ts"
 
 
@@ -48,7 +48,7 @@ class AllOrErr<T> extends JobHelper<T[], T[] | EmptyArgsErr | _Err> {
 	_onTgDone(tgVal: unknown, tg: Tg) {
 		const { _tg, val } = this
 
-		if (tg._st & DONE_ANY_ERR) {
+		if (tg._st & DONE_ERR_OR_CANCOK) {
 			addErrorToJobVal(this, tgVal as _Err)
 			unLinkFromAllTargets(this)
 			this._st |= DONE
@@ -88,7 +88,7 @@ class All<OkVals> extends JobBase<OkVals[]> {
 	_onTgDone(tgVal: unknown, tg: Tg) {
 		const { _tg, val } = this
 
-		if (tg._st & DONE_ANY_ERR) {
+		if (tg._st & DONE_ERR_OR_CANCOK) {
 			addErrorToJobVal(this, tgVal as _Err)
 			// unsubscribe from rest of jobs
 			for (let link = _tg; link !== EMPTY_LINK; link = link.nA) {

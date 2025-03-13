@@ -7,7 +7,7 @@
  * @param fn The name of the job's generator function or the name of the function if
  *           the user wants to return Err objects in sync functions.
  */
-export class Err<Name extends string = string> implements Error {
+export class Err<Name extends string = "Err"> implements Error {
 
 	readonly name: Name
 	readonly message: string
@@ -43,15 +43,12 @@ export class Err<Name extends string = string> implements Error {
 // make (errInstance instanceof Error) === true
 Object.setPrototypeOf(Err.prototype, Error.prototype)
 
-export function _Err(cause: unknown, fn: string) {
-	return new Err("Err", "", fn, cause)
+export function _Err(cause: unknown, fn: string, msg = "") {
+	return new Err("Err", msg, fn, cause)
 }
 
-export class ECancOK extends Err<"CancOK"> {
-	constructor(fnName: string) {
-		super("CancOK", "", fnName)
-	}
-}
+export class CancOK {}
+export const CANC_OK = new CancOK()
 
 export class ThrownValIsNotError extends Err<"ThrownValIsNotError"> {
 	constructor(cause: unknown) {

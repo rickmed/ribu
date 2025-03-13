@@ -1,5 +1,5 @@
 import { resumeJob, PARKED_SLEEP, YIELD } from "./job.ts"
-import { Link, sys, Ob, Tg, iterRes } from "./shared.ts"
+import { Link, sys, Ob, Tg } from "./shared.ts"
 
 export function sleep(ms: number) {
 	let callerJob = sys.runningJob
@@ -9,7 +9,5 @@ export function sleep(ms: number) {
 		callerJob._tg = null
 		resumeJob(callerJob)
 	}, ms) as unknown as Link<Ob, Tg>
-	iterRes.done = false
-	iterRes.value = YIELD
 	return YIELD
 }

@@ -4,35 +4,30 @@ import { go, sleep } from "../source/index.ts"
 
 describe(`Jobs block and resume each other with their return values`, () => {
 
-	it("yield*", async () => {
+	function* child(doneVal?: string) {
+		yield sleep(1)
+		return doneVal
+	}
 
-		function* child() {
-			yield sleep(1)
-			return "child one"
+	const doneVal = "done"
+
+	it("yield* job", async () => {
+
+		function* main(doneVal?: string) {
+			return yield* go(child, doneVal)
 		}
 
-		function* main() {
-			const res = yield* go(child)
-			return res
-		}
-
-		const rec = await go(main).pErr
-		expect(rec).toBe("child one")
+		const rec = await go(main, doneVal)
+		expect(rec).toBe(doneVal)
 	})
 
 	it("yield* job.err", async () => {
 
-		function* child() {
-			yield sleep(1)
-			return "child done"
+		function* main(doneVal?: string) {
+			return yield* go(child, doneVal).err
 		}
 
-		function* main() {
-			const res = yield* go(child).err
-			return res
-		}
-
-		const rec = await go(main).pErr
-		expect(rec).toBe("child done")
+		const rec = await go(main, doneVal)
+		expect(rec).toBe(doneVal)
 	})
 })
