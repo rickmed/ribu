@@ -19,19 +19,13 @@ LL: Linked List
 
 */
 
-
 export const EMPTY = Symbol("EM")
-
-export type Yieldable = {
-	execYield: (callerJob: Job, iterRes: IterRes) => void
-	nm: string
-}
 
 class System {
 	#stack: Array<Job> = []  // todo: optimize to Linked List
 	runningJob!: Job
 	deadline = 5000
-	target: Maybe<Tg> = null  // Used for job coordination
+	yieldable: Maybe<Yieldable> = null
 
 	pushJob(job: Job) {
 		this.runningJob = job
@@ -44,9 +38,12 @@ class System {
 	}
 }
 
-let _yieldable: Maybe<Yieldable> = null
+export type Yieldable = {
+	execYield: (callerJob: Job, iterRes: IterRes) => void
+	nm: string
+}
 
-export const sys = new System()
+export let sys = new System()
 
 export type IterRes = IteratorResult<unknown>
 export let iterRes = {
@@ -62,7 +59,11 @@ export const iterator = {
 }
 
 export function theiterable<YieldRet>(yieldable: Yieldable) {
-	_yieldable = yieldable
+	// todo: (also would need to do it in objects that have Symbol.iterator directly)
+	// if (sys.yieldable) {
+	// 	// throw new Error(`Forgot to call yield* at ${sys.runningJob._nm}`)
+	// }
+	sys.yieldable = yieldable
 	return iterable as Iterable<YieldRet>
 }
 
@@ -71,11 +72,8 @@ export type Iterable<V> = {
 }
 export const iterable = {
 	[Symbol.iterator]() {
-		if (!_yieldable) {
-			throw new Error(`Forgot to call yield* or called on an invalid object, at ${sys.runningJob._nm}`)
-		}
-		_yieldable.execYield(sys.runningJob, iterRes)
-		_yieldable = null
+		sys.yieldable!.execYield(sys.runningJob, iterRes)
+		sys.yieldable = null
 		return iterator
 	}
 }

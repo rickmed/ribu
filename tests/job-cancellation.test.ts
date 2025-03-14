@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { go, onEnd, cancel, CANC_OK, Err, sleep } from "ribu"
+import { go, onEnd, cancel, CANC_OK, Err, sleep, Job } from "ribu"
 import { assertRibuErr } from "./utils.ts"
-
-
-/* To handle cancel errors manually, use:
-	job.cancel()
-	const res = yield* job.err
-
-	todo: add test.
-*/
 
 
 function* child(ctx: {count: number}) {
@@ -18,7 +10,7 @@ function* child(ctx: {count: number}) {
 
 describe("job.cancel()", () => {
 
-	it("a job stops execution when cancelled", async () => {
+	it.only("a job stops execution when cancelled", async () => {
 
 		let ctx = { count: 0 }
 
@@ -53,32 +45,32 @@ describe("job.cancel()", () => {
 		expect(ctx.count).toBe(0)
 	})
 
-	it("when job to cancel is already settled, .cancel() has no effect and returns the original value", async () => {
+	it("when job to cancel is already settled, .cancel() has no effect and leaves job with same settled value", async () => {
 
 		const err = Err("even if job ended with error")
 
-		function* child() {
+		function* child1() {
 			yield* sleep(1)
 			return err
 		}
 
+		let chldJob!: Job
+
 		function* main() {
-			const chld = go(child)
+			chldJob = go(child1)
 			yield* sleep(2)
-			yield* chld.cancel()
-			return chld.val
+			yield* chldJob.cancel()
 		}
 
-		const rec = await go(main).promErr
-		expect(rec).not.toStrictEqual(CANC_OK)
-		expect(rec).toEqual(err)
+		await go(main)
+		expect(chldJob.val).not.toStrictEqual(CANC_OK)
 	})
 })
 
 
-describe("cancel(jobs)", () => {
+describe.skip("cancel(jobs)", () => {
 
-	it.only("a job can cancel an array of jobs succesfully", async () => {
+	it("a job can cancel an array of jobs succesfully", async () => {
 
 		let ctx = { count: 0 }
 

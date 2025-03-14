@@ -11,7 +11,7 @@ describe(`Jobs block and resume each other with their return values`, () => {
 
 	const doneVal = "done"
 
-	it.only("yield* job", async () => {
+	it("yield* job", async () => {
 
 		function* main(doneVal?: string) {
 			return yield* go(child, doneVal)

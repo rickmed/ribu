@@ -1,8 +1,13 @@
-import { sys, type Link, EMPTY, disposeLink, freshLink, Tg, Ob, Itrtor, iterRes, linkObAndTg, unlinkObAndTg, Maybe, Yieldable, theiterable, IterRes, iterable, iterator } from "./system.ts"
+import { sys, type Link, EMPTY, disposeLink, freshLink, Tg, Ob, Itrtor, iterRes, linkObAndTg, unlinkObAndTg, Maybe, Yieldable, theiterable, iterator, IterRes } from "./system.ts"
 import { _Err, Err as ErrClass, CANC_OK, ThrownValIsNotError, CancOK } from "./errors.ts"
 import { cancelSleep } from "./timers.ts"
 
 type Err = ErrClass
+
+// Temp variables
+let _thisJob!: Job
+let _callerJobNextSt = 0 as Job["_st"]
+let _thisJobSetToCancel = false
 
 
 // todo: remove Job stack from sys, put it here and use LL
@@ -10,12 +15,9 @@ type Err = ErrClass
 
 //* **********************  Base Job Class  ******************************** *//
 
-let _thisJob!: JobBase
-
-export const YIELD = 5678
 
 // State Flags
-const RUNNING = 1 << 0
+const INIT = 1 << 0
 const PARKED_CONTINUE = 1 << 1
 const PARKED_JOB = 1 << 2
 const PARKED_JOB_CANCEL = 1 << 3
@@ -24,10 +26,8 @@ const PARKED_CH_PUT = 1 << 5
 const WAITING_CHILDREN = 1 << 6
 const WAITING_ONENDS = 1 << 7
 const CANCELLING = 1 << 8
-// Even if DONE is set, can have other flags indicating, eg, it settled with an error
 export const DONE = 1 << 9
 const DONE_CANCOK = 1 << 10
-// DONE_ERR is set if job settled with ::Err other than ECancOK
 const DONE_ERR = 1 << 11
 
 const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_CH_PUT
@@ -53,7 +53,7 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 	abstract _nm: string
 	abstract _onTgDone(val: unknown, tg: Tg): void
 
-	_st = RUNNING
+	_st = INIT
 	_tg: Maybe<Link<Ob, Tg>> = null
 	_ob: Maybe<Link<Ob, Tg>> = null
 	val = EMPTY as GetterErr
@@ -117,109 +117,64 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 	}
 
 	[Symbol.iterator]() {
-		let callerJob = sys.runningJob
-		callerJob._st &= ~PARKED
-		callerJob._st |= PARKED_JOB
-		_execYield(callerJob, this)
+		setYieldTempVars(this as unknown as Job, PARKED_JOB)
+		yieldable.execYield(sys.runningJob, iterRes)
 		return iterator as Itrtor<OkRet>
 	}
 
 	get err() {
-		_thisJob = this
-		return theiterable<GetterErr>(getErrYieldable)
+		setYieldTempVars(this as unknown as Job, PARKED_CONTINUE)
+		return theiterable<GetterErr>(yieldable)
 	}
 }
 
-const getErrYieldable: Yieldable = {
-	nm: "get err",
-	execYield(callerJob: Job, _iterRes: IterRes) {
-		callerJob._st &= ~PARKED
-		callerJob._st |= PARKED_CONTINUE
-		_execYield(callerJob, _thisJob)
-	}
+function setYieldTempVars(thisJob: Job, callerJobNextSt: Job["_st"], willCancel = false) {
+	_thisJob = thisJob
+	_callerJobNextSt = callerJobNextSt
+	_thisJobSetToCancel = willCancel
 }
 
-function _execYield(callerJob: Job, thisJob: JobBase) {
-	const { _st: thisJobSt, val: thisJobVal } = thisJob
-	if (thisJobSt & DONE) {
-		const callerJobSt = callerJob._st
-		if (
-			(callerJobSt & PARKED_JOB) && (thisJobSt & DONE_ERR_OR_CANCOK) ||
-			(callerJobSt & PARKED_JOB_CANCEL) && (thisJobSt & DONE_ERR)
-		) {
-			callerJob.val = _Err(thisJobVal, callerJob._nm)
-			callerJob._st |= DONE_ERR
-			endProtocol(callerJob, true)
-			iterRes.done = false
-		}
-		else {
+const yieldable: Yieldable = {
+	nm: "job",
+	execYield(callerJob: Job, iterRes: IterRes) {
+		callerJob._st |= _callerJobNextSt
+
+		if (_thisJob._st & DONE) {
+
+			if (_thisJobSetToCancel) {
+				iterRes.done = true
+				iterRes.value = _thisJob.val
+				return
+			}
+
+			const { _st: callerJobSt} = callerJob
+			const { _st, val } = _thisJob
+			if (
+				(callerJobSt & PARKED_JOB) && (_st & DONE_ERR_OR_CANCOK) ||
+				(callerJobSt & PARKED_JOB_CANCEL) && (_st & DONE_ERR)
+			) {
+				callerJob.val = _Err(val, callerJob._nm)
+				callerJob._st |= DONE_ERR
+				endProtocol(callerJob, true)
+				return
+			}
+
 			iterRes.done = true
-			iterRes.value = thisJobVal
+			iterRes.value = _thisJob.val
+			return
 		}
-	}
-	else {
+
 		linkObAndTg(callerJob, _thisJob)
+
+		if (_thisJobSetToCancel) {
+			// problem: cancelJob() will resume callerJob (gen.next()) when already in .next()
+			cancelJob(_thisJob)
+			_thisJobSetToCancel = false
+		}
+
 		iterRes.done = false
 	}
 }
-
-/* => PROBLEM:
-
-ch.rec
-yield* ch2.rec
-
-if I set up caller to be a reciever, putter will try to resume it with some
-value -> Problem, since its waiting for another
-
-So ops should be placed in sys and then resumeJob on .next() return
-dispatches depending on the op, and then the op is executed and caller
-put in receiver and blocked or whatever.
-
-
-
-*/
-
-
-//* **********************  cancel(...jobs) ******************************** *//
-
-export function cancel(...jobs: Job[]) {
-	let callerJob = sys.runningJob
-	callerJob._st &= ~PARKED
-	callerJob._st |= PARKED_JOB_CANCEL
-	const observer = new CancelAll()
-	subscribeToAllJobs(jobs, observer, true)
-	return YIELD
-}
-
-class CancelAll extends JobBase {
-
-	_nm = "cancel"
-
-	_onTgDone(tgVal: unknown, tg: Tg) {
-		const { val, _tg } = this
-		if (tg._st & DONE_ERR) {
-			addErrorToJobVal(this, tgVal as Err)
-		}
-		if (!_tg) {
-			this._st |= DONE
-			notifyObservers(this, val)
-		}
-	}
-}
-
-export function subscribeToAllJobs(jobs: Job[], observer: Ob, cancel = false) {
-	for (let i = 0; i < jobs.length; i++) {
-		const job = jobs[i] as Job
-		if (job._st & DONE) {
-			return
-		}
-		linkObAndTg(observer, job)
-		if (cancel) {
-			cancelJob(job)
-		}
-	}
-}
-
 
 
 //* ************************  Job Class  *********************************** *//
@@ -272,6 +227,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 		if (_st & PARKED_JOB) {
 			if (tgSt & DONE_ERR_OR_CANCOK) {
 				this.val = _Err(val, this._nm) as GetterErr
+				this._st |= DONE_ERR
 				endProtocol(this, true)
 				return
 			}
@@ -298,13 +254,13 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 	}
 
 	cancel() {
-		execCancel(this, PARKED_JOB_CANCEL)
-		return YIELD
+		setYieldTempVars(this as unknown as Job, PARKED_JOB_CANCEL, true)
+		return theiterable<never>(yieldable)
 	}
 
 	cancelErr() {
-		execCancel(this, PARKED_CONTINUE)
-		return iterable as Iterable<CancOK | Err>
+		setYieldTempVars(this as unknown as Job, PARKED_CONTINUE, true)
+		return theiterable<CancOK | Err>(yieldable)
 	}
 
 	onEnd(onEndFn: OnEnd) {
@@ -328,64 +284,50 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 	}
 }
 
-function execCancel(thisJob: Job, callerJobSt: number) {
-	let callerJob = sys.runningJob
-	callerJob._st &= ~PARKED
-	callerJob._st |= callerJobSt
-	cancelJob(thisJob)
-	sys.target = thisJob
-}
+export function resumeJob(thisJob: Job, val?: unknown) {
 
-function linkParentChild(parent: Job, child: Job) {
-	let link = freshLink(parent, child)
-	child._prnt = link
+	thisJob._st = 0
+	sys.pushJob(thisJob)
 
-	let oldChdHead = parent._chd
-	parent._chd = link
-	link.nA = oldChdHead
-	if (oldChdHead) {
-		oldChdHead.pA = link
+	// Values are never passed into gen.next() because values inside the generator
+	// function are received mutating iteratorResult object of the
+	// delegated iterator.
+
+	// The function/object which yield* is called upon will mutate the
+	// iteratorResult object to .done = false to park the job.
+	// Later, resumeJob() will be called by the target object.
+	// The iteratorResult object will be mutated to .done = true and .value =
+	// the desired value to resume the job to, gen.next() is called and the
+	// js runtime will call the same delegated iterator, which will return the
+	// same iteratorResult object, but now mutated to resume the job.
+
+	iterRes.done = true
+	iterRes.value = val
+
+	try {
+		const { done, value} = thisJob._gn.next()
+		if (!done) {
+			return
+		}
+		if (value instanceof Error) {
+			genFnFailed(thisJob, value)
+		}
+		else {
+			thisJob.val = value
+			endProtocol(thisJob)
+		}
+	}
+	catch (e) {
+		genFnFailed(thisJob, e)
+	}
+	finally {
+		sys.popJob()
 	}
 }
 
-function addOnEnd(thisJob: Job, onEndFn: OnEnd) {
-	const fnCtorName = onEndFn.constructor.name
-	const linkTypeSignal =
-		fnCtorName === "AsyncFunction" ? 2 :
-		fnCtorName === "GeneratorFunction" ? 3
-		: 1
-
-	let link = freshLink(onEndFn, linkTypeSignal) as OnEndLink
-
-	let oldHead = thisJob._ends
-	thisJob._ends = link
-	link.nA = oldHead
-	if (oldHead) {
-		oldHead.pA = link
-	}
-}
-
-function cancelJob(thisJob: Job) {
-	const { _st } = thisJob
-	if (_st & CANCELLING || _st & DONE) {
-		return
-	}
-
-	thisJob._st |= CANCELLING
-
-	if (_st & PARKED_SLEEP) {
-		cancelSleep(thisJob)
-	}
-
-	if (_st & PARKED) {
-		// Unsubscribe from the single target blocking this job.
-		const targetLink = thisJob._tg!
-		targetLink.b._rmOb(targetLink)
-		disposeLink(targetLink)
-		thisJob._st &= ~PARKED
-		thisJob._tg = null
-	}
-
+function genFnFailed(thisJob: Job, e: unknown) {
+	thisJob._st |= DONE_ERR
+	thisJob.val = _Err(e, thisJob._nm)
 	endProtocol(thisJob, true)
 }
 
@@ -416,51 +358,6 @@ function endProtocol(thisJob: Job, cancelChildren = false) {
 	}
 }
 
-export function resumeJob(thisJob: Job, _val?: unknown) {
-
-	thisJob._st |= RUNNING
-	sys.pushJob(thisJob)
-
-	// Values are never passed into gen.next() because values inside the generator
-	// function are received mutating iteratorResult object of the
-	// delegated iterator.
-
-	// The function/object which yield* is called upon will mutate the
-	// iteratorResult object to .done = false to park the job.
-	// Later, resumeJob() will be called by the target object.
-	// The iteratorResult object will be mutated to .done = true and .value =
-	// the desired value to resume the job to, gen.next() is called and the
-	// js runtime will call the same delegated iterator, which will return the
-	// same iteratorResult object, but now mutated to resume the job.
-
-	try {
-		const { done, value} = thisJob._gn.next()
-		if (!done) {
-			return
-		}
-		if (value instanceof Error) {
-			genFnFailed(thisJob, value)
-		}
-		else {
-			thisJob.val = value
-			endProtocol(thisJob)
-		}
-	}
-	catch (e) {
-		genFnFailed(thisJob, e)
-	}
-	finally {
-		thisJob._st &= ~RUNNING
-		sys.popJob()
-	}
-}
-
-function genFnFailed(thisJob: Job, e: unknown) {
-	thisJob._st |= DONE_ERR
-	thisJob.val = _Err(e, thisJob._nm)
-	endProtocol(thisJob, true)
-}
-
 function waitingChildren(thisJob: Job, tgVal: unknown, tg: Tg) {
 	let { _tg } = thisJob
 
@@ -476,17 +373,6 @@ function waitingChildren(thisJob: Job, tgVal: unknown, tg: Tg) {
 	if (tg._st & DONE_ERR) {
 		addErrorToJobVal(thisJob, tgVal as Err)
 		endProtocol(thisJob, true)
-	}
-}
-
-export function addErrorToJobVal(jobish: JobBase, err: Error) {
-	const { _st } = jobish
-	if (_st & DONE_ERR) {
-		(jobish.val as Err).addError(err)
-	}
-	else {
-		jobish.val = _Err(err, jobish._nm, _st & CANCELLING ? "cancelled" : "")
-		jobish._st |= DONE_ERR
 	}
 }
 
@@ -542,20 +428,6 @@ function execOnEnds(thisJob: Job) {
 	}
 }
 
-class CustomObserver implements Ob {
-	declare _tg: Link<Ob, Tg>
-	constructor(private onTgDone: (val: unknown, tg: Tg) => void) {}
-	_onTgDone(val: unknown, tg: Tg) {
-		this.onTgDone(val, tg)
-	}
-	_addTg() {}
-	_rmTg() {}
-}
-
-function wrapIfNotError(x: unknown): Error {
-	return x instanceof Error ? x : new ThrownValIsNotError(x)
-}
-
 function settle(thisJob: Job) {
 	const { _st, val } = thisJob
 
@@ -566,14 +438,60 @@ function settle(thisJob: Job) {
 
 	thisJob._st |= DONE
 
-	const parentLink = thisJob._prnt
-	if (parentLink) {
+	const { _prnt } = thisJob
+	if (_prnt) {
 		thisJob._prnt = null
-		removeLinkFromParent(parentLink)
-		disposeLink(parentLink)
+		removeLinkFromParent(_prnt)
+		disposeLink(_prnt)
 	}
 
 	notifyObservers(thisJob, val)
+}
+
+export function notifyObservers(thisJob: JobBase, tgVal: unknown) {
+	while (thisJob._ob) {
+		const link = thisJob._ob
+		link.a._onTgDone(tgVal, thisJob)
+		thisJob._ob = link.nA
+		unlinkObAndTg(link)
+	}
+}
+
+function cancelJob(thisJob: Job) {
+	const { _st } = thisJob
+	// todo: check if i need this check
+	if (_st & CANCELLING || _st & DONE) {
+		return
+	}
+
+	thisJob._st |= CANCELLING
+
+	if (_st & PARKED_SLEEP) {
+		cancelSleep(thisJob)
+	}
+
+	if (_st & PARKED) {
+		// Unsubscribe from the single target blocking this job.
+		const targetLink = thisJob._tg!
+		targetLink.b._rmOb(targetLink)
+		disposeLink(targetLink)
+		thisJob._st &= ~PARKED
+		thisJob._tg = null
+	}
+
+	endProtocol(thisJob, true)
+}
+
+function linkParentChild(parent: Job, child: Job) {
+	let link = freshLink(parent, child)
+	child._prnt = link
+
+	let oldChdHead = parent._chd
+	parent._chd = link
+	link.nA = oldChdHead
+	if (oldChdHead) {
+		oldChdHead.pA = link
+	}
 }
 
 function removeLinkFromParent(link: Link<Job, Job>) {
@@ -590,15 +508,47 @@ function removeLinkFromParent(link: Link<Job, Job>) {
 	}
 }
 
-export function notifyObservers(thisJob: JobBase, tgVal: unknown) {
-	while (thisJob._ob) {
-		const link = thisJob._ob
-		link.a._onTgDone(tgVal, thisJob)
-		thisJob._ob = link.nA
-		unlinkObAndTg(link)
+class CustomObserver implements Ob {
+	declare _tg: Link<Ob, Tg>
+	constructor(private onTgDone: (val: unknown, tg: Tg) => void) {}
+	_onTgDone(val: unknown, tg: Tg) {
+		this.onTgDone(val, tg)
+	}
+	_addTg() {}
+	_rmTg() {}
+}
+
+function wrapIfNotError(x: unknown): Error {
+	return x instanceof Error ? x : new ThrownValIsNotError(x)
+}
+
+export function addErrorToJobVal(jobish: JobBase, err: Error) {
+	const { _st } = jobish
+	if (_st & DONE_ERR) {
+		(jobish.val as Err).addError(err)
+	}
+	else {
+		jobish.val = _Err(err, jobish._nm, _st & CANCELLING ? "cancelled" : "")
+		jobish._st |= DONE_ERR
 	}
 }
 
+function addOnEnd(thisJob: Job, onEndFn: OnEnd) {
+	const fnCtorName = onEndFn.constructor.name
+	const linkTypeSignal =
+		fnCtorName === "AsyncFunction" ? 2 :
+		fnCtorName === "GeneratorFunction" ? 3
+		: 1
+
+	let link = freshLink(onEndFn, linkTypeSignal) as OnEndLink
+
+	let oldHead = thisJob._ends
+	thisJob._ends = link
+	link.nA = oldHead
+	if (oldHead) {
+		oldHead.pA = link
+	}
+}
 
 //* ****************   User API   ****************************************** *//
 
@@ -617,4 +567,45 @@ export function me(): Job {
 
 export function onEnd(newOnEnd: OnEnd) {
 	addOnEnd(sys.runningJob, newOnEnd)
+}
+
+
+
+//* **********************  cancel(...jobs) ******************************** *//
+
+export function cancel(...jobs: Job[]) {
+	let callerJob = sys.runningJob
+	callerJob._st |= PARKED_JOB_CANCEL
+	const observer = new CancelAll()
+	subscribeToAllJobs(jobs, observer, true)
+	return YIELD
+}
+
+class CancelAll extends JobBase {
+
+	_nm = "cancel"
+
+	_onTgDone(tgVal: unknown, tg: Tg) {
+		const { val, _tg } = this
+		if (tg._st & DONE_ERR) {
+			addErrorToJobVal(this, tgVal as Err)
+		}
+		if (!_tg) {
+			this._st |= DONE
+			notifyObservers(this, val)
+		}
+	}
+}
+
+export function subscribeToAllJobs(jobs: Job[], observer: Ob, cancel = false) {
+	for (let i = 0; i < jobs.length; i++) {
+		const job = jobs[i] as Job
+		if (job._st & DONE) {
+			return
+		}
+		linkObAndTg(observer, job)
+		if (cancel) {
+			cancelJob(job)
+		}
+	}
 }
