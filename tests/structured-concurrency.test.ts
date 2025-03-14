@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { go, sleep } from "../source/index.ts"
+import { go, sleep, Err, _Err } from "ribu"
 import { assertRibuErr } from "./utils.ts"
-import { _Err } from "../source/errors.ts"
 
 describe("job auto-waits for children to finish", () => {
 

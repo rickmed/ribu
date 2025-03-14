@@ -1,5 +1,5 @@
-import { it, expect } from "vitest"
-import { Ch, go } from "../source/index.ts"
+import { describe, expect, it } from "vitest"
+import { Ch, go } from "ribu"
 
 
 it("putter arrives first", async () => {

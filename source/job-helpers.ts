@@ -1,6 +1,6 @@
 import { DONE, DONE_ERR_OR_CANCOK, Job, JobBase, RibuErrs, addErrorToJobVal, cancel, go, notifyObservers, removeLinkFromLL, subscribeToAllJobs, type NotErrs } from "./job.ts"
-import { userErrCtor, CANC_OK, ETimedOut, _Err } from "./errors.ts"
-import { EMPTY_LINK, Link, Ob, Tg, unlinkObAndTg } from "./shared.ts"
+import { userErrCtor, ETimedOut, _Err } from "./errors.ts"
+import { Link, Ob, Tg, unlinkObAndTg } from "./system.ts"
 
 
 abstract class JobHelper<YieldRet, ErrRet> extends JobBase<YieldRet, ErrRet> {

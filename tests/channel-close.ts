@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { Ch, go, sleep } from "../source/index.ts"
+import { Ch, go, sleep } from "ribu"
 
 describe("channel closing with pending operations", () => {
 

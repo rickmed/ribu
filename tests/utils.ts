@@ -1,5 +1,5 @@
 import { expect } from "vitest"
-import { Err, _Err } from "../source/errors.ts"
+import { Err, _Err } from "ribu"
 
 export function checkErr(rec: unknown, exp: unknown) {
 	assertRibuErr(rec)

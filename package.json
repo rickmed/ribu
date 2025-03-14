@@ -1,53 +1,49 @@
 {
-  "name": "ribu",
-  "description": "A Concurrency Library for Javascript",
-  "version": "0.1.2",
-  "files": [
-    "source",
-    "test-utils"
-  ],
-  "exports": {
-    ".": {
-      "import": "./source/index.ts"
-    },
-    "./test": {
-      "import": "./tests/test-utils.ts"
-    }
-  },
-  "type": "module",
-  "scripts": {
-    "test": "clear; vitest --reporter=basic --no-cache --watch=false",
-    "test:watch": "clear; vitest -w --no-cache --reporter=basic",
-    "test:cov": "cross-env 'NODE_OPTIONS=--import @istanbuljs/esm-loader-hook --no-warnings' nyc npm test",
-    "type-check": "tsc --noEmit",
-    "build": "rm -rf dist; tsc"
-  },
-  "engines": {},
-  "devDependencies": {
-    "@eslint/js": "^9.2.0",
-    "@types/eslint__js": "^8.42.3",
-    "@types/node": "^20.4.1",
-    "eslint": "^9.15.0",
-    "eslint-plugin-functional": "^7.1.0",
-    "tsx": "^3.12.7",
-    "typescript": "^5.4.5",
-    "typescript-eslint": "^8.16.0",
-    "vitest": "^1.6.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/rickmed/ribu"
-  },
-  "issues": "https://github.com/rickmed/ribu/issues",
-  "license": "MIT",
-  "author": {
-    "name": "Ricardo Medina"
-  },
-  "keywords": [
-    "concurrency",
-    "fast",
-    "js",
-    "javascript",
-    "typescript"
-  ]
+	"name": "ribu",
+	"description": "A Concurrency Library for Javascript",
+	"version": "0.1.2",
+	"type": "module",
+	"engines": {
+		"npm": "please-use-bun",
+		"yarn": "please-use-bun",
+		"pnpm": "please-use-bun",
+		"bun": "1.2.x"
+	},
+	"files": [
+		"source",
+		"test-utils"
+	],
+	"exports": {
+		".": {
+			"import": "./source/index.ts"
+		}
+	},
+	"scripts": {
+		"test": "clear; vitest --run --no-cache --no-isolate",
+		"test:watch": "clear; vitest --no-cache --no-isolate",
+		"test:cov": "cross-env 'NODE_OPTIONS=--import @istanbuljs/esm-loader-hook --no-warnings' nyc npm test",
+		"type-check": "tsc --noEmit",
+		"build": "rm -rf dist; tsc",
+		"preinstall": "node scripts/preinstall.js"
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.22.0",
+		"@types/eslint__js": "^9.14.0",
+		"@types/node": "^22.13.10",
+		"eslint": "^9.22.0",
+		"eslint-plugin-functional": "^9.0.1",
+		"tsx": "^4.19.3",
+		"typescript": "^5.8.2",
+		"typescript-eslint": "^8.26.1",
+		"vitest": "3"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/rickmed/ribu"
+	},
+	"issues": "https://github.com/rickmed/ribu/issues",
+	"license": "MIT",
+	"author": {
+		"name": "Ricardo Medina"
+	}
 }

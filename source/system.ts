@@ -1,17 +1,38 @@
-import { JobBase, type Job } from "./job.ts"
+import { type Job } from "./job.ts"
+
+/* *************  Lexicon   ****************************************************
+
+ob: Observer
+	- Waits for a Target to call back with data/result.
+	- Has a refence to target/s for potential canncellation.
+	- Job, Select, Promise, etc.
+
+tg: Target
+	- Calls back to observer/s with data/result.
+	- Job, Chan, Sleep, etc.
+
+Yieldable:
+	- An object/method that can block a job, by using yield* or yield*.
+	- Sleep, Chan.rec/put, etc.
+
+LL: Linked List
+
+*/
 
 
 export const EMPTY = Symbol("EM")
 
-/* **************   System   ************************************************ */
+export type Yieldable = {
+	execYield: (callerJob: Job, iterRes: IterRes) => void
+	nm: string
+}
 
 class System {
 	#stack: Array<Job> = []  // todo: optimize to Linked List
 	runningJob!: Job
 	deadline = 5000
-	target!: Tg
+	target: Maybe<Tg> = null  // Used for job coordination
 
-	// todo: optimize to Node based LL
 	pushJob(job: Job) {
 		this.runningJob = job
 		this.#stack.push(job)
@@ -23,31 +44,41 @@ class System {
 	}
 }
 
+let _yieldable: Maybe<Yieldable> = null
+
 export const sys = new System()
 
+export type IterRes = IteratorResult<unknown>
 export let iterRes = {
 	done: false,
 	value: 0 as unknown,
 }
-export type Iter<V> = Iterator<unknown, V>
-export const iter = {
+
+export type Itrtor<V> = Iterator<unknown, V>
+export const iterator = {
 	next() {
 		return iterRes
 	}
 }
 
+export function theiterable<YieldRet>(yieldable: Yieldable) {
+	_yieldable = yieldable
+	return iterable as Iterable<YieldRet>
+}
 
-/* **************   Linked Lists   ****************************************** */
-
-/* Lexicon
-Observer = Job, Select..
-Target = Job, Chan, Sleep, Select...
-LL: Linked List
-ob: Observer
-	Waits for a Target to call back with data/result
-tg: Target
-	Calls back to observer with data/result
-*/
+export type Iterable<V> = {
+	[Symbol.iterator]: () => Itrtor<V>
+}
+export const iterable = {
+	[Symbol.iterator]() {
+		if (!_yieldable) {
+			throw new Error(`Forgot to call yield* or called on an invalid object, at ${sys.runningJob._nm}`)
+		}
+		_yieldable.execYield(sys.runningJob, iterRes)
+		_yieldable = null
+		return iterator
+	}
+}
 
 
 /** Observer
@@ -79,18 +110,19 @@ export type Tg = {
 	_st: number
 }
 
+
 export type Maybe<T> = T | null
 
 /** Link
- * Used as a LL Node for Observers <-> Targets and several other LLs (some are single LL)
+ * Used as a Doubly LL Node for Observers <-> Targets and several other
+ * LLs (some are Singly LL).
+ * "Link" terminology is used to differentiate from Node std type.
  * A is Observer (or a generic object)
- * B is Target
- * nA is next Observer Link (towards the tail of LL)
- * pA is previous Observer Link
- * nB is next Target Link (towards the tail of LL)
- * pB is previous Target Link
- *
- * todo: more documentation
+ * B is Target (or a generic object)
+ * nA is next ObjectA Link (towards the tail of LL)
+ * pA is previous ObjectA Link
+ * nB is next ObjectB Link (towards the tail of LL)
+ * pB is previous ObjectB Link
  */
 export class Link<A = unknown, B = unknown> {
 	constructor(
@@ -109,6 +141,7 @@ export type MaybeLink = Maybe<Link>
  * Pool of links to be reused.
  * Is a single LL.
  * We use Link's .nA to link to next available Link in pool.
+ * todo: manage pool size
  */
 let linkPoolHead: Maybe<Link> = null
 
@@ -138,8 +171,6 @@ export function freshLink<A, B>(a: A, b: B) {
 
 	return link as Link<A, B>
 }
-
-
 
 export function linkObAndTg(ob: Ob, tg: Tg) {
 	const link = freshLink(ob, tg)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { go, sleep, Err } from "../source/index.ts"
+import { go, sleep, Err } from "ribu"
 import { checkErr } from "./utils.ts"
 
 describe("Job properly propagates errrors", () => {
@@ -22,7 +22,7 @@ describe("Job properly propagates errrors", () => {
 		let jobPropagatedErr = true
 
 		function* inner() {
-			yield sleep(1)
+			yield* sleep(1)
 			throw toThrow
 		}
 
@@ -43,7 +43,7 @@ describe("Job properly propagates errrors", () => {
 		let jobPropagatedErr = true
 
 		function* inner() {
-			yield sleep(1)
+			yield* sleep(1)
 			return retErr
 		}
 
@@ -64,7 +64,7 @@ describe("Job properly propagates errrors", () => {
 		let jobPropagatedErr = true
 
 		function* inner() {
-			yield sleep(1)
+			yield* sleep(1)
 			return retErr
 		}
 

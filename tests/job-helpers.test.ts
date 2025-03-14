@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { go, sleep } from "../source/index.ts"
-import { all, allOrErr, first, firstOK, promToJob } from "../source/job-helpers.ts"
+import { go, sleep, all, allOrErr, first, firstOK, promToJob, isErr } from "ribu"
 import { assertRibuErr, sleepProm } from "./utils.ts"
-import { isErr } from "../source/errors.ts"
 
 
 //* ********** Job Combinators  ********** *//
@@ -40,12 +38,12 @@ describe("allOrErr(): waits for jobs concurrently and return their results in an
 	it("no jobs fail", async () => {
 
 		function* job1() {
-			yield sleep(2)
+			yield* sleep(2)
 			return "one"
 		}
 
 		function* job2() {
-			yield sleep(1)
+			yield* sleep(1)
 			return 2
 		}
 

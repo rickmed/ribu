@@ -1,6 +1,6 @@
-import { describe, it } from "vitest"
-import { go, sleep, onEnd } from "../source/index.ts"
-import { assertRibuErr, expect } from "./utils.ts"
+import { describe, expect, it } from "vitest"
+import { go, sleep, onEnd } from "ribu"
+import { assertRibuErr, expect as exp } from "./utils.ts"
 
 describe("non-cancellation scenarios", () => {
 

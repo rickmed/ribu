@@ -1,9 +1,7 @@
-import { go, E as Err, Ch } from "../source/index.ts"
+import { go, Err, Ch, onEnd, OutCh } from "ribu"
 import dns from "node:dns/promises"
 import net from "node:net"
 import { Socket } from "node:net"
-import { onEnd } from "../source/job.ts"
-import { OutCh } from "../source/channel.ts"
 
 /* Happy EyeBalls algorithm:
 	- launch attempt + timeout
@@ -105,12 +103,12 @@ export async function* happyEyeBalls_V2(hostName: string, port: number, delay: n
 	while (inFlight) {
 		const res = yield* connectRes.rec
 		if (res instanceof Socket) {
-			yield launchJob.cancel()
+			yield* launchJob.cancel()
 			clearTimeout(timeout)
 			return res
 		}
 		inFlight--
-		yield failOrTimeout.put()
+		yield* failOrTimeout.put()
 	}
 
 	return Error("All attempted connections failed")

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { go, sleep } from "../source/index.ts"
+import { go, sleep } from "ribu"
 import { sleepProm } from "./utils.ts"
 
 
@@ -10,7 +10,7 @@ describe("sleep()", () => {
 		let jobDone = false
 
 		go(function* main() {
-			yield sleep(1)
+			yield* sleep(1)
 			jobDone = true
 		})
 

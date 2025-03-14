@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { go, sleep, onEnd } from "../source/index.ts"
+import { go, sleep, onEnd } from "ribu"
 import { sleepProm } from "./utils.ts"
 
 
@@ -22,15 +22,15 @@ describe("onEnds run when job's generator function returns", () => {
 
 			onEnd(function* () {
 				onEnds.push("job cleanup")
-				yield sleep(1)
+				yield* sleep(1)
 			})
 
 			onEnd(() => go(function* () {
 				onEnds.push("job2 cleanup")
-				yield sleep(1)
+				yield* sleep(1)
 			}))
 
-			yield sleep(1)
+			yield* sleep(1)
 		}
 
 		await go(main)
@@ -47,14 +47,14 @@ describe.todo("using yield* job.cancelErr(), user can handle cancellation errors
 		let childReturned = 0
 
 		function* child() {
-			yield sleep(4)
+			yield* sleep(4)
 			childReturned++
 		}
 
 		function* main() {
 			const chld = go(child)
-			yield sleep(2)
-			yield chld.cancelErr()
+			yield* sleep(2)
+			yield* chld.cancelErr()
 		}
 
 		await go(main)
@@ -66,21 +66,21 @@ describe.todo("using yield* job.cancelErr(), user can handle cancellation errors
 		let childReturned = 0
 
 		function* grandChild() {
-			yield sleep(2)
+			yield* sleep(2)
 			childReturned++
 		}
 
 		function* child() {
 			const grandChildJob = go(grandChild)
-			yield sleep(2)
+			yield* sleep(2)
 			yield* grandChildJob
 			childReturned++
 		}
 
 		function* main() {
 			const childJob = go(child)
-			yield sleep(1)
-			yield childJob.cancel()
+			yield* sleep(1)
+			yield* childJob.cancel()
 		}
 
 		await go(main)
@@ -92,14 +92,14 @@ describe.todo("using yield* job.cancelErr(), user can handle cancellation errors
 		const err = Err("even if job ended with error")
 
 		function* child() {
-			yield sleep(1)
+			yield* sleep(1)
 			return err
 		}
 
 		function* main() {
 			const chld = go(child)
-			yield sleep(2)
-			yield chld.cancel()
+			yield* sleep(2)
+			yield* chld.cancel()
 			return chld.val
 		}
 
