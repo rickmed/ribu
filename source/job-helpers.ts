@@ -1,30 +1,9 @@
-import { DONE, ANY_ERR_OR_CANCOK, Job, JobBase, RibuErrs, addErrorToJobVal, cancel, go, notifyObservers, removeLinkFromLL, subscribeToAllJobs, type NotErrs, subscribeToAll } from "./job.ts"
-import { userErrCtor, ETimedOut, _Err } from "./errors.ts"
-import { Link, Ob, unlinkObAndTg } from "./system.ts"
+import { DONE, ANY_ERR_OR_CANCOK, Job, JobBase, addErrorToJobVal, cancel, go, notifyObservers, subscribeToAllJobs, type NotErrs } from "./job.ts"
+import { userErrCtor, _Err, Err } from "./errors.ts"
+import { Ob, Tg, unlinkObAndTg } from "./system.ts"
 
+// helpers must set correct _st to that [symbol.iterator] works ok
 
-
-const yieldStar = {
-	[Symbol.iterator]() {
-		// check if I'm done and so on...
-
-
-
-
-
-	}
-}
-
-
-
-abstract class JobHelper<YieldRet, ErrRet> extends JobBase<YieldRet, ErrRet> {
-	// When caller Job is cancelled, it calls tg.rmOb() on its blocked on tg
-	// so jobHelper can unlink from all targets
-	_rmOb(link: Link<Ob, Job>) {
-		removeLinkFromLL(this, "_ob", link)
-		unLinkFromAllTargets(this)
-	}
-}
 
 function unLinkFromAllTargets(ob: Ob) {
 	for (let link = ob._tg; link !== EMPTY_LINK; link = link.nA) {
@@ -85,14 +64,12 @@ class AllOrErr<T> extends JobHelper<T[], T[] | EmptyArgsErr | _Err> {
 
 export function allOrErr2<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 	type YieldRet = NotErrs<Jobs[number]["val"]>
-
-	const manager = new AllOrErr2<YieldRet>(jobs)
-	subscribeToAll(manager, jobs)
+	return new AllOrErr2<YieldRet>(jobs)
 }
 
 
 
-class AllOrErr2<T> extends JobHelper<T[], T[] | EmptyArgsErr | _Err> {
+class AllOrErr2<T> extends JobBase<T[], T[] | EmptyArgsErr | Err> {
 	_nm = "allOrErr"
 	val: T[] = []
 
@@ -106,11 +83,11 @@ class AllOrErr2<T> extends JobHelper<T[], T[] | EmptyArgsErr | _Err> {
 		subscribeToAllJobs(jobs, this)
 	}
 
-	_onTgDone(tgVal: unknown, tg: Job) {
+	_onTgDone(tgVal: unknown, tg: Tg) {
 		const { _tg, val } = this
 
 		if (tg._st & ANY_ERR_OR_CANCOK) {
-			addErrorToJobVal(this, tgVal as _Err)
+			addErrorToJobVal(this, tgVal as Err)
 			unLinkFromAllTargets(this)
 			this._st |= DONE
 			notifyObservers(this, this.val)
@@ -119,12 +96,15 @@ class AllOrErr2<T> extends JobHelper<T[], T[] | EmptyArgsErr | _Err> {
 
 		val.push(tgVal as T)
 
-		if (_tg === EMPTY_LINK) {
+		if (!this._tg) {
 			this._st |= DONE
 			notifyObservers(this, val)
 			return
 		}
 	}
+
+	_execFail(tgVal: unknown) {
+		// todo
 }
 
 
@@ -257,8 +237,8 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 
 const dummyGen = (function* dummyGenFn() {})()
 
-export function newJob<Ret = unknown, Errs = ECancOK | ETimedOut | __Err>(jobName = "") {
-	return new Job<Ret, Errs | ECancOK | ETimedOut | __Err>(dummyGen, jobName)
+export function newJob<Ret = unknown, Errs = ECancOK |  | __Err>(jobName = "") {
+	return new Job<Ret, Errs | ECancOK |  | __Err>(dummyGen, jobName)
 }
 
 
