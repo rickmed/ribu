@@ -10,7 +10,7 @@ function* child(ctx: {count: number}) {
 
 describe("job.cancel()", () => {
 
-	it.only("a job stops execution when cancelled", async () => {
+	it("a job stops execution when cancelled", async () => {
 
 		let ctx = { count: 0 }
 
@@ -45,13 +45,12 @@ describe("job.cancel()", () => {
 		expect(ctx.count).toBe(0)
 	})
 
-	it("when job to cancel is already settled, .cancel() has no effect and leaves job with same settled value", async () => {
-
-		const err = Err("even if job ended with error")
+	it("when job to cancel is already settled, .cancel() is a noop", async () => {
+		// Even if job had errors in its main generator function
 
 		function* child1() {
 			yield* sleep(1)
-			return err
+			return Err("")
 		}
 
 		let chldJob!: Job
@@ -60,17 +59,19 @@ describe("job.cancel()", () => {
 			chldJob = go(child1)
 			yield* sleep(2)
 			yield* chldJob.cancel()
+			return "error NOT propagated"
 		}
 
-		await go(main)
+		const rec = await go(main).promErr
+		expect(rec).toEqual("error NOT propagated")
 		expect(chldJob.val).not.toStrictEqual(CANC_OK)
 	})
 })
 
 
-describe.skip("cancel(jobs)", () => {
+describe("cancel(jobs)", () => {
 
-	it("a job can cancel an array of jobs succesfully", async () => {
+	it.only("a job can cancel several jobs concurrently", async () => {
 
 		let ctx = { count: 0 }
 

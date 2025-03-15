@@ -1,3 +1,4 @@
+import { Err } from "ribu"
 import { type Job } from "./job.ts"
 
 /* *************  Lexicon   ****************************************************
@@ -9,7 +10,7 @@ ob: Observer
 
 tg: Target
 	- Calls back to observer/s with data/result.
-	- Job, Chan, Sleep, etc.
+	- Job, Chan, Select, etc.
 
 Yieldable:
 	- An object/method that can block a job, by using yield* or yield*.
@@ -25,6 +26,8 @@ class System {
 	#stack: Array<Job> = []  // todo: optimize to Linked List
 	runningJob!: Job
 	deadline = 5000
+	callerJobToSetSt: Job["_st"] = 0
+	yieldOp: Maybe<string> = null
 	yieldable: Maybe<Yieldable> = null
 
 	pushJob(job: Job) {
@@ -58,16 +61,7 @@ export const iterator = {
 	}
 }
 
-export function theiterable<YieldRet>(yieldable: Yieldable) {
-	// todo: (also would need to do it in objects that have Symbol.iterator directly)
-	// if (sys.yieldable) {
-	// 	// throw new Error(`Forgot to call yield* at ${sys.runningJob._nm}`)
-	// }
-	sys.yieldable = yieldable
-	return iterable as Iterable<YieldRet>
-}
-
-export type Iterable<V> = {
+export type _Iterable<V> = {
 	[Symbol.iterator]: () => Itrtor<V>
 }
 export const iterable = {
@@ -76,6 +70,36 @@ export const iterable = {
 		sys.yieldable = null
 		return iterator
 	}
+}
+
+export function sysIterable<YieldRet>(yieldable: Yieldable) {
+	// todo: (also would need to do it in objects that have Symbol.iterator directly)
+	// if (sys.yieldable) {
+	// 	// throw new Error(`Forgot to call yield* at ${sys.runningJob._nm}`)
+	// }
+	sys.yieldable = yieldable
+	return iterable as _Iterable<YieldRet>
+}
+
+export function cleanSysOpSetup() {
+	sys.callerJobToSetSt = 0
+	sys.yieldOp = null
+}
+
+export function setYieldOp(op: string, callerJobNextSt: Job["_st"]) {
+	const { yieldOp } = sys
+	if (yieldOp) {
+		const errMsg = `
+			RIBU: Did you forget to yield* at operation before this one?
+			Previous operation: ${yieldOp}
+			Current operation: ${op}
+		`
+		// eslint-disable-next-line @typescript-eslint/only-throw-error
+		throw Err("RibuErr", sys.runningJob._nm, errMsg)
+	}
+
+	sys.callerJobToSetSt = callerJobNextSt
+	sys.yieldOp = op
 }
 
 
@@ -106,6 +130,7 @@ export type Tg = {
 	_addOb: (link: Link<Ob, Tg>) => void
 	_rmOb: (link: Link<Ob, Tg>) => void
 	_st: number
+	val: unknown
 }
 
 

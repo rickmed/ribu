@@ -1,7 +1,7 @@
-export { go, onEnd, type Job, me, cancel } from "./job.ts"
+export { go, onEnd, type Job as Job, me, cancel } from "./job.ts"
 export { sleep } from "./timers.ts"
 export { Ch, OutCh } from "./channel.ts"
-export { userErrCtor as Err, CANC_OK, isErr, _Err } from "./errors.ts"
+export { userErrCtor as Err, isErr, CANC_OK, CancOK } from "./errors.ts"
 export { all, allOrErr, first, firstOK, promToJob } from "./job-helpers.ts"
 
 /**

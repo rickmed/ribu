@@ -1,6 +1,7 @@
-import { theiterable } from "./system.ts"
+import { sysIterable } from "./system.ts"
 import { resumeJob, PARKED_SLEEP, Job } from "./job.ts"
 import { Link, Ob, Tg, Yieldable, IterRes, iterRes } from "./system.ts"
+import { Job } from "./index.ts"
 
 /*  let's do all yield*
 
@@ -31,7 +32,7 @@ const yieldable: Yieldable = {
 
 export function sleep(ms: number) {
 	_ms = ms
-	return theiterable<never>(yieldable)
+	return sysIterable<never>(yieldable)
 }
 
 export function cancelSleep(job: Job, _clearTimeout = true) {

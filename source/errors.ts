@@ -50,18 +50,11 @@ export function _Err(cause: unknown, fn: string, msg = "") {
 export class CancOK {}
 export const CANC_OK = new CancOK()
 
-export class ThrownValIsNotError extends Err<"ThrownValIsNotError"> {
-	constructor(cause: unknown) {
-		super("ThrownValIsNotError", "", "", cause)
-	}
-}
-
 export class ETimedOut extends Err<"TimedOut"> {
 	constructor(fn: string) {
 		super("TimedOut", "", fn)
 	}
 }
-
 
 
 export function userErrCtor<Name extends string>(name: Name, fn = "", msg = "", cause?: unknown): Err<Name> {

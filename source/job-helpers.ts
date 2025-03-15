@@ -1,12 +1,26 @@
-import { DONE, DONE_ERR_OR_CANCOK, Job, JobBase, RibuErrs, addErrorToJobVal, cancel, go, notifyObservers, removeLinkFromLL, subscribeToAllJobs, type NotErrs } from "./job.ts"
+import { DONE, ANY_ERR_OR_CANCOK, Job, JobBase, RibuErrs, addErrorToJobVal, cancel, go, notifyObservers, removeLinkFromLL, subscribeToAllJobs, type NotErrs, subscribeToAll } from "./job.ts"
 import { userErrCtor, ETimedOut, _Err } from "./errors.ts"
-import { Link, Ob, Tg, unlinkObAndTg } from "./system.ts"
+import { Link, Ob, unlinkObAndTg } from "./system.ts"
+
+
+
+const yieldStar = {
+	[Symbol.iterator]() {
+		// check if I'm done and so on...
+
+
+
+
+
+	}
+}
+
 
 
 abstract class JobHelper<YieldRet, ErrRet> extends JobBase<YieldRet, ErrRet> {
-	// When caller Job is cancelled, it calls tg.rmOb()
+	// When caller Job is cancelled, it calls tg.rmOb() on its blocked on tg
 	// so jobHelper can unlink from all targets
-	_rmOb(link: Link<Ob, Tg>) {
+	_rmOb(link: Link<Ob, Job>) {
 		removeLinkFromLL(this, "_ob", link)
 		unLinkFromAllTargets(this)
 	}
@@ -45,10 +59,10 @@ class AllOrErr<T> extends JobHelper<T[], T[] | EmptyArgsErr | _Err> {
 		subscribeToAllJobs(jobs, this)
 	}
 
-	_onTgDone(tgVal: unknown, tg: Tg) {
+	_onTgDone(tgVal: unknown, tg: Job) {
 		const { _tg, val } = this
 
-		if (tg._st & DONE_ERR_OR_CANCOK) {
+		if (tg._st & ANY_ERR_OR_CANCOK) {
 			addErrorToJobVal(this, tgVal as _Err)
 			unLinkFromAllTargets(this)
 			this._st |= DONE
@@ -65,6 +79,63 @@ class AllOrErr<T> extends JobHelper<T[], T[] | EmptyArgsErr | _Err> {
 		}
 	}
 }
+
+
+
+
+export function allOrErr2<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
+	type YieldRet = NotErrs<Jobs[number]["val"]>
+
+	const manager = new AllOrErr2<YieldRet>(jobs)
+	subscribeToAll(manager, jobs)
+}
+
+
+
+class AllOrErr2<T> extends JobHelper<T[], T[] | EmptyArgsErr | _Err> {
+	_nm = "allOrErr"
+	val: T[] = []
+
+	constructor(jobs: Job<unknown>[]) {
+		super()
+		if (jobs.length === 0) {
+			addErrorToJobVal(this, EmptyArgsErr)
+			this._st |= DONE
+			return
+		}
+		subscribeToAllJobs(jobs, this)
+	}
+
+	_onTgDone(tgVal: unknown, tg: Job) {
+		const { _tg, val } = this
+
+		if (tg._st & ANY_ERR_OR_CANCOK) {
+			addErrorToJobVal(this, tgVal as _Err)
+			unLinkFromAllTargets(this)
+			this._st |= DONE
+			notifyObservers(this, this.val)
+			return
+		}
+
+		val.push(tgVal as T)
+
+		if (_tg === EMPTY_LINK) {
+			this._st |= DONE
+			notifyObservers(this, val)
+			return
+		}
+	}
+}
+
+
+
+
+
+
+
+
+
+
 
 
 /*
@@ -85,10 +156,10 @@ class All<OkVals> extends JobBase<OkVals[]> {
 	_nm = "all"
 	val: OkVals[] = []
 
-	_onTgDone(tgVal: unknown, tg: Tg) {
+	_onTgDone(tgVal: unknown, tg: Job) {
 		const { _tg, val } = this
 
-		if (tg._st & DONE_ERR_OR_CANCOK) {
+		if (tg._st & ANY_ERR_OR_CANCOK) {
 			addErrorToJobVal(this, tgVal as _Err)
 			// unsubscribe from rest of jobs
 			for (let link = _tg; link !== EMPTY_LINK; link = link.nA) {
@@ -170,8 +241,7 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 }
 
 
-
-
+//* *************************  JobSelect *********************************** *//
 
 
 
