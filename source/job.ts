@@ -46,13 +46,14 @@ export const ANY_ERR_OR_CANCOK = ERR_IN_GENFN | ERR_IN_ONENDS | DONE_CANCOK
  */
 export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements Ob, Tg {
 
-	abstract _nm: string
-	abstract _onTgDone(val: unknown, tg: Tg): void
-
+	_nm: string = ""
 	_st = INIT
 	_tg: Maybe<Link<Ob, Tg>> = null
 	_ob: Maybe<Link<Ob, Tg>> = null
 	val = EMPTY as GetterErr
+
+	abstract _onTgDone(val: unknown, tg: Tg): void
+	abstract _execFail(tgVal: unknown): void
 
 	/* Insert Link B:
 
@@ -115,7 +116,8 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 		cleanSysOpSetup()
 
 		if (this._st & DONE) {
-			if (checkIfEndJob(callerJob, this, this.val)) {
+			if (shouldCallerJobFail(callerJob, this)) {
+				callerJob._execFail(this.val)
 				iterRes.done = false
 			}
 			else {
@@ -137,16 +139,10 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 	}
 }
 
-function checkIfEndJob(callerJob: Job, targetJob: Tg, targetVal: unknown) {
+function shouldCallerJobFail(callerJob: Job, targetJob: Tg) {
 	const { _st: targetSt } = targetJob
-	if (
-		(callerJob._st & PARKED_JOB) && (targetSt & ANY_ERR_OR_CANCOK) ||
+	return (callerJob._st & PARKED_JOB) && (targetSt & ANY_ERR_OR_CANCOK) ||
 		(callerJob._st & PARKED_JOB_CANCEL) && (targetSt & ERR_IN_ONENDS)
-	) {
-		genFnFailed(callerJob, targetVal)
-		return true
-	}
-	return false
 }
 
 
@@ -175,7 +171,6 @@ type OnEndLink = Link<SyncFn, 1> | Link<AsyncFn, 2> | Link<RibuGenFn, 3>
 export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, GetterErr> {
 
 	_gn: RibuGen
-	_nm: string
 	_chd: Maybe<Link<Job, Job>> = null
 	_prnt: Maybe<Link<Job, Job>> = null
 	_ends: Maybe<OnEndLink> = null
@@ -189,10 +184,6 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 		}
 	}
 
-	toString(): string {
-		return `Job(${this._nm})`
-	}
-
 	_onTgDone(val: unknown, tg: Tg) {
 		const { _st } = this
 
@@ -200,7 +191,8 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 			resumeJob(this, val)
 			return
 		}
-		if (checkIfEndJob(this, tg, val)) {
+		if (shouldCallerJobFail(this, tg)) {
+			this._execFail(val)
 			return
 		}
 		if (_st & WAITING_CHILDREN) {
@@ -209,6 +201,10 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 		}
 
 		resumeJob(this, val)
+	}
+
+	_execFail(tgVal: unknown) {
+		genFnFailed(this, tgVal)
 	}
 
 	cancel() {
@@ -558,16 +554,29 @@ FAIL/CANCELLING INNER:
 => IMPLEMENTATION. Need:
 
 - [symbol.iterator]:
-	-
+	- BaseJob
+		- checks if calllerJob is PARKED_JOB or PARKED_JOB_CANCEL
+			(ok since helpers implement both yield* and cancel())
+		- if fails, it calls genFnFailed()
+			function genFnFailed(job: Job, e: unknown) {
+				job._st |= ERR_IN_GENFN
+				job.val = _Err(e, job._nm)
+				endProtocol(job, true)
+			}
+
+		- if a helper passed-in job fails: its implementation is different
+
+		-
+
+- get err()
 
 
 - cancel():
 	- cancell inner jobs
 	- jobIsh, cancels children (at _chd)
-- get err()
 - cancelErr
 
-- cancel(...jobs): don't implement .cancel() nor .cancelErr().
+
 */
 
 
