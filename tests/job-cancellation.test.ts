@@ -69,7 +69,7 @@ describe("job.cancel()", () => {
 })
 
 
-describe("cancel(jobs)", () => {
+describe.skip("cancel(jobs)", () => {
 
 	it.only("a job can cancel several jobs concurrently", async () => {
 

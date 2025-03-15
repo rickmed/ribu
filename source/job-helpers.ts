@@ -24,7 +24,7 @@ export function allOrErr<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 	return new AllOrErr<YieldRet>(jobs)
 }
 
-class AllOrErr<T> extends JobHelper<T[], T[] | EmptyArgsErr | _Err> {
+class AllOrErr<T> extends JobBase<T[], T[] | EmptyArgsErr | Err> {
 	_nm = "allOrErr"
 	val: T[] = []
 
@@ -105,6 +105,7 @@ class AllOrErr2<T> extends JobBase<T[], T[] | EmptyArgsErr | Err> {
 
 	_execFail(tgVal: unknown) {
 		// todo
+	}
 }
 
 
