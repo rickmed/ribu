@@ -1,3 +1,8 @@
+// so ts doesn't flatten unknown | unknown[] into unknown
+type SingleValue = { __brand?: "single" }
+type ArrayValue = [] & { __brand?: "array" }
+type UnknownOrArrayOfUnknown = SingleValue | ArrayValue
+
 /**
  * Ribu Err Class
  *
@@ -7,27 +12,30 @@
  * @param fn The name of the job's generator function or the name of the function if
  *           the user wants to return Err objects in sync functions.
  */
-export class Err<Name extends string = "Err"> implements Error {
+export class Err<Name extends string> implements Error {
 
 	readonly name: Name
 	readonly message: string
 	readonly fn: string
-	readonly cause?: unknown
-	errors?: Error[]
+	private _errors?: UnknownOrArrayOfUnknown
 
-	constructor(name: Name, message: string, fn: string, cause?: unknown, errors?: Error[]) {
+	constructor(name: Name, fnName: string, cause?: unknown, msg = "") {
 		this.name = name
-		this.message = message
-		this.fn = fn
-		this.cause = cause
-		this.errors = errors
+		this.message = msg
+		this.fn = fnName
+		this._errors = cause as UnknownOrArrayOfUnknown
 	}
 
-	addError(err: Error) {
-		if (!this.errors) {
-			this.errors = []
+	addErr(maybeErr: unknown) {
+		if (!this._errors) {
+			this._errors = maybeErr as UnknownOrArrayOfUnknown
 		}
-		this.errors.push(err)
+		else if (Array.isArray(this._errors)) {
+			(this._errors as unknown[]).push(maybeErr)
+		}
+		else {
+			this._errors = [this._errors, maybeErr] as UnknownOrArrayOfUnknown
+		}
 		return this
 	}
 
@@ -35,30 +43,46 @@ export class Err<Name extends string = "Err"> implements Error {
 		return ""  // todo
 	}
 
+	get cause() {
+		return Array.isArray(this._errors) ? this._errors[0] : this._errors
+	}
+
+	get errors() {
+		return this._errors
+	}
+
+	_Err(fnName: string, cause?: unknown, msg = "") {
+		return this.addErr(new Err("Err", fnName, cause, msg))
+	}
+
 	Err<Name extends string>(name: Name, fn = "", msg = "") {
-		return userErrCtor(name, fn, msg, this)
+		return new Err(name, fn, this, msg)
 	}
 }
 
 // make (errInstance instanceof Error) === true
 Object.setPrototypeOf(Err.prototype, Error.prototype)
 
-export function _Err(cause: unknown, fn: string, msg = "") {
-	return new Err("Err", msg, fn, cause)
+export type AnErr = Err<string>
+
+export function _Err(cause: unknown, fnName: string, msg = "") {
+	return new Err("Err", fnName, cause, msg)
+}
+
+export function OnEndErr(cause: unknown, fnName: string, msg = "") {
+	return new Err("OnEndErr", fnName, cause, msg)
+}
+
+export function OnGenFnErr(cause: unknown, fnName: string, msg = "") {
+	return new Err("OnGenFnErr", fnName, cause, msg)
 }
 
 export class CancOK {}
 export const CANC_OK = new CancOK()
 
-export class ETimedOut extends Err<"TimedOut"> {
-	constructor(fn: string) {
-		super("TimedOut", "", fn)
-	}
-}
 
-
-export function userErrCtor<Name extends string>(name: Name, fn = "", msg = "", cause?: unknown): Err<Name> {
-	return new Err<Name>(name, msg, fn, cause)
+export function userErrCtor<Name extends string>(name: Name, fnName = "", msg = "", cause?: unknown): Err<Name> {
+	return new Err<Name>(name, fnName, cause, msg)
 }
 
 export function isErr(x: unknown): x is Err<string> {

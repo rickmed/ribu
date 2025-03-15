@@ -1,23 +1,24 @@
-import { DONE, ANY_ERR_OR_CANCOK, Job, JobBase, addErrorToJobVal, cancel, go, notifyObservers, subscribeToAllJobs, type NotErrs } from "./job.ts"
+import { DONE, ANY_ERR_OR_CANCOK, Job, JobBase, addErrorToJobVal, cancel, go, notifyObservers, subscribeToAllJobs as subscribeToJobs, type NotErrs, ERR_IN_GENFN, execSettle } from "./job.ts"
 import { userErrCtor, _Err, Err } from "./errors.ts"
 import { Ob, Tg, unlinkObAndTg } from "./system.ts"
 
 // helpers must set correct _st to that [symbol.iterator] works ok
 
 
-function unLinkFromAllTargets(ob: Ob) {
+function unLinkFromTargets(ob: Ob) {
 	for (let link = ob._tg; link !== EMPTY_LINK; link = link.nA) {
 		unlinkObAndTg(link)
 	}
 }
 
-const EmptyArgsErr = userErrCtor("EmptyArguments")
+const EmptyArgsErr = userErrCtor("EmptyArgumentsErr")
 export type EmptyArgsErr = typeof EmptyArgsErr
 
 /*
-- Returns an array of the settled not ::Error values of the passed-in jobs.
-- If one job fails, it returns Error (fails callerJob if not using .err)
-- Resolves to an empty array if the passed-in array in empty.
+- Returns an array of the settled _successful_ values of the passed-in jobs.
+- If one job fails (or is cancelled, even successfully), it settles with Error
+	and fails callerJob if not using .err
+- Settles with Error if the passed-in array is empty.
  */
 export function allOrErr<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 	type YieldRet = NotErrs<Jobs[number]["val"]>
@@ -31,80 +32,40 @@ class AllOrErr<T> extends JobBase<T[], T[] | EmptyArgsErr | Err> {
 	constructor(jobs: Job<unknown>[]) {
 		super()
 		if (jobs.length === 0) {
-			addErrorToJobVal(this, EmptyArgsErr)
-			this._st |= DONE
+			addErrorToJobVal(this, EmptyArgsErr, ERR_IN_GENFN)
+			this._settle()
 			return
 		}
-		subscribeToAllJobs(jobs, this)
-	}
-
-	_onTgDone(tgVal: unknown, tg: Job) {
-		const { _tg, val } = this
-
-		if (tg._st & ANY_ERR_OR_CANCOK) {
-			addErrorToJobVal(this, tgVal as _Err)
-			unLinkFromAllTargets(this)
-			this._st |= DONE
-			notifyObservers(this, this.val)
-			return
-		}
-
-		val.push(tgVal as T)
-
-		if (_tg === EMPTY_LINK) {
-			this._st |= DONE
-			notifyObservers(this, val)
-			return
-		}
-	}
-}
-
-
-
-
-export function allOrErr2<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
-	type YieldRet = NotErrs<Jobs[number]["val"]>
-	return new AllOrErr2<YieldRet>(jobs)
-}
-
-
-
-class AllOrErr2<T> extends JobBase<T[], T[] | EmptyArgsErr | Err> {
-	_nm = "allOrErr"
-	val: T[] = []
-
-	constructor(jobs: Job<unknown>[]) {
-		super()
-		if (jobs.length === 0) {
-			addErrorToJobVal(this, EmptyArgsErr)
-			this._st |= DONE
-			return
-		}
-		subscribeToAllJobs(jobs, this)
+		subscribeToJobs(jobs, this)
 	}
 
 	_onTgDone(tgVal: unknown, tg: Tg) {
-		const { _tg, val } = this
+		const { _tg, val: thisVal } = this
 
 		if (tg._st & ANY_ERR_OR_CANCOK) {
-			addErrorToJobVal(this, tgVal as Err)
-			unLinkFromAllTargets(this)
-			this._st |= DONE
-			notifyObservers(this, this.val)
+			addErrorToJobVal(this, tgVal, ERR_IN_GENFN)
+			unLinkFromTargets(this)
+			this._settle()
 			return
 		}
 
-		val.push(tgVal as T)
+		thisVal.push(tgVal as T)
 
 		if (!this._tg) {
 			this._st |= DONE
-			notifyObservers(this, val)
+			notifyObservers(this, thisVal)
 			return
 		}
 	}
 
-	_execFail(tgVal: unknown) {
+	_fail(tgVal: unknown) {
 		// todo
+
+		// calls this._settle()
+	}
+
+	_settle() {
+		execSettle(this)
 	}
 }
 
@@ -129,7 +90,7 @@ export function all<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 		return []
 	}
 	const observer = new All<NotErrs<Jobs[number]["val"]>>()
-	subscribeToAllJobs(jobs, observer)
+	subscribeToJobs(jobs, observer)
 	return observer
 }
 

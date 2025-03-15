@@ -1,16 +1,3 @@
-import { expect } from "vitest"
-import { Err, _Err } from "ribu"
-
-export function checkErr(rec: unknown, exp: unknown) {
-	assertRibuErr(rec)
-	expect(rec).toEqual(exp)
-	expect(rec).toBeInstanceOf(Err)
-}
-
-export function assertRibuErr(x: unknown): asserts x is Err {
-	expect(x).toBeInstanceOf(Err)
-}
-
 export async function checkAsyncFnThrows(fn: () => Promise<unknown>) {
 	try {
 		await fn()
@@ -23,4 +10,26 @@ export async function checkAsyncFnThrows(fn: () => Promise<unknown>) {
 
 export function sleepProm(ms: number): Promise<void> {
 	return new Promise(res => setTimeout(res, ms))
+}
+
+/**
+ * Creates a clone of an Err object, preserving its prototype chain and properties.
+ * Specifically designed for use in tests to create independent copies of error objects.
+ * @param err The error object to clone
+ * @returns A clone of the error with the same properties and prototype
+ */
+export function clone<T>(err: T): T {
+	// Create a new instance of the same error type
+	const proto = Object.getPrototypeOf(err) as object
+	const clone = Object.create(proto) as T
+
+	// Copy all properties
+	for (const key of Object.getOwnPropertyNames(err)) {
+		const descriptor = Object.getOwnPropertyDescriptor(err, key)
+		if (descriptor) {
+			Object.defineProperty(clone, key, descriptor)
+		}
+	}
+
+	return clone
 }

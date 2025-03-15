@@ -17,7 +17,7 @@ function* jobFn(x?: number) {
 }
 
 type NotErrs = false | 1
-type All = NotErrs | Err<"Error1"> | Err<"Error2"> | Err | CancOK
+type All = NotErrs | Err<"Error1"> | Err<"Error2"> | Err<string> | CancOK
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const tests = {
@@ -45,6 +45,12 @@ const tests = {
 		check_Eq<Exp>()(x3)
 	},
 
+	*["yield* job.cancelErr()"]() {
+		type Exp = CancOK
+		const x3 = yield* go(jobFn).cancelErr()
+		check_Eq<Exp>()(x3)
+	},
+
 
 	/* *************** Job Helpers Tests ************************************* */
 
@@ -54,7 +60,7 @@ const tests = {
 		check_Eq<Exp>()(x3)
 	},
 	*["yield* allOrErr().err"]() {
-		type Exp = NotErrs[] | EmptyArgsErr | Err
+		type Exp = NotErrs[] | EmptyArgsErr | Err<string>
 		const x3 = yield* allOrErr(go(jobFn), go(jobFn)).err
 		check_Eq<Exp>()(x3)
 	},

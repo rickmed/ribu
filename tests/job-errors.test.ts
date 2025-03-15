@@ -1,81 +1,61 @@
 import { describe, it, expect } from "vitest"
 import { go, sleep, Err } from "ribu"
-import { checkErr } from "./utils.ts"
 
 describe("Job properly propagates errrors", () => {
 
-	let exp = {
-		name: "Err",
-		fn: "main",
-		message: "",
-		cause: {
-			name: "Err",
-			fn: "inner",
-			message: "",
-			cause: undefined as unknown as Error,
-		},
-	}
-
-	it("yield*, genFn throws", async () => {
-
-		const toThrow = Error("boom")
-		let jobPropagatedErr = true
-
-		function* inner() {
-			yield* sleep(1)
-			throw toThrow
-		}
-
-		function* main() {
-			yield* go(inner)
-			jobPropagatedErr = false
-		}
-
-		let rec = await go(main).promErr
-		exp.cause.cause = toThrow
-		checkErr(rec, exp)
-		expect(jobPropagatedErr).toBe(true)
-	})
-
 	it("yield*, genFn returns ::Err", async () => {
 
-		const retErr = Err("boom")
-		let jobPropagatedErr = true
-
 		function* inner() {
 			yield* sleep(1)
-			return retErr
+			return Err("SomeErrType")
 		}
 
 		function* main() {
 			yield* go(inner)
-			jobPropagatedErr = false
+			return `won't appear in settled value`
 		}
 
 		const rec = await go(main).promErr
-		exp.cause.cause = retErr
-		checkErr(rec, exp)
-		expect(jobPropagatedErr).toBe(true)
+		const exp = _Err("main")._Err("inner", Err("SomeErrType"))
+		expect(rec).toStrictEqual(exp)
+	})
+
+	it("yield*, genFn throws", async () => {
+
+		function* inner() {
+			yield* sleep(1)
+			throw Error("a msg")
+		}
+
+		function* main() {
+			yield* go(inner)
+			return `won't appear in settled value`
+		}
+
+		let rec = await go(main).promErr
+		const exp = _Err("main")._Err("inner", Error("a msg"))
+		expect(rec).toStrictEqual(exp)
 	})
 
 	it("yield*, genFn returns ::Error", async () => {
 
-		const retErr = Error("boom")
-		let jobPropagatedErr = true
-
 		function* inner() {
 			yield* sleep(1)
-			return retErr
+			return Error("a msg")
 		}
 
 		function* main() {
 			yield* go(inner)
-			jobPropagatedErr = false
+			return `won't appear in settled value`
 		}
 
 		const rec = await go(main).promErr
-		exp.cause.cause = retErr
-		checkErr(rec, exp)
-		expect(jobPropagatedErr).toBe(true)
+		const exp = _Err("main")._Err("inner", Error("a msg"))
+		expect(rec).toStrictEqual(exp)
 	})
 })
+
+
+export function _Err(fnName: string, msg = "", cause?: unknown) {
+	return Err("Err", fnName, msg, cause)
+}
