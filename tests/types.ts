@@ -52,16 +52,23 @@ const tests = {
 	},
 
 
-	/* *************** Job Helpers Tests ************************************* */
+	/* *************** allOrErr() ************************************* */
 
 	*["yield* allOrErr()"]() {
 		type Exp = NotErrs[]
 		const x3 = yield* allOrErr(go(jobFn), go(jobFn))
 		check_Eq<Exp>()(x3)
 	},
+
 	*["yield* allOrErr().err"]() {
 		type Exp = NotErrs[] | EmptyArgsErr | Err<string>
 		const x3 = yield* allOrErr(go(jobFn), go(jobFn)).err
+		check_Eq<Exp>()(x3)
+	},
+
+	*["yield* allOrErr().cancel()"]() {
+		type Exp = CancOK
+		const x3 = yield* allOrErr(go(jobFn), go(jobFn)).cancel()
 		check_Eq<Exp>()(x3)
 	},
 }

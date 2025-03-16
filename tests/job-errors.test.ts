@@ -16,7 +16,7 @@ describe("Job properly propagates errrors", () => {
 		}
 
 		const rec = await go(main).promErr
-		const exp = _Err("main")._Err("inner", Err("SomeErrType"))
+		const exp = _Err("main", _Err("inner", Err("SomeErrType")))
 		expect(rec).toStrictEqual(exp)
 	})
 
@@ -33,7 +33,7 @@ describe("Job properly propagates errrors", () => {
 		}
 
 		let rec = await go(main).promErr
-		const exp = _Err("main")._Err("inner", Error("a msg"))
+		const exp = _Err("main", _Err("inner", Error("a msg")))
 		expect(rec).toStrictEqual(exp)
 	})
 
@@ -50,12 +50,12 @@ describe("Job properly propagates errrors", () => {
 		}
 
 		const rec = await go(main).promErr
-		const exp = _Err("main")._Err("inner", Error("a msg"))
+		const exp = _Err("main", _Err("inner", Error("a msg")))
 		expect(rec).toStrictEqual(exp)
 	})
 })
 
 
-export function _Err(fnName: string, msg = "", cause?: unknown) {
-	return Err("Err", fnName, msg, cause)
+export function _Err(fnName: string, cause?: unknown) {
+	return Err("GenFnErr", fnName, "", cause)
 }

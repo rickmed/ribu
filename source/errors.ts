@@ -73,8 +73,8 @@ export function OnEndErr(cause: unknown, fnName: string, msg = "") {
 	return new Err("OnEndErr", fnName, cause, msg)
 }
 
-export function OnGenFnErr(cause: unknown, fnName: string, msg = "") {
-	return new Err("OnGenFnErr", fnName, cause, msg)
+export function GenFnErr(cause: unknown, fnName: string, msg = "") {
+	return new Err("GenFnErr", fnName, cause, msg)
 }
 
 export class CancOK {}

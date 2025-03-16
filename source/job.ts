@@ -1,5 +1,5 @@
 import { sys, type Link, EMPTY, disposeLink, freshLink, Tg, Ob, Itrtor, iterRes, linkObAndTg, unlinkObAndTg, Maybe, iterator, _Iterable, cleanSysOpSetup, setYieldOp } from "./system.ts"
-import { _Err, Err, CANC_OK, CancOK, OnGenFnErr, OnEndErr, AnErr } from "./errors.ts"
+import { _Err, Err, CANC_OK, CancOK, GenFnErr, OnEndErr, AnErr } from "./errors.ts"
 import { cancelSleep } from "./timers.ts"
 
 // implement "unsub() to have something like trio's moveOnAfter()
@@ -55,6 +55,7 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 	abstract _nm: string
 	abstract _onTgDone(tgVal: unknown, tg: Tg): void
 	abstract _fail(tgVal: unknown): void
+	abstract _cancel(): void
 
 	/* Insert Link B:
 
@@ -139,6 +140,18 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 		return this as unknown as _Iterable<GetterErr>
 	}
 
+	cancel() {
+		this._cancel()
+		setYieldOp("job.cancel", PARKED_JOB_CANCEL)
+		return this as unknown as _Iterable<CancOK>
+	}
+
+	cancelErr() {
+		this._cancel()
+		setYieldOp("job.cancelErr", PARKED_CONTINUE)
+		return this as unknown as _Iterable<CancOK | Err<string>>
+	}
+
 	isDone() {
 		return this._st & DONE
 	}
@@ -214,16 +227,8 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 		genFnFailed(this, tgVal)
 	}
 
-	cancel() {
+	_cancel() {
 		cancelJob(this)
-		setYieldOp("job.cancel", PARKED_JOB_CANCEL)
-		return this as unknown as _Iterable<CancOK>
-	}
-
-	cancelErr() {
-		cancelJob(this)
-		setYieldOp("job.cancelErr", PARKED_CONTINUE)
-		return this as unknown as _Iterable<CancOK | Err<string>>
 	}
 
 	onEnd(onEndFn: OnEnd) {
@@ -288,19 +293,9 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 	}
 }
 
-// todo: all are wrapped in Err (adds job name)
-
-// in GenFn:
-// throws not ::Error  ->   Err  (adds fnName) in cause (unknown)
-// throws ::Error  -> still Err (adds fnName) in cause  (::Error)
-// returns Err  -> Err (adds fnName) in cause (Err)
-
-// in onEnd:
-
-
 function genFnFailed(job: Job, maybeErr: unknown) {
 	job._st |= ERR_IN_GENFN
-	job.val = OnGenFnErr(maybeErr, job._nm)
+	job.val = GenFnErr(maybeErr, job._nm)
 	endProtocol(job, true)
 }
 
@@ -442,7 +437,7 @@ export function notifyObservers(thisJob: JobBase, tgVal: unknown) {
 	}
 }
 
-function cancelJob(thisJob: Job) {
+export function cancelJob(thisJob: Job) {
 	const { _st } = thisJob
 	// todo: check if i need this check
 	if (_st & CANCELLED || _st & DONE) {
@@ -533,11 +528,9 @@ function addOnEnd(thisJob: Job, onEndFn: OnEnd) {
 
 //* ****************   User API   ****************************************** *//
 
-export type NotErrs<Ret> = Exclude<Ret, Error>
-
 export function go<Args extends unknown[], Ret>(genFn: RibuGenFn<Ret, Args>, ...args: Args) {
 	const gen = genFn(...args)
-	const job = new Job<NotErrs<Ret>, Ret | Err<string> | CancOK>(gen, genFn.name, sys.runningJob)
+	const job = new Job<Exclude<Ret, Error>, Ret | Err<string> | CancOK>(gen, genFn.name, sys.runningJob)
 	resumeJob(job)
 	return job
 }
@@ -557,21 +550,25 @@ export function onEnd(newOnEnd: OnEnd) {
 /*
 - SelectJob works super cool
 
-allOrErr  (could cancel)
-	- fails if one job fails
+allOrErr
 allSettled
-first   (could cancel)
-firstOK  (could cancel)
+first
+firstOK
 
 FAIL/CANCELLING INNER:
-	- Helpers never cancel jobs, unless called helper.cancel() manually by user.
+	- Helpers never cancel jobs, unless manual helper.cancel().
 	- On yield*, it fails callerJob (and only unsub from jobs).
-	- It implements .cancel() if user wants to manually cancel all passed-in jobs.
+
 
 => IMPLEMENTATION. Need:
 
 
 - get err()
+allOrErr
+	i think works as is.
+allSettled
+first
+firstOK
 
 
 - cancel():

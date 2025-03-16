@@ -71,7 +71,7 @@ describe("job.cancel()", () => {
 
 describe.skip("cancel(jobs)", () => {
 
-	it.only("a job can cancel several jobs concurrently", async () => {
+	it("a job can cancel several jobs concurrently", async () => {
 
 		let ctx = { count: 0 }
 

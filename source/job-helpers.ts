@@ -1,18 +1,33 @@
-import { DONE, ANY_ERR_OR_CANCOK, Job, JobBase, addErrorToJobVal, cancel, go, notifyObservers, subscribeToAllJobs as subscribeToJobs, type NotErrs, ERR_IN_GENFN, execSettle } from "./job.ts"
+import { DONE, ANY_ERR_OR_CANCOK, Job, JobBase, addErrorToJobVal, cancel, go, notifyObservers, subscribeToAllJobs as subscribeToJobs, type YielRet, ERR_IN_GENFN, execSettle, cancelJob } from "./job.ts"
 import { userErrCtor, _Err, Err } from "./errors.ts"
 import { Ob, Tg, unlinkObAndTg } from "./system.ts"
 
-// helpers must set correct _st to that [symbol.iterator] works ok
+
+const EmptyArgsErr = userErrCtor("EmptyArgumentsErr")
+export type EmptyArgsErr = typeof EmptyArgsErr
+
+
+
+// helpers must set correct _st to that inherited [symbol.iterator] works ok
+
+/*
+=> thinking about helper._cancel() implementation, what logic from cancelJob()
+	think that helper is aleady subscribed to jobs so maybe
+	just trigget cancelJob(job) is sufficient
+
+
+*/
+
 
 
 function unLinkFromTargets(ob: Ob) {
-	for (let link = ob._tg; link !== EMPTY_LINK; link = link.nA) {
+	while (ob._tg) {
+		const link = ob._tg
+		ob._tg = link.nA
 		unlinkObAndTg(link)
 	}
 }
 
-const EmptyArgsErr = userErrCtor("EmptyArgumentsErr")
-export type EmptyArgsErr = typeof EmptyArgsErr
 
 /*
 - Returns an array of the settled _successful_ values of the passed-in jobs.
@@ -21,11 +36,11 @@ export type EmptyArgsErr = typeof EmptyArgsErr
 - Settles with Error if the passed-in array is empty.
  */
 export function allOrErr<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
-	type YieldRet = NotErrs<Jobs[number]["val"]>
+	type YieldRet = YielRet<Jobs[number]["val"]>
 	return new AllOrErr<YieldRet>(jobs)
 }
 
-class AllOrErr<T> extends JobBase<T[], T[] | EmptyArgsErr | Err> {
+class AllOrErr<T> extends JobBase<T[], T[] | EmptyArgsErr | Err<string>> {
 	_nm = "allOrErr"
 	val: T[] = []
 
@@ -55,6 +70,13 @@ class AllOrErr<T> extends JobBase<T[], T[] | EmptyArgsErr | Err> {
 			this._st |= DONE
 			notifyObservers(this, thisVal)
 			return
+		}
+	}
+
+	_cancel(): void {
+		while (this._tg) {
+			cancelJob(this._tg.b as Job)
+			this._tg = this._tg.nA
 		}
 	}
 
@@ -89,7 +111,7 @@ export function all<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 	if (jobs.length === 0) {
 		return []
 	}
-	const observer = new All<NotErrs<Jobs[number]["val"]>>()
+	const observer = new All<YielRet<Jobs[number]["val"]>>()
 	subscribeToJobs(jobs, observer)
 	return observer
 }
@@ -143,7 +165,7 @@ export function first<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 
 		const job = (yield ev.wait) as Job
 		yield cancel(jobs)
-		return job.val as NotErrs<Jobs[number]["val"]>
+		return job.val as YielRet<Jobs[number]["val"]>
 	})
 }
 
@@ -175,7 +197,7 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 				continue
 			}
 			yield cancel(jobs)
-			return job.val as NotErrs<Jobs[number]["val"]>
+			return job.val as YielRet<Jobs[number]["val"]>
 		}
 
 		return userErrCtor("AllJobsFailed", "firstOK")
