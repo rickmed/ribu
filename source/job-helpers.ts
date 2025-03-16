@@ -8,18 +8,6 @@ export type EmptyArgsErr = typeof EmptyArgsErr
 
 
 
-// helpers must set correct _st to that inherited [symbol.iterator] works ok
-
-/*
-=> thinking about helper._cancel() implementation, what logic from cancelJob()
-	think that helper is aleady subscribed to jobs so maybe
-	just trigget cancelJob(job) is sufficient
-
-
-*/
-
-
-
 function unLinkFromTargets(ob: Ob) {
 	while (ob._tg) {
 		const link = ob._tg
@@ -28,6 +16,17 @@ function unLinkFromTargets(ob: Ob) {
 	}
 }
 
+
+
+// helpers must set correct _st to that inherited [symbol.iterator] works ok
+
+/*
+=> thinking about helper._cancel() implementation, what logic from cancelJob()
+	think that helper is aleady subscribed to jobs so maybe
+	just trigget cancelJob(job) is sufficient
+	- then need to handle if job had cancel errors (?)
+
+*/
 
 /*
 - Returns an array of the settled _successful_ values of the passed-in jobs.

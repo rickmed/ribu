@@ -141,20 +141,29 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 	}
 
 	cancel() {
-		this._cancel()
 		setYieldOp("job.cancel", PARKED_JOB_CANCEL)
+		maybeExecCancel(this)
 		return this as unknown as _Iterable<CancOK>
 	}
 
 	cancelErr() {
-		this._cancel()
 		setYieldOp("job.cancelErr", PARKED_CONTINUE)
+		maybeExecCancel(this)
 		return this as unknown as _Iterable<CancOK | Err<string>>
 	}
 
 	isDone() {
 		return this._st & DONE
 	}
+}
+
+function maybeExecCancel(job: JobBase) {
+	const { _st } = job
+	if (_st & CANCELLED || _st & DONE) {
+		return
+	}
+	job._st |= CANCELLED
+	job._cancel()
 }
 
 function shouldCallerJobFail(callerJob: Job, targetJob: Tg) {
@@ -228,7 +237,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 	}
 
 	_cancel() {
-		cancelJob(this)
+		execCancelJob(this)
 	}
 
 	onEnd(onEndFn: OnEnd) {
@@ -443,8 +452,12 @@ export function cancelJob(thisJob: Job) {
 	if (_st & CANCELLED || _st & DONE) {
 		return
 	}
-
 	thisJob._st |= CANCELLED
+	execCancelJob(thisJob)
+}
+
+function execCancelJob(thisJob: Job) {
+	const { _st } = thisJob
 
 	if (_st & PARKED_SLEEP) {
 		cancelSleep(thisJob)
