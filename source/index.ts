@@ -1,4 +1,4 @@
-export { go, onEnd, type Job as Job, me, cancel } from "./job.ts"
+export { go, onEnd, type Job as Job, me, RibuGen,cancel } from "./job.ts"
 export { sleep } from "./timers.ts"
 export { Ch, OutCh } from "./channel.ts"
 export { userErrCtor as Err, isErr, Err as RibuErr, CANC_OK, CancOK } from "./errors.ts"

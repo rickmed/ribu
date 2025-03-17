@@ -1,7 +1,6 @@
 import { sysIterable } from "./system.ts"
 import { resumeJob, PARKED_SLEEP, Job } from "./job.ts"
-import { Link, Ob, Tg, Yieldable, IterRes, iterRes } from "./system.ts"
-import { Job } from "./index.ts"
+import { Link, Ob, Tg, Yieldable, IterRes } from "./system.ts"
 
 /*  let's do all yield*
 
@@ -25,7 +24,8 @@ const yieldable: Yieldable = {
 	nm: "sleep",
 	execYield(callerJob: Job, iterRes: IterRes) {
 		callerJob._st |= PARKED_SLEEP
-		callerJob._tg = setTimeout(timeOutCB, _ms, callerJob) as unknown as Link<Ob, Tg>
+		const timeout = setTimeout(timeOutCB, _ms, callerJob) as unknown as Link<Ob, Tg>
+		callerJob._addTg(timeout)
 		iterRes.done = false
 	}
 }
@@ -36,11 +36,10 @@ export function sleep(ms: number) {
 }
 
 export function cancelSleep(job: Job, _clearTimeout = true) {
-	job._st &= ~PARKED_SLEEP
 	if (_clearTimeout) {
 		clearTimeout(job._tg as unknown as NodeJS.Timeout)
 	}
-	job._tg = null
+	job._rmTgHead()
 }
 
 function timeOutCB(callerJob: Job) {

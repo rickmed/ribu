@@ -2,8 +2,17 @@ import { sys, type Link, EMPTY, disposeLink, freshLink, Tg, Ob, Itrtor, iterRes,
 import { _Err, Err, CANC_OK, CancOK, GenFnErr, OnEndErr, AnErr, WaitingChldErr } from "./errors.ts"
 import { cancelSleep } from "./timers.ts"
 
-// => thinking parents shouldn't cancel children if sibling failed.
-//  maybe config jobs like go(genFn, ...ars).supervision(CancelSiblingsOnErr)
+
+/*
+1)
+maybe I can put _chd and _tg in the same _tg LL.
+Since a job is parked in only at one target
+st = PARKED, i know head is not children
+
+*/
+
+
+
 
 
 // todo: implement "unsub() to have something like trio's moveOnAfter()
@@ -31,7 +40,8 @@ export const ERR_IN_GENFN = 1 << 11  // 2048
 const ERR_IN_ONEND = 1 << 12  // 4096
 const CANCEL_SIBLINGS_ON_ERR = 1 << 13  // 8192
 
-const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_CH
+const PARKED_NOT_SLEEP = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_CH
+const PARKED = PARKED_NOT_SLEEP | PARKED_SLEEP
 const ANY_ERR = ERR_IN_GENFN | ERR_IN_ONEND
 export const ANY_ERR_OR_CANCOK = ANY_ERR | CANCOK
 const ERR_IN_GENFN_OR_ONEND = ERR_IN_GENFN | ERR_IN_ONEND
@@ -41,15 +51,12 @@ const ERR_IN_GENFN_OR_ONEND = ERR_IN_GENFN | ERR_IN_ONEND
  *  _ob = observers LL Head
  *    Objects waiting the result of this job.
  *  _tg = targets LL Head
- * 	Head of targets LL that I'm awaiting data/result, for example:
- *    	- A single target if job is blocked at yield*
- *    	- Several, for example:
- *    	  - If waiting for children (to finish normally or when cancelled)
- *    	  - Async onEnds to finish.
- *		Needed to remove Observer from all targets if cancelled.
- *  val = inbox/outbox for values like ch.put/rec, the final result of the job...
- *  _onTgDone = onTargetDone
- * 	Target calls this to notify job with data/result.
+*		If _st is PARKED, the head is the target the job is parked by.
+ * 	After that, is a LL of children jobs.
+ *  val = inbox/outbox for values.
+ * 	Like ch.put/rec, the final result of the job, etc.
+ *  _nm = generator function name or name of the job-like.
+ *
  */
 export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements Ob, Tg {
 
@@ -119,6 +126,10 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 		// dispose the link immediately.
 	}
 
+	_rmTgHead() {
+		this._rmTg(this._tg!)
+	}
+
 	[Symbol.iterator]() {
 		const { callerJobToSetSt, runningJob: callerJob } = sys
 		const callerJobSt = callerJobToSetSt !== 0 ? callerJobToSetSt : PARKED_JOB
@@ -186,7 +197,7 @@ function shouldCallerJobFail(callerJob: Job, targetJob: Tg) {
 
 //* ************************  Job Class  *********************************** *//
 
-type RibuGen<Ret = unknown> =
+export type RibuGen<Ret = unknown> =
 	Generator<unknown, Ret, unknown>
 
 type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
@@ -200,7 +211,6 @@ type OnEndLink = Link<SyncFn, 1> | Link<AsyncFn, 2> | Link<RibuGenFn, 3>
 
 /* Job Class
  *  _gn = generator
- *  _nm = generator function name
  *  _chd = children jobs LL Head
  *  _prnt = parent job LL Head (even though jobs have max 1 parent)
  *  _ends = synchronous onEnds LL Head
@@ -210,7 +220,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 
 	_nm: string
 	_gn: RibuGen
-	_chd: Maybe<Link<Job, Job>> = null
+	_tg: Maybe<Link<Job, Job>> = null
 	_prnt: Maybe<Link<Job, Job>> = null
 	_ends: Maybe<OnEndLink> = null
 	val: GetterErr = EMPTY as GetterErr
@@ -273,7 +283,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 }
 
 export function resumeJob(thisJob: Job, val?: unknown) {
-	thisJob._st = 0
+	thisJob._st &= ~PARKED
 	sys.pushJob(thisJob)
 
 	// Values are never passed into gen.next() because values inside the generator
@@ -319,58 +329,32 @@ function genFnFailed(thisJob: Job, cause: unknown) {
 }
 
 function endProtocol(thisJob: Job, cancelChildren = false) {
-	let { _chd: childLink } = thisJob
+	let childLink = thisJob._tg
 	if (!childLink) {
 		execOnEnds(thisJob)
 		return
 	}
 
-	if (thisJob._st & WAITING_CHILDREN) {
-		return
-	}
-
-	const prevSt = thisJob._st
 	thisJob._st |= WAITING_CHILDREN
 
-	// need to check if I'm already subscribed to children
-	// ie, if _st & WAITING_CHILDREN
-
-	thisJob._tg = childLink
-	thisJob._chd = null
-	while (childLink) {
+	do {
 		let childJob = childLink.b
 		childJob._prnt = null
-
-		// If child failed, enProtocol() will be called to cancel children,
-		// so we check to not subscribe to child again.
-		if (!(prevSt & WAITING_CHILDREN)) {
-			childJob._addOb(childLink)
-		}
-
+		childJob._addOb(childLink)
 		childLink = childLink.nB
-
 		if (cancelChildren) {
 			cancelJob(childJob)
 		}
-	}
+	} while (childLink)
 }
-
-// 1)
-// maybe I can put _chd and _tg in the same LL
-// since a job is parked in only at one target
-// st = PARKED, i know head is not children
-// 2)
-// implement sleep as normal yieldable in same ._tg
-
-/* PROBLEM:
-
-
-*/
-
-// genFn completes, now children are in _tg.
 
 function waitingChildren(thisJob: Job, tgVal: unknown, tg: Tg) {
 	let { _tg, _st } = thisJob
+
+	// if child settled with DONE_ECANCOK, it's ok
+	if (tg._st & ERR_IN_GENFN_OR_ONEND) {
+		addErrorToJobVal(thisJob, tgVal as AnErr, ERR_IN_GENFN, "waitingChildren")
+	}
 
 	if (!_tg) {
 		_st &= ~WAITING_CHILDREN
@@ -378,12 +362,9 @@ function waitingChildren(thisJob: Job, tgVal: unknown, tg: Tg) {
 		return
 	}
 
-	// if child settled with DONE_ECANCOK, it's ok
-	if (tg._st & ERR_IN_GENFN_OR_ONEND) {
-		addErrorToJobVal(thisJob, tgVal as AnErr, ERR_IN_GENFN, "waitingChildren")
-		if (_st & CANCEL_SIBLINGS_ON_ERR) {
-			// if i'm already waiting for children
-			endProtocol(thisJob, true)
+	if (_st & CANCEL_SIBLINGS_ON_ERR) {
+		for (let childLink = thisJob._tg; childLink; childLink = childLink.nB) {
+			cancelJob(childLink.b)
 		}
 	}
 }
@@ -498,33 +479,23 @@ function execCancelJob(thisJob: Job) {
 		cancelSleep(thisJob)
 	}
 
-	if (_st & PARKED) {
-		// Unsubscribe from the single target blocking this job.
+	if (_st & PARKED_NOT_SLEEP) {
+		// we're parked by a target so LL head is the target
 		const targetLink = thisJob._tg!
 		targetLink.b._rmOb(targetLink)
+		thisJob._rmTg(targetLink)
 		disposeLink(targetLink)
-		thisJob._st &= ~PARKED
-		thisJob._tg = null
+		thisJob._st &= ~PARKED_NOT_SLEEP
 	}
 
 	endProtocol(thisJob, true)
 }
 
-// A LL is used as if parent is observer and child is target.
-// Only .b (and .nB) properties are used, which by convention represent targets,
-// and LL head is in parent._chd instead of parent._tg.
-// .a (and .nA) properties are not used since a child can only have one parent,
-// so ._prnt is just set to the link.
+
 function linkParentChild(parent: Job, child: Job) {
 	let link = freshLink(parent, child)
+	parent._addTg(link)
 	child._prnt = link
-
-	let oldChdHead = parent._chd
-	parent._chd = link
-	link.nB = oldChdHead
-	if (oldChdHead) {
-		oldChdHead.pB = link
-	}
 }
 
 function removeLinkFromParent(link: Link<Job, Job>) {
@@ -536,8 +507,8 @@ function removeLinkFromParent(link: Link<Job, Job>) {
 		pB.nB = nB
 	}
 	let parent = link.a
-	if (parent._chd === link) {
-		parent._chd = nB
+	if (parent._tg === link) {
+		parent._tg = nB
 	}
 }
 
