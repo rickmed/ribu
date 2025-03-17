@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { go, sleep } from "ribu"
+import { go, Job, sleep } from "ribu"
 
 
 describe(`Jobs block and resume each other with their return values`, () => {
@@ -32,12 +32,3 @@ describe(`Jobs block and resume each other with their return values`, () => {
 	})
 })
 
-
-// function* sup() {
-
-// 	for()
-
-
-
-
-// }

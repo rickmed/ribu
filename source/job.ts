@@ -163,6 +163,10 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 	isDone() {
 		return this._st & DONE
 	}
+
+	cancelSiblingsOnErr() {
+		this._st |= CANCEL_SIBLINGS_ON_ERR
+	}
 }
 
 function maybeExecCancel(job: JobBase) {
@@ -269,7 +273,6 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 }
 
 export function resumeJob(thisJob: Job, val?: unknown) {
-
 	thisJob._st = 0
 	sys.pushJob(thisJob)
 
@@ -308,10 +311,11 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 	}
 }
 
-function genFnFailed(job: Job, cause: unknown) {
-	job._st |= ERR_IN_GENFN
-	job.val = GenFnErr(job._nm, cause)
-	endProtocol(job, true)
+function genFnFailed(thisJob: Job, cause: unknown) {
+	thisJob._st |= ERR_IN_GENFN
+	thisJob._st |= CANCEL_SIBLINGS_ON_ERR
+	thisJob.val = GenFnErr(thisJob._nm, cause)
+	endProtocol(thisJob, true)
 }
 
 function endProtocol(thisJob: Job, cancelChildren = false) {
@@ -321,28 +325,55 @@ function endProtocol(thisJob: Job, cancelChildren = false) {
 		return
 	}
 
+	if (thisJob._st & WAITING_CHILDREN) {
+		return
+	}
+
+	const prevSt = thisJob._st
 	thisJob._st |= WAITING_CHILDREN
 
-	// Repurpose ._chd/._prnt Links into ._tg/._ob.
-	// Parent doesn't have targets at this point, so we can just set ._tg.
+	// need to check if I'm already subscribed to children
+	// ie, if _st & WAITING_CHILDREN
+
 	thisJob._tg = childLink
 	thisJob._chd = null
 	while (childLink) {
 		let childJob = childLink.b
-		childJob._addOb(childLink)
 		childJob._prnt = null
+
+		// If child failed, enProtocol() will be called to cancel children,
+		// so we check to not subscribe to child again.
+		if (!(prevSt & WAITING_CHILDREN)) {
+			childJob._addOb(childLink)
+		}
+
+		childLink = childLink.nB
+
 		if (cancelChildren) {
 			cancelJob(childJob)
 		}
-		childLink = childLink.nB
 	}
 }
 
+// 1)
+// maybe I can put _chd and _tg in the same LL
+// since a job is parked in only at one target
+// st = PARKED, i know head is not children
+// 2)
+// implement sleep as normal yieldable in same ._tg
+
+/* PROBLEM:
+
+
+*/
+
+// genFn completes, now children are in _tg.
+
 function waitingChildren(thisJob: Job, tgVal: unknown, tg: Tg) {
-	let { _tg } = thisJob
+	let { _tg, _st } = thisJob
 
 	if (!_tg) {
-		thisJob._st &= ~WAITING_CHILDREN
+		_st &= ~WAITING_CHILDREN
 		execOnEnds(thisJob)
 		return
 	}
@@ -350,7 +381,10 @@ function waitingChildren(thisJob: Job, tgVal: unknown, tg: Tg) {
 	// if child settled with DONE_ECANCOK, it's ok
 	if (tg._st & ERR_IN_GENFN_OR_ONEND) {
 		addErrorToJobVal(thisJob, tgVal as AnErr, ERR_IN_GENFN, "waitingChildren")
-		endProtocol(thisJob, true)
+		if (_st & CANCEL_SIBLINGS_ON_ERR) {
+			// if i'm already waiting for children
+			endProtocol(thisJob, true)
+		}
 	}
 }
 
@@ -608,28 +642,28 @@ firstOK
 
 
 
-export function cancel(...jobs: Job[]) {
-	let callerJob = sys.runningJob
-	callerJob._st |= PARKED_JOB_CANCEL
-	const observer = new CancelAll()
-	subscribeToAllJobs(jobs, observer, true)
-}
+// export function cancel(...jobs: Job[]) {
+// 	let callerJob = sys.runningJob
+// 	callerJob._st |= PARKED_JOB_CANCEL
+// 	const observer = new CancelAll()
+// 	subscribeToAllJobs(jobs, observer, true)
+// }
 
-class CancelAll extends JobBase {
+// class CancelAll extends JobBase {
 
-	_nm = "cancel"
+// 	_nm = "cancel"
 
-	_onTgDone(tgVal: unknown, tg: Job) {
-		const { val, _tg } = this
-		if (tg._st & ERR_IN_ONEND) {
-			addErrorToJobVal(this, tgVal as Err)
-		}
-		if (!_tg) {
-			this._st |= DONE
-			notifyObservers(this, val)
-		}
-	}
-}
+// 	_onTgDone(tgVal: unknown, tg: Job) {
+// 		const { val, _tg } = this
+// 		if (tg._st & ERR_IN_ONEND) {
+// 			// addErrorToJobVal(this, tgVal as Err)
+// 		}
+// 		if (!_tg) {
+// 			this._st |= DONE
+// 			notifyObservers(this, val)
+// 		}
+// 	}
+// }
 
 export function subscribeToAllJobs(jobs: Job[], ob: Ob, cancel = false) {
 	for (let i = 0; i < jobs.length; i++) {

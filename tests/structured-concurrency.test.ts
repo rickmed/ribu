@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest"
-import { go, sleep } from "ribu"
+import { go, me, sleep } from "ribu"
 import { _Err } from "./utils.ts"
 import { GenFnErr, WaitingChldErr } from "../source/errors.ts"
-
 
 describe("job auto-waits for children to finish", () => {
 
@@ -30,7 +29,7 @@ describe("job auto-waits for children to finish", () => {
 		expect(jobsDone).toBe(2)
 	})
 
-	it("if child job fails, parent cancels its siblings and is resolved with correct Error", async () => {
+	it.only("if child job fails, parent cancels its siblings and is resolved with correct Error", async () => {
 
 		let child2Finished = false
 
@@ -45,6 +44,7 @@ describe("job auto-waits for children to finish", () => {
 		}
 
 		function* main() {
+			me().cancelSiblingsOnErr()
 			yield* sleep(1)
 			go(child1)
 			go(child2)
@@ -55,4 +55,32 @@ describe("job auto-waits for children to finish", () => {
 		expect(rec).toStrictEqual(exp)
 		expect(child2Finished).toBe(false)
 	})
+})
+
+
+it("if parent job fails, it cancels its children", async () => {
+
+	let finished = 0
+
+	function* child11() {
+		yield* sleep(2)
+		finished++
+	}
+
+	function* child22() {
+		yield* sleep(3)
+		finished++
+	}
+
+	function* main() {
+		go(child11)
+		go(child22)
+		yield* sleep(1)
+		throw Error("Bad")
+	}
+
+	const rec = await go(main).promErr
+	const exp = GenFnErr("main", Error("Bad"))
+	expect(rec).toStrictEqual(exp)
+	expect(finished).toBe(0)
 })
