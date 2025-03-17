@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { Err, go, sleep } from "ribu"
+import { go, sleep } from "ribu"
 import { _Err } from "./utils.ts"
 import { GenFnErr, WaitingChldErr } from "../source/errors.ts"
 

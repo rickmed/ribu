@@ -2,16 +2,13 @@ import { sys, type Link, EMPTY, disposeLink, freshLink, Tg, Ob, Itrtor, iterRes,
 import { _Err, Err, CANC_OK, CancOK, GenFnErr, OnEndErr, AnErr, WaitingChldErr } from "./errors.ts"
 import { cancelSleep } from "./timers.ts"
 
-/* I think I need a distinction in waitingChildren between:
-	- I was cancelled
-	- I was waiting for children to finish
-
-*/
+// => thinking parents shouldn't cancel children if sibling failed.
+//  maybe config jobs like go(genFn, ...ars).supervision(CancelSiblingsOnErr)
 
 
+// todo: implement "unsub() to have something like trio's moveOnAfter()
+// 	for jobs and job-helpers
 
-// implement "unsub() to have something like trio's moveOnAfter()
-// for jobs and job-helpers
 // todo: remove Job stack from sys, put it here and use LL
 // todo: clean-up documentation
 
@@ -32,6 +29,7 @@ export const DONE = 1 << 9  // 512
 const CANCOK = 1 << 10  // 1024
 export const ERR_IN_GENFN = 1 << 11  // 2048
 const ERR_IN_ONEND = 1 << 12  // 4096
+const CANCEL_SIBLINGS_ON_ERR = 1 << 13  // 8192
 
 const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_CH
 const ANY_ERR = ERR_IN_GENFN | ERR_IN_ONEND
@@ -177,9 +175,8 @@ function maybeExecCancel(job: JobBase) {
 }
 
 function shouldCallerJobFail(callerJob: Job, targetJob: Tg) {
-	const { _st: targetSt } = targetJob
-	return (callerJob._st & PARKED_JOB) && (targetSt & ANY_ERR_OR_CANCOK) ||
-		(callerJob._st & PARKED_JOB_CANCEL) && (targetSt & ERR_IN_ONEND)
+	return (callerJob._st & PARKED_JOB) && (targetJob._st & ANY_ERR_OR_CANCOK) ||
+		(callerJob._st & PARKED_JOB_CANCEL) && (targetJob._st & ERR_IN_ONEND)
 }
 
 
@@ -332,14 +329,11 @@ function endProtocol(thisJob: Job, cancelChildren = false) {
 	thisJob._chd = null
 	while (childLink) {
 		let childJob = childLink.b
-
 		childJob._addOb(childLink)
 		childJob._prnt = null
-
 		if (cancelChildren) {
 			cancelJob(childJob)
 		}
-
 		childLink = childLink.nB
 	}
 }

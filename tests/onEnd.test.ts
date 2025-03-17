@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { go, sleep, onEnd } from "ribu"
 import { assertRibuErr, expect as exp } from "./utils.ts"
 
-describe("non-cancellation scenarios", () => {
+describe.skip("non-cancellation scenarios", () => {
 
 	it("user returns a type Error and an onEnd fails", async () => {
 

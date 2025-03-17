@@ -31,3 +31,13 @@ describe(`Jobs block and resume each other with their return values`, () => {
 		expect(rec).toBe(doneVal)
 	})
 })
+
+
+// function* sup() {
+
+// 	for()
+
+
+
+
+// }

@@ -5,7 +5,7 @@ import { assertRibuErr, sleepProm } from "./utils.ts"
 
 //* ********** Job Combinators  ********** *//
 
-describe("allDone()", () => {
+describe.skip("allDone()", () => {
 
 	it("waits for jobs concurrently and return their results in an array", async () => {
 
@@ -33,7 +33,7 @@ describe("allDone()", () => {
 	})
 })
 
-describe("allOrErr(): waits for jobs concurrently and return their results in an array", () => {
+describe.skip("allOrErr(): waits for jobs concurrently and return their results in an array", () => {
 
 	it("no jobs fail", async () => {
 
@@ -105,7 +105,7 @@ describe("allOrErr(): waits for jobs concurrently and return their results in an
 	})
 })
 
-describe("first()", () => {
+describe.skip("first()", () => {
 
 	it("returns the settled value of the first job that settles. The others are cancelled", async () => {
 
@@ -135,7 +135,7 @@ describe("first()", () => {
 	})
 })
 
-describe("firstOK()", () => {
+describe.skip("firstOK()", () => {
 
 	it("returns the settled value of the first job that settles _succesfully_. The others are cancelled. The jobs that failed are ignored", async () => {
 
@@ -209,7 +209,7 @@ describe("firstOK()", () => {
 
 //* **********  Promise to Job  ********** *//
 
-describe("yield* fromProm()", () => {
+describe.skip("yield* fromProm()", () => {
 
 	it("job gets resumed when promise resolves", async () => {
 

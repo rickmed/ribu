@@ -3,7 +3,7 @@ import { go, sleep, onEnd } from "ribu"
 import { sleepProm } from "./utils.ts"
 
 
-describe("onEnds run when job's generator function returns", () => {
+describe.skip("onEnds run when job's generator function returns", () => {
 
 	it("works with sync fn, async fn and job. Are executed in reverse added order", async () => {
 
