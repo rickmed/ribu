@@ -1,40 +1,36 @@
 import { describe, expect, it } from "vitest"
-import { go, sleep, Err, _Err } from "ribu"
-import { assertRibuErr } from "./utils.ts"
+import { Err, go, sleep } from "ribu"
+import { _Err } from "./utils.ts"
+import { GenFnErr, WaitingChldErr } from "../source/errors.ts"
+
 
 describe("job auto-waits for children to finish", () => {
 
-	it("if generator function returns and there are active children, it is blocked until its children are done", async () => {
+	it("if job returns and it has active children, it is blocked until its children are done", async () => {
 
-		let childsDone = 0
+		let jobsDone = 0
 
 		function* child() {
 			yield* sleep(2)
-			childsDone++
+			jobsDone++
+		}
+
+		function* child2() {
+			yield* sleep(2)
+			jobsDone++
 		}
 
 		function* main() {
 			go(child)
-			go(child)
+			go(child2)
 			yield* sleep(1)
 		}
 
-		await go(main).promfy
-		expect(childsDone).toBe(2)
+		await go(main)
+		expect(jobsDone).toBe(2)
 	})
 
-	it("if child job fails, parent cancels its siblings and it's resolved with correct Error", async () => {
-
-		const exp = {
-			_op: "main",
-			cause: {
-				_op: "child1",
-				cause: {
-					name: "Error",
-					message: "Bad",
-				}
-			}
-		}
+	it("if child job fails, parent cancels its siblings and is resolved with correct Error", async () => {
 
 		let child2Finished = false
 
@@ -54,11 +50,9 @@ describe("job auto-waits for children to finish", () => {
 			go(child2)
 		}
 
-		const rec = await go(main).promfyCont
-
+		const rec = await go(main).promErr
+		const exp = WaitingChldErr("main", GenFnErr("child1", Error("Bad")))
+		expect(rec).toStrictEqual(exp)
 		expect(child2Finished).toBe(false)
-		assertRibuErr(rec)
-		expect(rec).toMatchObject(exp)
-		expect(rec.cause).toBeInstanceOf(_Err)
 	})
 })

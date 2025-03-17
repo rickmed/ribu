@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { go, sleep, Err } from "ribu"
+import { _Err } from "./utils.ts"
 
 describe("Job properly propagates errrors", () => {
 
@@ -54,8 +55,3 @@ describe("Job properly propagates errrors", () => {
 		expect(rec).toStrictEqual(exp)
 	})
 })
-
-
-export function _Err(fnName: string, cause?: unknown) {
-	return Err("GenFnErr", fnName, "", cause)
-}

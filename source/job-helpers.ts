@@ -1,4 +1,4 @@
-import { DONE, ANY_ERR_OR_CANCOK, Job, JobBase, addErrorToJobVal, cancel, go, notifyObservers, subscribeToAllJobs as subscribeToJobs, type YielRet, ERR_IN_GENFN, execSettle, cancelJob } from "./job.ts"
+import { DONE, ANY_ERR_OR_CANCOK, Job, JobBase, addErrorToJobVal, cancel, go, notifyObservers, subscribeToAllJobs as subscribeToJobs, type YielRet, ERR_IN_GENFN, execSettle, cancelJob, onEnd, CANCELLED } from "./job.ts"
 import { userErrCtor, _Err, Err } from "./errors.ts"
 import { Ob, Tg, unlinkObAndTg } from "./system.ts"
 
@@ -24,7 +24,11 @@ function unLinkFromTargets(ob: Ob) {
 => thinking about helper._cancel() implementation, what logic from cancelJob()
 	think that helper is aleady subscribed to jobs so maybe
 	just trigget cancelJob(job) is sufficient
-	- then need to handle if job had cancel errors (?)
+	- but need to handle if job had cancel errors (?)
+
+=> See how would implement job/genFn based and see if helps class based.
+ - if not, implement all job/genFn based helpers - DO THIS!!!!!
+
 
 */
 
@@ -54,7 +58,15 @@ class AllOrErr<T> extends JobBase<T[], T[] | EmptyArgsErr | Err<string>> {
 	}
 
 	_onTgDone(tgVal: unknown, tg: Tg) {
-		const { _tg, val: thisVal } = this
+		const { _st, _tg, val: thisVal } = this
+
+		if (_st & CANCELLED) {
+			if (!_tg) {
+				this._settle()
+				return
+			}
+			// else accumulate errors or what?
+		}
 
 		if (tg._st & ANY_ERR_OR_CANCOK) {
 			addErrorToJobVal(this, tgVal, ERR_IN_GENFN)
@@ -66,8 +78,7 @@ class AllOrErr<T> extends JobBase<T[], T[] | EmptyArgsErr | Err<string>> {
 		thisVal.push(tgVal as T)
 
 		if (!this._tg) {
-			this._st |= DONE
-			notifyObservers(this, thisVal)
+			this._settle()
 			return
 		}
 	}
@@ -150,8 +161,14 @@ class All<OkVals> extends JobBase<OkVals[]> {
 - Settles with Error if passed-in array is empty.
  */
 export function first<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
-
+	// what if first() is cancelled?
+	// will run onEnds
 	return go(function* _first() {
+
+		onEnd(function* () {
+			// unsub from rest of jobs here??
+			yield* cancel(jobs)
+		})
 
 		if (jobs.length === 0) {
 			return userErrCtor("EmptyArguments", "first")
@@ -163,7 +180,7 @@ export function first<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 		}
 
 		const job = (yield ev.wait) as Job
-		yield cancel(jobs)
+		// unsub from rest of jobs here
 		return job.val as YielRet<Jobs[number]["val"]>
 	})
 }

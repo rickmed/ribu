@@ -69,11 +69,15 @@ export function _Err(cause: unknown, fnName: string, msg = "") {
 	return new Err("Err", fnName, cause, msg)
 }
 
+export function WaitingChldErr(fnName: string, cause: unknown,  msg = "") {
+	return new Err("WaitingChldErr", fnName, cause, msg)
+}
+
 export function OnEndErr(cause: unknown, fnName: string, msg = "") {
 	return new Err("OnEndErr", fnName, cause, msg)
 }
 
-export function GenFnErr(cause: unknown, fnName: string, msg = "") {
+export function GenFnErr(fnName: string, cause: unknown, msg = "") {
 	return new Err("GenFnErr", fnName, cause, msg)
 }
 

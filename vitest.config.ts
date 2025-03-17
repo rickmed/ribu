@@ -7,6 +7,7 @@ export default defineConfig({
 			forks: {
 				execArgv: ["--stack-trace-limit=30"]
 			}
-		}
+		},
+		setupFiles: ["./tests/setup.ts"]
 	}
 })

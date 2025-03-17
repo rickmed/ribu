@@ -1,6 +1,14 @@
-import { sys, type Link, EMPTY, disposeLink, freshLink, Tg, Ob, Itrtor, iterRes, linkObAndTg, unlinkObAndTg, Maybe, iterator, _Iterable, cleanSysOpSetup, setYieldOp } from "./system.ts"
-import { _Err, Err, CANC_OK, CancOK, GenFnErr, OnEndErr, AnErr } from "./errors.ts"
+import { sys, type Link, EMPTY, disposeLink, freshLink, Tg, Ob, Itrtor, iterRes, linkObAndTg, unlinkObAndTg as releaseObTgLink, Maybe, iterator, _Iterable, cleanSysOpSetup, setYieldOp } from "./system.ts"
+import { _Err, Err, CANC_OK, CancOK, GenFnErr, OnEndErr, AnErr, WaitingChldErr } from "./errors.ts"
 import { cancelSleep } from "./timers.ts"
+
+/* I think I need a distinction in waitingChildren between:
+	- I was cancelled
+	- I was waiting for children to finish
+
+*/
+
+
 
 // implement "unsub() to have something like trio's moveOnAfter()
 // for jobs and job-helpers
@@ -19,15 +27,15 @@ export const PARKED_SLEEP = 1 << 4  // 16
 const PARKED_CH = 1 << 5  // 32
 const WAITING_CHILDREN = 1 << 6  // 64
 const WAITING_ONENDS = 1 << 7  // 128
-const CANCELLED = 1 << 8  // 256
+export const CANCELLED = 1 << 8  // 256
 export const DONE = 1 << 9  // 512
-const DONE_CANCOK = 1 << 10  // 1024
+const CANCOK = 1 << 10  // 1024
 export const ERR_IN_GENFN = 1 << 11  // 2048
 const ERR_IN_ONEND = 1 << 12  // 4096
 
 const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_CH
 const ANY_ERR = ERR_IN_GENFN | ERR_IN_ONEND
-export const ANY_ERR_OR_CANCOK = ANY_ERR | DONE_CANCOK
+export const ANY_ERR_OR_CANCOK = ANY_ERR | CANCOK
 const ERR_IN_GENFN_OR_ONEND = ERR_IN_GENFN | ERR_IN_ONEND
 
 /* JobBase Class
@@ -95,7 +103,8 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 		if (this._tg === link) {
 			this._tg = nB
 		}
-		// no need to set link.nB/pB to null since it will be disposed immediately
+		// No need to set link.nB/pB to null since caller should
+		// dispose the link immediately.
 	}
 	_rmOb(link: Link<Ob, Tg>) {
 		let { nA, pA } = link
@@ -108,7 +117,8 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 		if (this._ob === link) {
 			this._ob = nA
 		}
-		// no need to set link.nA/pA to null since it will be disposed immediately
+		// No need to set link.nA/pA to null since caller should
+		// dispose the link immediately.
 	}
 
 	[Symbol.iterator]() {
@@ -280,7 +290,6 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 
 	iterRes.done = true
 	iterRes.value = val
-
 	try {
 		const { done, value} = thisJob._gn.next()
 		if (!done) {
@@ -302,9 +311,9 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 	}
 }
 
-function genFnFailed(job: Job, maybeErr: unknown) {
+function genFnFailed(job: Job, cause: unknown) {
 	job._st |= ERR_IN_GENFN
-	job.val = GenFnErr(maybeErr, job._nm)
+	job.val = GenFnErr(job._nm, cause)
 	endProtocol(job, true)
 }
 
@@ -317,38 +326,36 @@ function endProtocol(thisJob: Job, cancelChildren = false) {
 
 	thisJob._st |= WAITING_CHILDREN
 
-	let currentLink = childLink as Maybe<Link<Job, Job>>
-	while (currentLink) {
-		const nextLink = currentLink.nA
-		let childJob = currentLink.b
+	// Repurpose ._chd/._prnt Links into ._tg/._ob.
+	// Parent doesn't have targets at this point, so we can just set ._tg.
+	thisJob._tg = childLink
+	thisJob._chd = null
+	while (childLink) {
+		let childJob = childLink.b
 
-		// Repurpose parent-child link as observer-target link
-		thisJob._addTg(currentLink)
-		childJob._addOb(currentLink)
+		childJob._addOb(childLink)
 		childJob._prnt = null
 
 		if (cancelChildren) {
 			cancelJob(childJob)
 		}
 
-		currentLink = nextLink
+		childLink = childLink.nB
 	}
 }
 
 function waitingChildren(thisJob: Job, tgVal: unknown, tg: Tg) {
 	let { _tg } = thisJob
 
-	if (_tg) {
+	if (!_tg) {
 		thisJob._st &= ~WAITING_CHILDREN
 		execOnEnds(thisJob)
 		return
 	}
 
-	thisJob._st |= WAITING_CHILDREN
-
 	// if child settled with DONE_ECANCOK, it's ok
 	if (tg._st & ERR_IN_GENFN_OR_ONEND) {
-		addErrorToJobVal(thisJob, tgVal as AnErr, ERR_IN_GENFN)
+		addErrorToJobVal(thisJob, tgVal as AnErr, ERR_IN_GENFN, "waitingChildren")
 		endProtocol(thisJob, true)
 	}
 }
@@ -377,7 +384,7 @@ function execOnEnds(thisJob: Job) {
 			retVal = e
 		}
 		if (retVal instanceof Error) {
-			addErrorToJobVal(thisJob, OnEndErr(retVal, onEnd.name), ERR_IN_ONEND)
+			addErrorToJobVal(thisJob, OnEndErr(retVal, onEnd.name), ERR_IN_ONEND, "onEnd")
 		}
 		execOnEnds(thisJob)
 		return
@@ -388,7 +395,7 @@ function execOnEnds(thisJob: Job) {
 				execOnEnds(thisJob)
 			},
 			(err) => {
-				addErrorToJobVal(thisJob, OnEndErr(err, onEnd.name), ERR_IN_ONEND)
+				addErrorToJobVal(thisJob, OnEndErr(err, onEnd.name), ERR_IN_ONEND, "onEnd")
 				execOnEnds(thisJob)
 			}
 		)
@@ -399,7 +406,7 @@ function execOnEnds(thisJob: Job) {
 		// todo: change from CustomObserver to some static CB based
 		const observer = new CustomObserver((val, tg) => {
 			if (tg._st & ERR_IN_GENFN) {
-				addErrorToJobVal(thisJob, OnEndErr(val, onEnd.name), ERR_IN_ONEND)
+				addErrorToJobVal(thisJob, OnEndErr(val, onEnd.name), ERR_IN_ONEND, "onEnd")
 			}
 			execOnEnds(thisJob)
 		})
@@ -430,7 +437,7 @@ export function execSettle(thisJob: JobBase) {
 
 	if (_st & CANCELLED && !(_st & ERR_IN_ONEND)) {
 		thisJob.val = CANC_OK
-		thisJob._st = DONE_CANCOK
+		thisJob._st = CANCOK
 	}
 
 	thisJob._st |= DONE
@@ -440,9 +447,9 @@ export function execSettle(thisJob: JobBase) {
 export function notifyObservers(thisJob: JobBase, tgVal: unknown) {
 	while (thisJob._ob) {
 		const link = thisJob._ob
-		link.a._onTgDone(tgVal, thisJob)
-		thisJob._ob = link.nA
-		unlinkObAndTg(link)
+		const ob = link.a
+		releaseObTgLink(link)
+		ob._onTgDone(tgVal, thisJob)
 	}
 }
 
@@ -475,29 +482,34 @@ function execCancelJob(thisJob: Job) {
 	endProtocol(thisJob, true)
 }
 
+// A LL is used as if parent is observer and child is target.
+// Only .b (and .nB) properties are used, which by convention represent targets,
+// and LL head is in parent._chd instead of parent._tg.
+// .a (and .nA) properties are not used since a child can only have one parent,
+// so ._prnt is just set to the link.
 function linkParentChild(parent: Job, child: Job) {
 	let link = freshLink(parent, child)
 	child._prnt = link
 
 	let oldChdHead = parent._chd
 	parent._chd = link
-	link.nA = oldChdHead
+	link.nB = oldChdHead
 	if (oldChdHead) {
-		oldChdHead.pA = link
+		oldChdHead.pB = link
 	}
 }
 
 function removeLinkFromParent(link: Link<Job, Job>) {
-	let { nA, pA } = link
-	if (nA) {
-		nA.pA = pA
+	let { nB, pB } = link
+	if (nB) {
+		nB.pB = pB
 	}
-	if (pA) {
-		pA.nA = nA
+	if (pB) {
+		pB.nB = nB
 	}
 	let parent = link.a
 	if (parent._chd === link) {
-		parent._chd = nA
+		parent._chd = nB
 	}
 }
 
@@ -511,13 +523,21 @@ class CustomObserver implements Ob {
 	_rmTg() {}
 }
 
-export function addErrorToJobVal(job: JobBase, err: AnErr, st: JobBase["_st"]) {
+type ErrType = "waitingChildren" | "onEnd"
+
+export function addErrorToJobVal(job: JobBase, cause: AnErr, st: JobBase["_st"], errType: ErrType) {
 	const { _st } = job
 	if (!(_st & ANY_ERR)) {
-		job.val = _Err(err, job._nm, _st & CANCELLED ? "cancelled" : "")
+		const errMsg = _st & CANCELLED ? "cancelled" : ""
+
+		const err = errType === "waitingChildren" ?
+			WaitingChldErr(job._nm, cause, errMsg) :
+			OnEndErr(cause, job._nm, errMsg)
+
+		job.val = err
 	}
 	else {
-		(job.val as AnErr).addErr(err)
+		(job.val as AnErr).addErr(cause)
 	}
 	job._st |= st
 }

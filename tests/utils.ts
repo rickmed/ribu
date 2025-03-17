@@ -1,3 +1,9 @@
+import { Err } from "ribu"
+
+export function _Err(fnName: string, cause?: unknown) {
+	return Err("GenFnErr", fnName, "", cause)
+}
+
 export async function checkAsyncFnThrows(fn: () => Promise<unknown>) {
 	try {
 		await fn()

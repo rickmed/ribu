@@ -20,7 +20,7 @@
 	},
 	"scripts": {
 		"test": "clear; vitest --run --no-cache --no-isolate",
-		"test:watch": "clear; vitest --no-cache --no-isolate",
+		"test:watch": "clear; DEBUG=true vitest --no-cache --no-isolate",
 		"test:cov": "cross-env 'NODE_OPTIONS=--import @istanbuljs/esm-loader-hook --no-warnings' nyc npm test",
 		"type-check": "tsc --noEmit",
 		"build": "rm -rf dist; tsc",

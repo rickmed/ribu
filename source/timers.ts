@@ -45,6 +45,5 @@ export function cancelSleep(job: Job, _clearTimeout = true) {
 
 function timeOutCB(callerJob: Job) {
 	cancelSleep(callerJob, false)
-	iterRes.done = true
 	resumeJob(callerJob)
 }
