@@ -1,4 +1,4 @@
-import { sysIterable } from "./system.ts"
+import { freshLink, sysIterable } from "./system.ts"
 import { resumeJob, PARKED_SLEEP, Job } from "./job.ts"
 import { Link, Ob, Tg, Yieldable, IterRes } from "./system.ts"
 
@@ -25,7 +25,8 @@ const yieldable: Yieldable = {
 	execYield(callerJob: Job, iterRes: IterRes) {
 		callerJob._st |= PARKED_SLEEP
 		const timeout = setTimeout(timeOutCB, _ms, callerJob) as unknown as Link<Ob, Tg>
-		callerJob._addTg(timeout)
+		const link = freshLink(callerJob, timeout) as unknown as Link<Ob, Tg>
+		callerJob._addTg(link)
 		iterRes.done = false
 	}
 }
@@ -37,7 +38,7 @@ export function sleep(ms: number) {
 
 export function cancelSleep(job: Job, _clearTimeout = true) {
 	if (_clearTimeout) {
-		clearTimeout(job._tg as unknown as NodeJS.Timeout)
+		clearTimeout(job._tg!.b as unknown as NodeJS.Timeout)
 	}
 	job._rmTgHead()
 }

@@ -3,17 +3,6 @@ import { _Err, Err, CANC_OK, CancOK, GenFnErr, OnEndErr, AnErr, WaitingChldErr }
 import { cancelSleep } from "./timers.ts"
 
 
-/*
-1)
-maybe I can put _chd and _tg in the same _tg LL.
-Since a job is parked in only at one target
-st = PARKED, i know head is not children
-
-*/
-
-
-
-
 
 // todo: implement "unsub() to have something like trio's moveOnAfter()
 // 	for jobs and job-helpers
@@ -32,13 +21,14 @@ const PARKED_JOB_CANCEL = 1 << 3  // 8
 export const PARKED_SLEEP = 1 << 4  // 16
 const PARKED_CH = 1 << 5  // 32
 const WAITING_CHILDREN = 1 << 6  // 64
-const WAITING_ONENDS = 1 << 7  // 128
-export const CANCELLED = 1 << 8  // 256
-export const DONE = 1 << 9  // 512
-const CANCOK = 1 << 10  // 1024
-export const ERR_IN_GENFN = 1 << 11  // 2048
-const ERR_IN_ONEND = 1 << 12  // 4096
-const CANCEL_SIBLINGS_ON_ERR = 1 << 13  // 8192
+const CHILDREN_CANCELLED = 1 << 7  // 128
+const WAITING_ONENDS = 1 << 8  // 256
+export const CANCELLED = 1 << 9  // 512
+export const DONE = 1 << 10  // 1024
+const CANCOK = 1 << 11  // 2048
+export const ERR_IN_GENFN = 1 << 12  // 4096
+const ERR_IN_ONEND = 1 << 13  // 8192
+const CANCEL_SIBLINGS_ON_ERR = 1 << 14  // 16384
 
 const PARKED_NOT_SLEEP = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_CH
 const PARKED = PARKED_NOT_SLEEP | PARKED_SLEEP
@@ -336,6 +326,9 @@ function endProtocol(thisJob: Job, cancelChildren = false) {
 	}
 
 	thisJob._st |= WAITING_CHILDREN
+	if (cancelChildren) {
+		thisJob._st |= CHILDREN_CANCELLED
+	}
 
 	do {
 		let childJob = childLink.b
@@ -351,21 +344,18 @@ function endProtocol(thisJob: Job, cancelChildren = false) {
 function waitingChildren(thisJob: Job, tgVal: unknown, tg: Tg) {
 	let { _tg, _st } = thisJob
 
-	// if child settled with DONE_ECANCOK, it's ok
 	if (tg._st & ERR_IN_GENFN_OR_ONEND) {
 		addErrorToJobVal(thisJob, tgVal as AnErr, ERR_IN_GENFN, "waitingChildren")
+		if (_tg && _st & CANCEL_SIBLINGS_ON_ERR && !(_st & CHILDREN_CANCELLED)) {
+			for (let childLink = thisJob._tg; childLink; childLink = childLink.nB) {
+				cancelJob(childLink.b)
+			}
+		}
 	}
 
 	if (!_tg) {
 		_st &= ~WAITING_CHILDREN
 		execOnEnds(thisJob)
-		return
-	}
-
-	if (_st & CANCEL_SIBLINGS_ON_ERR) {
-		for (let childLink = thisJob._tg; childLink; childLink = childLink.nB) {
-			cancelJob(childLink.b)
-		}
 	}
 }
 
