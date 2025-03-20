@@ -1,6 +1,5 @@
-import { freshLink, sysIterable } from "./system.ts"
-import { resumeJob, PARKED_SLEEP, Job } from "./job.ts"
-import { Link, Ob, Tg, Yieldable, IterRes } from "./system.ts"
+import { freshLink, sysIterable, Link, Ob, Tg, Yieldable, IterRes, disposeLink } from "./system.js"
+import { resumeJob, PARKED_SLEEP, Job } from "./job.js"
 
 /*  let's do all yield*
 
@@ -40,7 +39,7 @@ export function cancelSleep(job: Job, _clearTimeout = true) {
 	if (_clearTimeout) {
 		clearTimeout(job._tg!.b as unknown as NodeJS.Timeout)
 	}
-	job._rmTgHead()
+	disposeLink(job._rmTgHead())
 }
 
 function timeOutCB(callerJob: Job) {

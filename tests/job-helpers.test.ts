@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { go, sleep, all, allOrErr, first, firstOK, promToJob, isErr } from "ribu"
-import { assertRibuErr, sleepProm } from "./utils.ts"
+import { assertRibuErr, sleepProm } from "./utils.js"
 
 
 //* ********** Job Combinators  ********** *//

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { go, sleep } from "ribu"
-import { sleepProm } from "./utils.ts"
+import { sleepProm } from "./utils.js"
 
 
 describe("sleep()", () => {

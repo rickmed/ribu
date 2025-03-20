@@ -1,8 +1,8 @@
-export { go, onEnd, type Job as Job, me, RibuGen,cancel } from "./job.ts"
-export { sleep } from "./timers.ts"
-export { Ch, OutCh } from "./channel.ts"
-export { userErrCtor as Err, isErr, Err as RibuErr, CANC_OK, CancOK } from "./errors.ts"
-export { all, allOrErr, first, firstOK, promToJob } from "./job-helpers.ts"
+export { go, onEnd, type Job as Job, me, type RibuGen } from "./job.js"
+export { sleep } from "./timers.js"
+// export { Ch, type OutCh, type InCh } from "./channel.js"
+export { userErrCtor as Err, isErr, Err as RibuErr, CANC_OK, CancOK } from "./errors.js"
+// export { all, allOrErr, first, firstOK, promToJob } from "./job-helpers.js"
 
 /**
  * Creates a deep copy of an object using JSON serialization.

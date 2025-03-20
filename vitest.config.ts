@@ -9,5 +9,14 @@ export default defineConfig({
 			}
 		},
 		setupFiles: ["./tests/setup.ts"]
+	},
+	resolve: {
+		alias: [
+			{
+				// resolve .js imports to .ts files
+				find: /^(.+)\.js$/,
+				replacement: "$1.ts"
+			}
+		]
 	}
 })

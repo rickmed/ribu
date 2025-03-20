@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { go, sleep, onEnd } from "ribu"
-import { sleepProm } from "./utils.ts"
+import { sleepProm } from "./utils.js"
 
 
 describe.skip("onEnds run when job's generator function returns", () => {

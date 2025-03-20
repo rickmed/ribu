@@ -1,5 +1,6 @@
-import { Err } from "ribu"
-import { type Job } from "./job.ts"
+import { Err } from "./errors.js"
+import { type Job } from "./job.js"
+
 
 /* *************  Lexicon   ****************************************************
 
@@ -95,7 +96,7 @@ export function setYieldOp(op: string, callerJobNextSt: Job["_st"]) {
 			Current operation: ${op}
 		`
 		// eslint-disable-next-line @typescript-eslint/only-throw-error
-		throw Err("RibuErr", sys.runningJob._nm, errMsg)
+		throw new Err("RibuErr", sys.runningJob._nm, undefined, errMsg)
 	}
 
 	sys.callerJobToSetSt = callerJobNextSt
@@ -148,14 +149,17 @@ export type Maybe<T> = T | null
  * pB is previous ObjectB Link
  */
 export class Link<A = unknown, B = unknown> {
-	constructor(
-		public a: A,
-		public b: B,
-	) {}
+	a: A
+	b: B
 	nA: Maybe<Link<A, B>> = null
 	pA: Maybe<Link<A, B>> = null
 	nB: Maybe<Link<A, B>> = null
 	pB: Maybe<Link<A, B>> = null
+
+	constructor(a: A, b: B) {
+		this.a = a
+		this.b = b
+	}
 }
 
 export type MaybeLink = Maybe<Link>
@@ -167,12 +171,16 @@ export type MaybeLink = Maybe<Link>
  * todo: manage pool size
  */
 let linkPoolHead: Maybe<Link> = null
+let linkPoolSize = 0
+export function getLinkPoolSize() {
+	return linkPoolSize
+}
 
 export function disposeLink(link: Link) {
+	linkPoolSize++
 
 	link.nA = linkPoolHead
 	linkPoolHead = link
-
 	link.a = null
 	link.b = null
 	link.pA = null
@@ -184,6 +192,8 @@ export function freshLink<A, B>(a: A, b: B) {
 	if (!linkPoolHead) {
 		return new Link(a, b)
 	}
+
+	linkPoolSize--
 
 	let link = linkPoolHead
 	linkPoolHead = link.nA

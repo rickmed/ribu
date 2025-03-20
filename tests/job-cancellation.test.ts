@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { go, onEnd, cancel, CANC_OK, Err, sleep, Job } from "ribu"
-import { assertRibuErr } from "./utils.ts"
+import { assertRibuErr } from "./utils.js"
 
 
 function* child(ctx: {count: number}) {

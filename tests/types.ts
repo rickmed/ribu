@@ -1,6 +1,6 @@
 import { CancOK, Err as newErr, go, sleep, allOrErr } from "ribu"
-import { EmptyArgsErr } from "../source/job-helpers.ts"
-import { Err } from "../source/errors.ts"
+import { EmptyArgsErr } from "../source/job-helpers.js"
+import { Err } from "../source/errors.js"
 
 function* jobFn(x?: number) {
 	yield* sleep(1)

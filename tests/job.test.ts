@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { go, Job, sleep } from "ribu"
+import { go, sleep } from "ribu"
 
 
 describe(`Jobs block and resume each other with their return values`, () => {
@@ -31,4 +31,3 @@ describe(`Jobs block and resume each other with their return values`, () => {
 		expect(rec).toBe(doneVal)
 	})
 })
-

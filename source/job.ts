@@ -1,7 +1,6 @@
-import { sys, type Link, EMPTY, disposeLink, freshLink, Tg, Ob, Itrtor, iterRes, linkObAndTg, unlinkObAndTg as releaseObTgLink, Maybe, iterator, _Iterable, cleanSysOpSetup, setYieldOp } from "./system.ts"
-import { _Err, Err, CANC_OK, CancOK, GenFnErr, OnEndErr, AnErr, WaitingChldErr } from "./errors.ts"
-import { cancelSleep } from "./timers.ts"
-
+import { sys, type Link, EMPTY, disposeLink, freshLink, Tg, Ob, Itrtor, iterRes, linkObAndTg, unlinkObAndTg, Maybe, iterator, _Iterable, cleanSysOpSetup, setYieldOp } from "./system.js"
+import { _Err, Err, CANC_OK, CancOK, GenFnErr, OnEndErr, AnErr, WaitingChldErr } from "./errors.js"
+import { cancelSleep } from "./timers.js"
 
 
 // todo: implement "unsub() to have something like trio's moveOnAfter()
@@ -98,6 +97,7 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 		if (this._tg === link) {
 			this._tg = nB
 		}
+		return link
 		// No need to set link.nB/pB to null since caller should
 		// dispose the link immediately.
 	}
@@ -117,7 +117,7 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 	}
 
 	_rmTgHead() {
-		this._rmTg(this._tg!)
+		return this._rmTg(this._tg!)
 	}
 
 	[Symbol.iterator]() {
@@ -220,7 +220,10 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 		this._gn = gen
 		this._nm = genFnName
 		if (parent) {
-			linkParentChild(parent, this)
+			// linkParentChild
+			let link = freshLink(parent, this)
+			parent._addTg(link)
+			this._prnt = link
 		}
 	}
 
@@ -256,10 +259,18 @@ export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, Ge
 	}
 
 	then(res: (val: OkRet) => void, rej: (err: GetterErr) => void) {
+		if (this._st & DONE) {
+			resolveProm(this.val, this)
+			return
+		}
 		const observer = new CustomObserver((val, tg) => {
-			void ((tg._st & ANY_ERR_OR_CANCOK) ? rej(val as GetterErr) : res(val as OkRet))
+			resolveProm(val, tg)
 		})
 		linkObAndTg(observer, this)
+
+		function resolveProm(val: unknown, tg: Tg) {
+			void ((tg._st & ANY_ERR_OR_CANCOK) ? rej(val as GetterErr) : res(val as OkRet))
+		}
 	}
 
 	get promErr() {
@@ -418,20 +429,18 @@ function execOnEnds(thisJob: Job) {
 }
 
 function settle(thisJob: Job) {
-	removeParent(thisJob)
-	execSettle(thisJob)
-}
-
-function removeParent(thisJob: Job) {
+	// removeParent
 	const { _prnt } = thisJob
 	if (_prnt) {
 		thisJob._prnt = null
 		removeLinkFromParent(_prnt)
 		disposeLink(_prnt)
 	}
+
+	execSettle(thisJob)
 }
 
-export function execSettle(thisJob: JobBase) {
+export function execSettle(thisJob: Job) {
 	const { _st, val } = thisJob
 
 	if (_st & CANCELLED && !(_st & ERR_IN_ONEND)) {
@@ -440,6 +449,8 @@ export function execSettle(thisJob: JobBase) {
 	}
 
 	thisJob._st |= DONE
+	// todo: maybe resuse job objects
+	thisJob._gn = undefined as unknown as RibuGen
 	notifyObservers(thisJob, val)
 }
 
@@ -447,7 +458,7 @@ export function notifyObservers(thisJob: JobBase, tgVal: unknown) {
 	while (thisJob._ob) {
 		const link = thisJob._ob
 		const ob = link.a
-		releaseObTgLink(link)
+		unlinkObAndTg(link)
 		ob._onTgDone(tgVal, thisJob)
 	}
 }
@@ -482,12 +493,6 @@ function execCancelJob(thisJob: Job) {
 }
 
 
-function linkParentChild(parent: Job, child: Job) {
-	let link = freshLink(parent, child)
-	parent._addTg(link)
-	child._prnt = link
-}
-
 function removeLinkFromParent(link: Link<Job, Job>) {
 	let { nB, pB } = link
 	if (nB) {
@@ -504,7 +509,12 @@ function removeLinkFromParent(link: Link<Job, Job>) {
 
 class CustomObserver implements Ob {
 	declare _tg: Link<Ob, Job>
-	constructor(private onTgDone: (val: unknown, tg: Tg) => void) {}
+	private onTgDone: (val: unknown, tg: Tg) => void
+
+	constructor(onTgDone: (val: unknown, tg: Tg) => void) {
+		this.onTgDone = onTgDone
+	}
+
 	_onTgDone(val: unknown, tg: Tg) {
 		this.onTgDone(val, tg)
 	}
@@ -607,7 +617,7 @@ firstOK
 // 	let callerJob = sys.runningJob
 // 	callerJob._st |= PARKED_JOB_CANCEL
 // 	const observer = new CancelAll()
-// 	subscribeToAllJobs(jobs, observer, true)
+// subscribeToAllJobs(jobs, observer, true)
 // }
 
 // class CancelAll extends JobBase {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { go, sleep, Err } from "ribu"
-import { _Err } from "./utils.ts"
+import { _Err } from "./utils.js"
 
 describe("Job properly propagates errrors", () => {
 

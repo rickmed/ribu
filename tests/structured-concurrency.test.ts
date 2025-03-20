@@ -1,7 +1,7 @@
 import { expect, it } from "vitest"
 import { go, me, sleep } from "ribu"
-import { _Err } from "./utils.ts"
-import { GenFnErr, WaitingChldErr } from "../source/errors.ts"
+import { _Err } from "./utils.js"
+import { GenFnErr, WaitingChldErr } from "../source/errors.js"
 
 
 it("if job returns and it has active children, it is blocked until its children are done", async () => {

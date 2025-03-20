@@ -1,5 +1,5 @@
-import { Job, YIELD, type Iterable } from "./job.ts"
-import { sys, iterRes, EMPTY } from "./system.ts"
+import { Job } from "./job.js"
+import { sys, iterRes, EMPTY } from "./system.js"
 
 // channel resumes job if job._state != DONE
 // else, it skips it and pulls another one
@@ -9,6 +9,12 @@ import { sys, iterRes, EMPTY } from "./system.ts"
 // Optimization: lots of Channels are to send only one msg,
 // so only instantiate internal queue at second queued msg.
 
+const REC = 0
+const PUT = 1
+let op: typeof REC | typeof PUT = PUT
+// Store putMsg later when we can safely access EMPTY
+let putMsg: unknown
+
 export function Ch<V = undefined>(): Chan<V> {
 	return new Chan<V>()
 }
@@ -17,24 +23,23 @@ export function isCh(x: unknown): x is Chan {
 	return x instanceof Chan
 }
 
+// Now we can safely initialize putMsg
+putMsg = EMPTY
+
 type PutVal<V> = V extends undefined ? void : V
 
 // todo, type for unclosable channel
 
-export interface OutCh<in V> {
+export type OutCh<in V> = {
 	put: (msg: PutVal<V>) => Iterable<undefined>
 	enQ: (msg: PutVal<V>) => void
 }
 
-type InCh<out V> = {
+export type InCh<out V> = {
 	rec: Iterable<V>
 }
 
-const REC = 0
-const PUT = 1
-let op: typeof REC | typeof PUT = PUT
-let putMsg: unknown = EMPTY
-
+// Initialize receivers after EMPTY is available
 type Receivers = typeof EMPTY | Linkable | Queue<Linkable>
 
 /*

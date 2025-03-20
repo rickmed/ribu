@@ -3,6 +3,21 @@
 	"description": "A Concurrency Library for Javascript",
 	"version": "0.1.2",
 	"type": "module",
+	"scripts": {
+		"test": "vitest --run --no-cache --no-isolate",
+		"test:watch": "clear; DEBUG=true vitest --no-cache --no-isolate",
+		"test:cov": "cross-env 'NODE_OPTIONS=--import @istanbuljs/esm-loader-hook --no-warnings' nyc npm test",
+		"type-check": "tsc --noEmit",
+		"build": "rm -rf dist; tsc",
+		"preinstall": "node scripts/preinstall.js",
+		"profile:flame": "0x -- node --loader=tsx --no-warnings benchmarks/profile-job.ts"
+	},
+	"exports": {
+		".": {
+			"import": "./source/index.js",
+			"types": "./source/index.ts"
+		}
+	},
 	"engines": {
 		"npm": "please-use-bun",
 		"yarn": "please-use-bun",
@@ -13,37 +28,25 @@
 		"source",
 		"test-utils"
 	],
-	"exports": {
-		".": {
-			"import": "./source/index.ts"
-		}
-	},
-	"scripts": {
-		"test": "clear; vitest --run --no-cache --no-isolate",
-		"test:watch": "clear; DEBUG=true vitest --no-cache --no-isolate",
-		"test:cov": "cross-env 'NODE_OPTIONS=--import @istanbuljs/esm-loader-hook --no-warnings' nyc npm test",
-		"type-check": "tsc --noEmit",
-		"build": "rm -rf dist; tsc",
-		"preinstall": "node scripts/preinstall.js"
-	},
 	"devDependencies": {
+		"0x": "^5.8.0",
 		"@eslint/js": "^9.22.0",
-		"@types/eslint__js": "^9.14.0",
 		"@types/node": "^22.13.10",
 		"eslint": "^9.22.0",
 		"eslint-plugin-functional": "^9.0.1",
+		"mitata": "^1.0.34",
 		"tsx": "^4.19.3",
 		"typescript": "^5.8.2",
 		"typescript-eslint": "^8.26.1",
-		"vitest": "3"
+		"vitest": "^3.0.9"
+	},
+	"author": {
+		"name": "Ricardo Medina"
 	},
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/rickmed/ribu"
 	},
 	"issues": "https://github.com/rickmed/ribu/issues",
-	"license": "MIT",
-	"author": {
-		"name": "Ricardo Medina"
-	}
+	"license": "MIT"
 }

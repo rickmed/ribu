@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { go, sleep, onEnd } from "ribu"
-import { assertRibuErr, expect as exp } from "./utils.ts"
+import { assertRibuErr, expect as exp } from "./utils.js"
 
 describe.skip("non-cancellation scenarios", () => {
 
