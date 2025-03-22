@@ -1,134 +1,155 @@
-import { sys, type Link, EMPTY, disposeLink, freshLink, Tg, Ob, Itrtor, iterRes, linkObAndTg, unlinkObAndTg, Maybe, iterator, _Iterable, cleanSysOpSetup, setYieldOp } from "./system.js"
-import { _Err, Err, CANC_OK, CancOK, GenFnErr, OnEndErr, AnErr, WaitingChldErr } from "./errors.js"
+import { sys, type Link, VOID_OBJ, disposeLink, freshLink, Itrtor, iterRes, iterator, _Iterable, setYieldOp, VoidObj, VOID_LINK, MaybeL } from "./system.js"
+import { _Err, Err, CANC_OK, CancOK, GenFnErr, OnEndErr, RibuErr, WaitingChldErr } from "./errors.js"
 import { cancelSleep } from "./timers.js"
-
+import { Chan } from "./channel.js"
 
 // todo: implement "unsub() to have something like trio's moveOnAfter()
 // 	for jobs and job-helpers
+
+// todo: implement using/dispose() for jobs
+// 	check when a function is called and obj is in pool, throw (with flags)
+// 	evaluate for channels as well
+
 
 // todo: remove Job stack from sys, put it here and use LL
 // todo: clean-up documentation
 
 
-//* **********************  Base Job Class  ******************************** *//
+
+
+
+/* => DOING, make tests pass
+Job's targets:
+	Job, JobHelper (::Job), cancel (needs to be ::Job)
+		calls notifyJob(ob: Job, tg: Job)
+	Chan, Select
+		calls resumeJob() directly.
+
+Job's observers:
+	Job, Promise
+		just branch on type
+*/
+
+
+
+//* **********************  Job Class  ************************************* *//
+
+export type RibuGen<Ret = unknown> =
+	Generator<unknown, Ret, unknown>
+
+type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
+	(...args: Args) => RibuGen<Ret>
+
+type JobsLink = Link<Job, Job>
+
+type ParentLink = JobsLink
+type SyncFn = () => unknown
+type AsyncFn = () => Promise<unknown>
+type OnEnd = SyncFn | AsyncFn | RibuGenFn
+type OnEndLink = Link<SyncFn, 1> | Link<AsyncFn, 2> | Link<RibuGenFn, 3>
+type PrntOrOnEndLink = ParentLink | OnEndLink
+
+type JobChanLink = Link<Job, Chan>
+type TgOrChdLink =
+	JobChanLink |
+	JobsLink  // if blocked by a job or at waitingChildren()
+
+type OnJobDone = (val: unknown, tg: Job) => void
+type OnJobDoneLink = Link<OnJobDone, VoidObj>
+type ObsLink = JobsLink | OnJobDoneLink
+
+const DUMMY_GEN = (function* () {})()
 
 // State Flags
-const INIT = 1 << 0  // 1
-const PARKED_CONTINUE = 1 << 1  // 2
-const PARKED_JOB = 1 << 2  // 4
-const PARKED_JOB_CANCEL = 1 << 3  // 8
-export const PARKED_SLEEP = 1 << 4  // 16
-const PARKED_CH = 1 << 5  // 32
-const WAITING_CHILDREN = 1 << 6  // 64
-const CHILDREN_CANCELLED = 1 << 7  // 128
-const WAITING_ONENDS = 1 << 8  // 256
-export const CANCELLED = 1 << 9  // 512
-export const DONE = 1 << 10  // 1024
-const CANCOK = 1 << 11  // 2048
-export const ERR_IN_GENFN = 1 << 12  // 4096
-const ERR_IN_ONEND = 1 << 13  // 8192
-const CANCEL_SIBLINGS_ON_ERR = 1 << 14  // 16384
+const PARKED_CONTINUE = 1 << 0  // 1
+const PARKED_JOB = 1 << 1  // 2
+const PARKED_JOB_CANCEL = 1 << 2  // 4
+export const PARKED_SLEEP = 1 << 3  // 8
+const PARKED_CH = 1 << 4  // 16
+const WAITING_CHILDREN = 1 << 5  // 32
+const CHILDREN_CANCELLED = 1 << 6  // 64
+const WAITING_ONENDS = 1 << 7  // 128
+export const CANCELLED = 1 << 8  // 256
+export const DONE = 1 << 9  // 512
+const CANCOK = 1 << 10  // 1024
+export const ERR_IN_GENFN = 1 << 11  // 2048
+const ERR_IN_ONEND = 1 << 12  // 4096
+const CANCEL_SIBLINGS_ON_ERR = 1 << 13  // 8192
+const HAS_PARENT = 1 << 14  // 16384
+const HAS_OEND = 1 << 15  // 32768
+// todo: implement this
+// const JOB_IN_POOL = 1 << 16  // 65536
 
 const PARKED_NOT_SLEEP = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_CH
 const PARKED = PARKED_NOT_SLEEP | PARKED_SLEEP
-const ANY_ERR = ERR_IN_GENFN | ERR_IN_ONEND
-export const ANY_ERR_OR_CANCOK = ANY_ERR | CANCOK
-const ERR_IN_GENFN_OR_ONEND = ERR_IN_GENFN | ERR_IN_ONEND
+const HAD_ERR = ERR_IN_GENFN | ERR_IN_ONEND
+export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
 
-/* JobBase Class
- *  _st = job state
- *  _ob = observers LL Head
- *    Objects waiting the result of this job.
- *  _tg = targets LL Head
-*		If _st is PARKED, the head is the target the job is parked by.
- * 	After that, is a LL of children jobs.
- *  val = inbox/outbox for values.
- * 	Like ch.put/rec, the final result of the job, etc.
- *  _nm = generator function name or name of the job-like.
- *
+
+/*
+	todo: store ends at the end of _prnt LL, store how many in flags
+
+	todo: store _ob at the end of _tg, store how many in flags.
+		so now we combine _tg, _chd and _ob into one LL.
+		zeroOrOneYieldTg <-> zeroOrManyChd <-> zeroOrFewOb
+*/
+
+/** Job Class
+ *  val:
+ * 	Temporary slot for values; ch.put/rec, errors accumulation...
+ * 	When job is settled, it stores its final value.
+ *  _nm:
+ *		Name of the generator function, or the Job-like (set by Ribu).
+ *  _st:
+ * 	Job state (flags).
+ *  _gn:
+ * 	Generator object.
+ *  _tg:
+ * 	A combined LL of the target the job is blocked by at yield* (tg) and its
+ *  	children (chd), as "targets".
+ * 	Since a job can only be blocked at yield* by one object at a time, we
+ * 	store it as the head of the LL and store its respective PARKED_... flag.
+ * 	The next links are to child jobs.
+ *  _pr_oe:
+ * 	A combined LL of link to parent job (pr) and onEnds (oe).
+ * 	Since a job can only have one parent, we store it as the head
+ * 	of the LL and store the flag HAS_PARENT. The next links are onEnds.
+ *  _ob:
+ * 	LL of things observing this job.
  */
-export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements Ob, Tg {
+export class Job<OkRet = unknown, GetterErr = unknown> {
 
-	_st = INIT
-	_tg: Maybe<Link<Ob, Tg>> = null
-	_ob: Maybe<Link<Ob, Tg>> = null
+	val = null as OkRet | GetterErr
+	_nm: string
+	_st = 0
+	_gn: RibuGen
+	_tg: MaybeL<TgOrChdLink> = VOID_LINK
+	_pr_oe: MaybeL<PrntOrOnEndLink> = VOID_LINK
+	_ob: MaybeL<ObsLink> = VOID_LINK
 
-	abstract val: GetterErr
-	abstract _nm: string
-	abstract _onTgDone(tgVal: unknown, tg: Tg): void
-	abstract _fail(tgVal: unknown): void
-	abstract _cancel(): void
-
-	/* Insert Link B:
-
-		obj.LLHead
-					\
-			n <-> A <-> n
-
-		obj.LLHead
-					\
-			n <-> B <-> A <-> n
-	*/
-
-	_addTg(link: Link<Ob, Tg>) {  // as LL head
-		let oldHead = this._tg
-		this._tg = link
-		link.nB = oldHead
-		if (oldHead) {
-			oldHead.pB = link
+	constructor(name: string, gen?: RibuGen, parent?: Job) {
+		this._gn = gen ?? DUMMY_GEN
+		this._nm = name
+		if (parent) {
+			this._st |= HAS_PARENT
+			const link = freshLink(parent, this)
+			addParentOrOnEnd(this, link)
+			addTgOrChd(parent, link)
 		}
-	}
-	_addOb(link: Link<Ob, Tg>) {  // as LL head
-		let oldHead = this._ob
-		this._ob = link
-		link.nA = oldHead
-		if (oldHead) {
-			oldHead.pA = link
-		}
-	}
-	_rmTg(link: Link<Ob, Tg>) {
-		let { nB, pB } = link
-		if (nB) {
-			nB.pB = pB
-		}
-		if (pB) {
-			pB.nB = nB
-		}
-		if (this._tg === link) {
-			this._tg = nB
-		}
-		return link
-		// No need to set link.nB/pB to null since caller should
-		// dispose the link immediately.
-	}
-	_rmOb(link: Link<Ob, Tg>) {
-		let { nA, pA } = link
-		if (nA) {
-			nA.pA = pA
-		}
-		if (pA) {
-			pA.nA = nA
-		}
-		if (this._ob === link) {
-			this._ob = nA
-		}
-		// No need to set link.nA/pA to null since caller should
-		// dispose the link immediately.
-	}
-
-	_rmTgHead() {
-		return this._rmTg(this._tg!)
 	}
 
 	[Symbol.iterator]() {
-		const { callerJobToSetSt, runningJob: callerJob } = sys
-		const callerJobSt = callerJobToSetSt !== 0 ? callerJobToSetSt : PARKED_JOB
-		callerJob._st |= callerJobSt
-		cleanSysOpSetup()
+		let { callerJobNextSt, runningJob: callerJob } = sys
+		callerJobNextSt = callerJobNextSt || PARKED_JOB
+		callerJob._st |= callerJobNextSt
+
+		// reset ambient/temp state
+		sys.callerJobNextSt = 0
+		sys.yieldOpStr = ""
 
 		if (this._st & DONE) {
-			if (shouldCallerJobFail(callerJob, this)) {
-				callerJob._fail(this.val)
+			if (shouldJobFail(callerJob, this)) {
+				genFnFailed(callerJob, this.val)
 				iterRes.done = false
 			}
 			else {
@@ -137,7 +158,8 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 			}
 		}
 		else {
-			linkObAndTg(callerJob, this)
+			// todo: check this
+			linkJobs(callerJob, this)
 			iterRes.done = false
 		}
 
@@ -150,142 +172,55 @@ export abstract class JobBase<OkRet = unknown, GetterErr = unknown> implements O
 	}
 
 	cancel() {
+		// todo: subsribe caller immediately, after checking if user forgot
+		// to yield* previous op.
 		setYieldOp("job.cancel", PARKED_JOB_CANCEL)
-		maybeExecCancel(this)
+		cancelJob(this)
 		return this as unknown as _Iterable<CancOK>
 	}
 
 	cancelErr() {
 		setYieldOp("job.cancelErr", PARKED_CONTINUE)
-		maybeExecCancel(this)
+		cancelJob(this)
 		return this as unknown as _Iterable<CancOK | Err<string>>
 	}
 
-	isDone() {
-		return this._st & DONE
-	}
+	then(res: (val: OkRet) => void, rej: (err: GetterErr) => void) {
+		if (this._st & DONE) {
+			void ((this._st & ANY_ERR_OR_CANCOK) ? rej(this.val as GetterErr) : res(this.val as OkRet))
+		}
+		else {
+			const link = freshLink(promOnJobDone, VOID_OBJ)
+			addObserver(this, link)
+		}
 
-	cancelSiblingsOnErr() {
-		this._st |= CANCEL_SIBLINGS_ON_ERR
-	}
-}
-
-function maybeExecCancel(job: JobBase) {
-	const { _st } = job
-	if (_st & CANCELLED || _st & DONE) {
-		return
-	}
-	job._st |= CANCELLED
-	job._cancel()
-}
-
-function shouldCallerJobFail(callerJob: Job, targetJob: Tg) {
-	return (callerJob._st & PARKED_JOB) && (targetJob._st & ANY_ERR_OR_CANCOK) ||
-		(callerJob._st & PARKED_JOB_CANCEL) && (targetJob._st & ERR_IN_ONEND)
-}
-
-
-//* ************************  Job Class  *********************************** *//
-
-export type RibuGen<Ret = unknown> =
-	Generator<unknown, Ret, unknown>
-
-type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
-	(...args: Args) => RibuGen<Ret>
-
-type SyncFn = () => unknown
-type AsyncFn = () => Promise<unknown>
-type OnEnd = SyncFn | AsyncFn | RibuGenFn
-type OnEndLink = Link<SyncFn, 1> | Link<AsyncFn, 2> | Link<RibuGenFn, 3>
-
-
-/* Job Class
- *  _gn = generator
- *  _chd = children jobs LL Head
- *  _prnt = parent job LL Head (even though jobs have max 1 parent)
- *  _ends = synchronous onEnds LL Head
- * 	.b in Link is true if onEnd is synchronous
- */
-export class Job<OkRet = unknown, GetterErr = unknown> extends JobBase<OkRet, GetterErr> {
-
-	_nm: string
-	_gn: RibuGen
-	_tg: Maybe<Link<Job, Job>> = null
-	_prnt: Maybe<Link<Job, Job>> = null
-	_ends: Maybe<OnEndLink> = null
-	val: GetterErr = EMPTY as GetterErr
-
-	constructor(gen: RibuGen, genFnName: string, parent?: Job) {
-		super()
-		this._gn = gen
-		this._nm = genFnName
-		if (parent) {
-			// linkParentChild
-			let link = freshLink(parent, this)
-			parent._addTg(link)
-			this._prnt = link
+		function promOnJobDone(val: unknown, tgJob: Job) {
+			void ((tgJob._st & ANY_ERR_OR_CANCOK) ? rej(val as GetterErr) : res(val as OkRet))
 		}
 	}
 
-	_onTgDone(val: unknown, tg: Tg) {
-		const { _st } = this
-
-		if (_st & PARKED_CH) {
-			resumeJob(this, val)
-			return
-		}
-		if (shouldCallerJobFail(this, tg)) {
-			this._fail(val)
-			return
-		}
-		if (_st & WAITING_CHILDREN) {
-			waitingChildren(this, val, tg)
-			return
-		}
-
-		resumeJob(this, val)
-	}
-
-	_fail(tgVal: unknown) {
-		genFnFailed(this, tgVal)
-	}
-
-	_cancel() {
-		execCancelJob(this)
+	get promErr() {
+		return new Promise<GetterErr>((res) => {
+			const link = freshLink(res as OnJobDone, VOID_OBJ)
+			addObserver(this, link)
+		})
 	}
 
 	onEnd(onEndFn: OnEnd) {
 		addOnEnd(this, onEndFn)
 	}
 
-	then(res: (val: OkRet) => void, rej: (err: GetterErr) => void) {
-		if (this._st & DONE) {
-			resolveProm(this.val, this)
-			return
-		}
-		const observer = new CustomObserver((val, tg) => {
-			resolveProm(val, tg)
-		})
-		linkObAndTg(observer, this)
-
-		function resolveProm(val: unknown, tg: Tg) {
-			void ((tg._st & ANY_ERR_OR_CANCOK) ? rej(val as GetterErr) : res(val as OkRet))
-		}
+	cancelSiblingsOnErr() {
+		this._st |= CANCEL_SIBLINGS_ON_ERR
 	}
 
-	get promErr() {
-		return new Promise<GetterErr>((res) => {
-			const observer = new CustomObserver((val) => {
-				res(val as GetterErr)
-			})
-			linkObAndTg(observer, this)
-		})
+	isDone() {
+		return this._st & DONE
 	}
 }
 
-export function resumeJob(thisJob: Job, val?: unknown) {
-	thisJob._st &= ~PARKED
-	sys.pushJob(thisJob)
+export function resumeJob(job: Job, val?: unknown) {
+	sys.pushJob(job)
 
 	// Values are never passed into gen.next() because values inside the generator
 	// function are received mutating iteratorResult object of the
@@ -302,87 +237,56 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 	iterRes.done = true
 	iterRes.value = val
 	try {
-		const { done, value} = thisJob._gn.next()
+		const { done, value} = job._gn.next()
 		if (!done) {
 			return
 		}
 		if (value instanceof Error) {
-			genFnFailed(thisJob, value)
+			genFnFailed(job, value)
 		}
 		else {
-			thisJob.val = value
-			endProtocol(thisJob)
+			job.val = value
+			onGenFnEnded(job)
 		}
 	}
 	catch (e) {
-		genFnFailed(thisJob, e)
+		genFnFailed(job, e)
 	}
 	finally {
 		sys.popJob()
 	}
 }
 
-function genFnFailed(thisJob: Job, cause: unknown) {
-	thisJob._st |= ERR_IN_GENFN
-	thisJob._st |= CANCEL_SIBLINGS_ON_ERR
-	thisJob.val = GenFnErr(thisJob._nm, cause)
-	endProtocol(thisJob, true)
-}
-
-function endProtocol(thisJob: Job, cancelChildren = false) {
-	let childLink = thisJob._tg
-	if (!childLink) {
-		execOnEnds(thisJob)
+function onGenFnEnded(job: Job, cancelChildren = false) {
+	if (job._tg === VOID_LINK) {
+		execOnEnds(job)
 		return
 	}
 
-	thisJob._st |= WAITING_CHILDREN
-	if (cancelChildren) {
-		thisJob._st |= CHILDREN_CANCELLED
-	}
-
-	do {
-		let childJob = childLink.b
-		childJob._prnt = null
-		childJob._addOb(childLink)
-		childLink = childLink.nB
-		if (cancelChildren) {
-			cancelJob(childJob)
-		}
-	} while (childLink)
+	job._st |= WAITING_CHILDREN
+	loopChildren(job, true, cancelChildren)
 }
 
-function waitingChildren(thisJob: Job, tgVal: unknown, tg: Tg) {
-	let { _tg, _st } = thisJob
-
-	if (tg._st & ERR_IN_GENFN_OR_ONEND) {
-		addErrorToJobVal(thisJob, tgVal as AnErr, ERR_IN_GENFN, "waitingChildren")
-		if (_tg && _st & CANCEL_SIBLINGS_ON_ERR && !(_st & CHILDREN_CANCELLED)) {
-			for (let childLink = thisJob._tg; childLink; childLink = childLink.nB) {
-				cancelJob(childLink.b)
-			}
-		}
-	}
-
-	if (!_tg) {
-		_st &= ~WAITING_CHILDREN
-		execOnEnds(thisJob)
-	}
+function genFnFailed(job: Job, cause: unknown) {
+	job._st |= ERR_IN_GENFN
+	job._st |= CANCEL_SIBLINGS_ON_ERR
+	job.val = GenFnErr(job._nm, cause)
+	onGenFnEnded(job, true)
 }
 
 function execOnEnds(thisJob: Job) {
-	if (!thisJob._ends) {
+	if (thisJob._end === VOID_LINK) {
 		settle(thisJob)
 		return
 	}
 
 	thisJob._st |= WAITING_ONENDS
 
-	const link = thisJob._ends
+	const link = thisJob._end
 	const onEnd = link.a
 	const onEndType = link.b
 
-	thisJob._ends = link.nA
+	thisJob._end = link.nA
 	disposeLink(link)
 
 	if (onEndType === 1) {
@@ -413,14 +317,18 @@ function execOnEnds(thisJob: Job) {
 	}
 	if (onEndType === 3) {  // It's a Generator
 		const job = new Job((onEnd as RibuGenFn)(), onEnd.name)
-		// todo: change from CustomObserver to some static CB based
+
+		// add an observer to thisJob
+
+
+
 		const observer = new CustomObserver((val, tg) => {
 			if (tg._st & ERR_IN_GENFN) {
 				addErrorToJobVal(thisJob, OnEndErr(val, onEnd.name), ERR_IN_ONEND, "onEnd")
 			}
 			execOnEnds(thisJob)
 		})
-		linkObAndTg(observer, job)
+
 		resumeJob(job)
 		return
 	}
@@ -429,18 +337,23 @@ function execOnEnds(thisJob: Job) {
 }
 
 function settle(thisJob: Job) {
+	//
+	if (thisJob._st & DONE) {
+		return
+	}
+
 	// removeParent
-	const { _prnt } = thisJob
+	const { _pr_oe_ob: _prnt } = thisJob
 	if (_prnt) {
-		thisJob._prnt = null
+		thisJob._pr_oe_ob = null
 		removeLinkFromParent(_prnt)
 		disposeLink(_prnt)
 	}
 
-	execSettle(thisJob)
+	finishSettle(thisJob)
 }
 
-export function execSettle(thisJob: Job) {
+export function finishSettle(thisJob: Job) {
 	const { _st, val } = thisJob
 
 	if (_st & CANCELLED && !(_st & ERR_IN_ONEND)) {
@@ -449,84 +362,127 @@ export function execSettle(thisJob: Job) {
 	}
 
 	thisJob._st |= DONE
-	// todo: maybe resuse job objects
-	thisJob._gn = undefined as unknown as RibuGen
-	notifyObservers(thisJob, val)
-}
 
-export function notifyObservers(thisJob: JobBase, tgVal: unknown) {
-	while (thisJob._ob) {
-		const link = thisJob._ob
-		const ob = link.a
-		unlinkObAndTg(link)
-		ob._onTgDone(tgVal, thisJob)
+	// notify observers
+	for (let link = thisJob._ob; link !== VOID_LINK; link = link.nA) {
+		const observer = link.a
+		if (typeof observer === "function") {
+			observer(val, thisJob)
+		}
+		else {
+			removeOb(thisJob, link as JobsLink)
+			removeTgOrChd(observer as Job, link as JobsLink)
+			disposeLink(link)
+			onTgJobDone(observer as Job, thisJob)
+		}
 	}
 }
 
-export function cancelJob(thisJob: Job) {
-	const { _st } = thisJob
-	// todo: check if i need this check
-	if (_st & CANCELLED || _st & DONE) {
+function onTgJobDone(job: Job, tgJob: Job) {
+	if (job._st & WAITING_CHILDREN) {
+		onChildDone(job, tgJob)
+	}
+	// Parked at yield* tgJob.
+	if (shouldJobFail(job, tgJob)) {
+		genFnFailed(job, tgJob.val)
 		return
 	}
-	thisJob._st |= CANCELLED
-	execCancelJob(thisJob)
+	resumeJob(job, tgJob.val)
 }
 
-function execCancelJob(thisJob: Job) {
-	const { _st } = thisJob
+function onChildDone(job: Job, child: Job) {
+	let { _tg, _st } = job
+
+	if (!(child._st & HAD_ERR)) {
+		return
+	}
+
+	addErrorToJobVal(job, child.val as RibuErr, ERR_IN_GENFN, "waitingChildren")
+
+	if (_tg === VOID_LINK) {
+		execOnEnds(job)
+		return
+	}
+
+	if ((_st & CANCEL_SIBLINGS_ON_ERR) && !(_st & CHILDREN_CANCELLED)) {
+		loopChildren(job, false, true)
+	}
+}
+
+// Is cancelJob() caller responsibility to not subscribe if job is done,
+// otherwise, observer job will be blocked forever.
+const CANCEL_NOOP = DONE | CANCELLED | WAITING_ONENDS
+export function cancelJob(job: Job) {
+	const { _st } = job
+	if (_st & CANCEL_NOOP) {
+		return
+	}
 
 	if (_st & PARKED_SLEEP) {
-		cancelSleep(thisJob)
+		cancelSleep(job)
+	}
+	else if (_st & PARKED_CH) {
+		// todo: unsub from channel
+	}
+	else { // parked by a ::Job
+		const link = job._tg as JobsLink
+		removeTgOrChd(job, link)
+		removeOb(link.b, link)
+		disposeLink(link)
 	}
 
-	if (_st & PARKED_NOT_SLEEP) {
-		// we're parked by a target so LL head is the target
-		const targetLink = thisJob._tg!
-		targetLink.b._rmOb(targetLink)
-		thisJob._rmTg(targetLink)
-		disposeLink(targetLink)
-		thisJob._st &= ~PARKED_NOT_SLEEP
+	if (job._tg === VOID_LINK) {
+		execOnEnds(job)
+		return
 	}
 
-	endProtocol(thisJob, true)
+	// Children already cancelled and job is linked/waiting for them.
+	if (_st & CHILDREN_CANCELLED) {
+		return
+	}
+
+	// Waiting for children but not cancelled yet, so trigger cancel
+	// but don't link them again.
+	if (job._st & WAITING_CHILDREN) {
+		loopChildren(job, false, true)
+		return
+	}
+
+	// Trigger cancel and link to them.
+	loopChildren(job, true, true)
 }
 
+function loopChildren(job: Job, observe: boolean, cancel: boolean) {
+	if (cancel) {
+		job._st |= CHILDREN_CANCELLED
+	}
 
-function removeLinkFromParent(link: Link<Job, Job>) {
-	let { nB, pB } = link
-	if (nB) {
-		nB.pB = pB
-	}
-	if (pB) {
-		pB.nB = nB
-	}
-	let parent = link.a
-	if (parent._tg === link) {
-		parent._tg = nB
-	}
+	let childLink = job._tg
+	// Can start loop right away bc caller guards against job state.
+	do {
+		const childJob = childLink.b
+		if (observe) {
+			addObserver(job, childLink as JobsLink)
+		}
+		// Need to save nextLink here because child can resolve its cancellation
+		// synchronously and remove link from .tg_ch LL.
+		const nextLink = childLink.nB
+		if (cancel) {
+			cancelJob(childJob as Job)
+		}
+		childLink = nextLink
+	} while (childLink !== VOID_LINK)
 }
 
-class CustomObserver implements Ob {
-	declare _tg: Link<Ob, Job>
-	private onTgDone: (val: unknown, tg: Tg) => void
-
-	constructor(onTgDone: (val: unknown, tg: Tg) => void) {
-		this.onTgDone = onTgDone
-	}
-
-	_onTgDone(val: unknown, tg: Tg) {
-		this.onTgDone(val, tg)
-	}
-	_addTg() {}
-	_rmTg() {}
+function shouldJobFail(ObJob: Job, tgJob: Job) {
+	return (ObJob._st & PARKED_JOB) && (tgJob._st & ANY_ERR_OR_CANCOK) ||
+		(ObJob._st & PARKED_JOB_CANCEL) && (tgJob._st & ERR_IN_ONEND)
 }
 
 type ErrType = "waitingChildren" | "onEnd"
-
-export function addErrorToJobVal(job: JobBase, cause: AnErr, st: JobBase["_st"], errType: ErrType) {
+export function addErrorToJobVal(job: Job, cause: RibuErr, st: Job["_st"], errType: ErrType) {
 	const { _st } = job
-	if (!(_st & ANY_ERR)) {
+	if (!(_st & HAD_ERR)) {
 		const errMsg = _st & CANCELLED ? "cancelled" : ""
 
 		const err = errType === "waitingChildren" ?
@@ -536,27 +492,111 @@ export function addErrorToJobVal(job: JobBase, cause: AnErr, st: JobBase["_st"],
 		job.val = err
 	}
 	else {
-		(job.val as AnErr).addErr(cause)
+		(job.val as RibuErr).addErr(cause)
 	}
+
 	job._st |= st
 }
 
-function addOnEnd(thisJob: Job, onEndFn: OnEnd) {
+function addOnEnd(job: Job, onEndFn: OnEnd) {
 	const fnCtorName = onEndFn.constructor.name
-	const linkTypeSignal =
+	const linkType =
+		fnCtorName === "GeneratorFunction" ? 3 :
 		fnCtorName === "AsyncFunction" ? 2 :
-		fnCtorName === "GeneratorFunction" ? 3
-		: 1
+		1
 
-	let link = freshLink(onEndFn, linkTypeSignal) as OnEndLink
+	let link = freshLink(onEndFn, linkType) as OnEndLink
 
-	let oldHead = thisJob._ends
-	thisJob._ends = link
-	link.nA = oldHead
-	if (oldHead) {
-		oldHead.pA = link
+	const { _st, _pr_oe_ob } = job
+
+	if (_pr_oe_ob === VOID_LINK) {
+		addParentOrOnEnd(job, link)
+	}
+	else {  // job has parent (in _pr_oe_ob head)
+		link.nA = _pr_oe_ob
+	}
+
+
+}
+
+//* ***********************  Job LLs Operations  ******************** *//
+
+/* Insert Link B:
+
+	obj.LLHead
+				\
+		VL <-> A <-> VL
+
+	obj.LLHead
+				\
+		VL <-> B <-> A <-> VL
+*/
+
+function addObserver(job: Job, link: ObsLink) {
+	let head = job._ob
+	job._ob = link
+	link.nA = head
+	head.pA = link
+}
+
+function removeOb(job: Job, link: ObsLink) {
+	let { nA, pA } = link
+	pA.nA = nA
+	nA.pA = pA
+	if (job._ob === link) {
+		job._ob = nA
 	}
 }
+
+// We can safely add blocking target (Tg) and child jobs (Chd) as head
+// always because:
+// Tg behaves like a stack Link, ie, it is added as head when job is blocked
+// and removed when job is resumed, ie, go(), which adds childs, can never
+// be called in between.
+function addTgOrChd(job: Job, link: JobChanLink | ChildLink) {
+	let oldHead = job._tg
+	job._tg = link
+	link.nB = oldHead
+	oldHead.pB = link
+}
+
+function removeTgOrChd(job: Job, link: TgOrChdLink) {
+	let { nB, pB } = link
+	pB.nB = nB
+	nB.pB = pB
+	if (job._tg === link) {
+		job._tg = nB
+	}
+	// No need to set link.nA/pA to void since caller should
+	// dispose the link immediately.
+}
+
+function addParentOrOnEnd(job: Job, link: PrntOrOnEndLink) {
+	let head = job._pr_oe
+	job._pr_oe = link
+	link.nA = head
+	head.pA = link
+}
+
+function removeParentOrOnEnd(job: Job, link: PrntOrOnEndLink) {
+	let { nA, pA } = link
+	pA.nA = nA
+	nA.pA = pA
+	if (job._pr_oe === link) {
+		job._pr_oe = nA
+	}
+}
+
+export function popTgHead(thisJob: Job) {
+	return removeTgOrChd(thisJob, thisJob._tg as Link<Ob, Tg>)
+}
+
+export function linkJobs(ob: Job, tg: Job) {
+	const link = freshLink(ob, tg)
+	addTgOrChd(ob, link)
+	addObserver(tg, link)
+}
+
 
 //* ****************   User API   ****************************************** *//
 
@@ -588,14 +628,19 @@ first
 firstOK
 
 FAIL/CANCELLING INNER:
-	- Helpers never cancel jobs, unless manual helper.cancel().
-	- On yield*, it fails callerJob (and only unsub from jobs).
+	- Helpers never cancel jobs when finishing. But they implement:
+		- cancel() (cancels passed in jobs)
+		- unsub() (unsubs from passed in jobs so caller can move on)
+	- at const res = yield* helper(jobs...), and helper fails, it fails caller
+		(but it only unsub from jobs).
+		- If jobs are caller's children, they'll be cancelled via parent's
+			structured concurrency.
 
 
 => IMPLEMENTATION. Need:
 
 
-- get err()
+get err()
 allOrErr
 	i think works as is.
 allSettled
@@ -603,11 +648,13 @@ first
 firstOK
 
 
-- cancel():
+cancel(...jobs):
+	- No way to cancel what cancel(...jobs) returns.
+		- can only .unsub() from it.
 	- cancell inner jobs
-	- jobIsh, cancels children (at _chd)
-- cancelErr
 
+	- get err()
+	- .cancelErr()
 
 */
 
@@ -617,12 +664,14 @@ firstOK
 // 	let callerJob = sys.runningJob
 // 	callerJob._st |= PARKED_JOB_CANCEL
 // 	const observer = new CancelAll()
-// subscribeToAllJobs(jobs, observer, true)
+// 	subscribeToAllJobs(jobs, observer, true)
 // }
 
-// class CancelAll extends JobBase {
+// class CancelAll extends Job {
 
 // 	_nm = "cancel"
+// 	val: GetterErr = VOID_OBJ as GetterErr
+
 
 // 	_onTgDone(tgVal: unknown, tg: Job) {
 // 		const { val, _tg } = this
@@ -636,16 +685,16 @@ firstOK
 // 	}
 // }
 
-export function subscribeToAllJobs(jobs: Job[], ob: Ob, cancel = false) {
-	for (let i = 0; i < jobs.length; i++) {
-		const job = jobs[i]!
-		if (job._st & DONE) {
-			ob._onTgDone(job.val, job)
-			return
-		}
-		linkObAndTg(ob, job)
-		if (cancel) {
-			cancelJob(job)
-		}
-	}
-}
+// export function subscribeToAllJobs(jobs: Job[], ob: Ob, cancel = false) {
+// 	for (let i = 0; i < jobs.length; i++) {
+// 		const job = jobs[i]!
+// 		if (job._st & DONE) {
+// 			ob._onTgDone(job.val, job)
+// 			return
+// 		}
+// 		linkJobs(ob, job)
+// 		if (cancel) {
+// 			cancelJob(job)
+// 		}
+// 	}
+// }

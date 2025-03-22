@@ -19,7 +19,7 @@ export function sortedReport(results: Results) {
 
 	for (const test of data) {
 		const ratio = test.avg / fastest.avg
-		const ratioText = test == fastest ? "1x" : `${ratio.toFixed(2)}x slower`
+		const ratioText = test === fastest ? "1x" : `${ratio.toFixed(2)}x slower`
 		const totalText = `${(test.total / 1000).toFixed(2)}s`
 		console.log(`${test.name}  ${ratioText}  ${totalText}`)
 	}

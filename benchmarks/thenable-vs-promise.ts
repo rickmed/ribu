@@ -17,7 +17,7 @@ let resolveThenable: (value: unknown) => void
 const theThenable = {
 	then(resolve: (value: unknown) => void) {
 		console.log(resolveThenable)
-		console.log(resolveThenable == resolve)
+		console.log(resolveThenable === resolve)
 		resolveThenable = resolve
 		resolve("hi")
 	}

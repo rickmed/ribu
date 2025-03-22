@@ -39,13 +39,13 @@ await new Banca({iterations})
 	.run(log)
 
 
-// bench(`Jobs ${nSequential1} sequential`, async () => {
-// 	await go(nSequentialJobs0Deep, nSequential1, sleepMs)
-// }).gc("inner")
+bench(`Jobs ${nSequential1} sequential`, async () => {
+	await go(nSequentialJobs0Deep, nSequential1, sleepMs)
+}).gc("inner")
 
-// bench(`Promises ${nSequential1} sequential`, async () => {
-// 	await nSequentialProms0Deep(nSequential1, sleepMs)
-// }).gc("inner")
+bench(`Promises ${nSequential1} sequential`, async () => {
+	await nSequentialProms0Deep(nSequential1, sleepMs)
+}).gc("inner")
 
 bench(`Jobs ${nSequential2} sequential`, async () => {
 	await go(nSequentialJobs0Deep, nSequential2, sleepMs)

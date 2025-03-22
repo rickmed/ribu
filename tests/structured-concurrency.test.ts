@@ -3,8 +3,12 @@ import { go, me, sleep } from "ribu"
 import { _Err } from "./utils.js"
 import { GenFnErr, WaitingChldErr } from "../source/errors.js"
 
+/*
+	This suite is focused on what happens when a job returns and still
+	has children running (blocked at some operation).
+*/
 
-it("if job returns and it has active children, it is blocked until its children are done", async () => {
+it("parent waits until its children settle", async () => {
 
 	let jobsDone = 0
 
@@ -28,8 +32,7 @@ it("if job returns and it has active children, it is blocked until its children 
 	expect(jobsDone).toBe(2)
 })
 
-
-it("if parent job fails, it cancels its children", async () => {
+it("if parent fails, it cancels its children", async () => {
 
 	let finished = 0
 
@@ -56,36 +59,8 @@ it("if parent job fails, it cancels its children", async () => {
 	expect(finished).toBe(0)
 })
 
-it("if child job fails and parent is set up at cancelSiblingsOnErr(), " +
-	"parent cancels its other children and is resolved with correct Error", async () => {
-
-	let child2Finished = false
-
-	function* child1() {
-		yield* sleep(2)
-		throw Error("Bad")
-	}
-
-	function* child2() {
-		yield* sleep(3)
-		child2Finished = true
-	}
-
-	function* main() {
-		me().cancelSiblingsOnErr()
-		yield* sleep(1)
-		go(child1)
-		go(child2)
-	}
-
-	const rec = await go(main).promErr
-	const exp = WaitingChldErr("main", GenFnErr("child1", Error("Bad")))
-	expect(rec).toStrictEqual(exp)
-	expect(child2Finished).toBe(false)
-})
-
-it("if child job fails, parent fails with correct Error, " +
-	"and waits for other children to finish normally", async () => {
+it("if child fails, parent waits for its other children to settle" +
+	"and fails with correct Error", async () => {
 
 	let child2Finished = false
 
@@ -109,4 +84,38 @@ it("if child job fails, parent fails with correct Error, " +
 	const exp = WaitingChldErr("main", GenFnErr("child1", Error("Bad")))
 	expect(rec).toStrictEqual(exp)
 	expect(child2Finished).toBe(true)
+})
+
+it("if child fails and parent is set up at cancelSiblingsOnErr(), parent" +
+	"cancels its other children and settles with correct Error", async () => {
+
+	let childrenFinished = 0
+
+	function* child1() {
+		yield* sleep(2)
+		throw Error("Bad")
+	}
+
+	function* child2() {
+		yield* sleep(3)
+		childrenFinished++
+	}
+
+	function* child3() {
+		yield* sleep(3)
+		childrenFinished++
+	}
+
+	function* main() {
+		me().cancelSiblingsOnErr()
+		yield* sleep(1)
+		go(child1)
+		go(child2)
+		go(child3)
+	}
+
+	const rec = await go(main).promErr
+	const exp = WaitingChldErr("main", GenFnErr("child1", Error("Bad")))
+	expect(rec).toStrictEqual(exp)
+	expect(childrenFinished).toBe(0)
 })

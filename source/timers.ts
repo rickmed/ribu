@@ -1,5 +1,5 @@
-import { freshLink, sysIterable, Link, Ob, Tg, Yieldable, IterRes, disposeLink } from "./system.js"
-import { resumeJob, PARKED_SLEEP, Job } from "./job.js"
+import { freshLink, sysIterable, Link, Ob, Tg, Yieldable, IterRes, disposeLink, _Iterable, iterable, sys, SLEEP_OP } from "./system.js"
+import { resumeJob, PARKED_SLEEP, Job, addTgAsHead, popTgHead } from "./job.js"
 
 /*  let's do all yield*
 
@@ -25,21 +25,22 @@ const yieldable: Yieldable = {
 		callerJob._st |= PARKED_SLEEP
 		const timeout = setTimeout(timeOutCB, _ms, callerJob) as unknown as Link<Ob, Tg>
 		const link = freshLink(callerJob, timeout) as unknown as Link<Ob, Tg>
-		callerJob._addTg(link)
+		addTgAsHead(callerJob, link)
 		iterRes.done = false
 	}
 }
 
 export function sleep(ms: number) {
 	_ms = ms
-	return sysIterable<never>(yieldable)
+	sys.yieldOpStr = SLEEP_OP
+	return iterable as _Iterable<never>
 }
 
 export function cancelSleep(job: Job, _clearTimeout = true) {
 	if (_clearTimeout) {
-		clearTimeout(job._tg!.b as unknown as NodeJS.Timeout)
+		clearTimeout(job._tg.b as unknown as NodeJS.Timeout)
 	}
-	disposeLink(job._rmTgHead())
+	disposeLink(popTgHead(job))
 }
 
 function timeOutCB(callerJob: Job) {

@@ -1,4 +1,4 @@
-// import { DONE, ANY_ERR_OR_CANCOK, Job, JobBase, addErrorToJobVal, cancel, go, notifyObservers, subscribeToAllJobs as subscribeToJobs, type YielRet, ERR_IN_GENFN, execSettle, cancelJob, onEnd, CANCELLED } from "./job.js"
+// import { DONE, ANY_ERR_OR_CANCOK, Job, Job, addErrorToJobVal, cancel, go, notifyObservers, subscribeToAllJobs as subscribeToJobs, type YielRet, ERR_IN_GENFN, execSettle, cancelJob, onEnd, CANCELLED } from "./job.js"
 // import { userErrCtor, _Err, Err } from "./errors.js"
 // import { Ob, Tg, unlinkObAndTg } from "./system.js"
 
@@ -43,7 +43,7 @@
 // 	return new AllOrErr<YieldRet>(jobs)
 // }
 
-// class AllOrErr<T> extends JobBase<T[], T[] | EmptyArgsErr | Err<string>> {
+// class AllOrErr<T> extends Job<T[], T[] | EmptyArgsErr | Err<string>> {
 // 	_nm = "allOrErr"
 // 	val: T[] = []
 
@@ -126,7 +126,7 @@
 // 	return observer
 // }
 
-// class All<OkVals> extends JobBase<OkVals[]> {
+// class All<OkVals> extends Job<OkVals[]> {
 // 	_nm = "all"
 // 	val: OkVals[] = []
 

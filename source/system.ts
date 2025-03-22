@@ -1,35 +1,13 @@
 import { Err } from "./errors.js"
 import { type Job } from "./job.js"
 
-
-/* *************  Lexicon   ****************************************************
-
-ob: Observer
-	- Waits for a Target to call back with data/result.
-	- Has a refence to target/s for potential canncellation.
-	- Job, Select, Promise, etc.
-
-tg: Target
-	- Calls back to observer/s with data/result.
-	- Job, Chan, Select, etc.
-
-Yieldable:
-	- An object/method that can block a job, by using yield* or yield*.
-	- Sleep, Chan.rec/put, etc.
-
-LL: Linked List
-
-*/
-
-export const EMPTY = Symbol("EM")
-
 class System {
 	#stack: Array<Job> = []  // todo: optimize to Linked List
-	runningJob!: Job
+	runningJob: Job = VOID_OBJ as unknown as Job
 	deadline = 5000
-	callerJobToSetSt: Job["_st"] = 0
-	yieldOp: Maybe<string> = null
-	yieldable: Maybe<Yieldable> = null
+	callerJobNextSt: Job["_st"] = 0
+	yieldOp = 0 as YieldOp
+	yieldOpStr = ""
 
 	pushJob(job: Job) {
 		this.runningJob = job
@@ -42,12 +20,12 @@ class System {
 	}
 }
 
-export type Yieldable = {
-	execYield: (callerJob: Job, iterRes: IterRes) => void
-	nm: string
-}
-
 export let sys = new System()
+
+
+export const SLEEP_OP = 1
+type YieldOp = typeof SLEEP_OP
+
 
 export type IterRes = IteratorResult<unknown>
 export let iterRes = {
@@ -67,29 +45,21 @@ export type _Iterable<V> = {
 }
 export const iterable = {
 	[Symbol.iterator]() {
-		sys.yieldable!.execYield(sys.runningJob, iterRes)
-		sys.yieldable = null
+		(sys.yieldable as Yieldable).execYield(sys.runningJob, iterRes)
+		sys.yieldable = VOID_OBJ
 		return iterator
 	}
 }
 
 export function sysIterable<YieldRet>(yieldable: Yieldable) {
-	// todo: (also would need to do it in objects that have Symbol.iterator directly)
-	// if (sys.yieldable) {
-	// 	// throw new Error(`Forgot to call yield* at ${sys.runningJob._nm}`)
-	// }
 	sys.yieldable = yieldable
 	return iterable as _Iterable<YieldRet>
 }
 
-export function cleanSysOpSetup() {
-	sys.callerJobToSetSt = 0
-	sys.yieldOp = null
-}
 
 export function setYieldOp(op: string, callerJobNextSt: Job["_st"]) {
-	const { yieldOp } = sys
-	if (yieldOp) {
+	const { yieldOpStr: yieldOp } = sys
+	if (yieldOp !== "") {
 		const errMsg = `
 			RIBU: Did you forget to yield* at operation before this one?
 			Previous operation: ${yieldOp}
@@ -99,78 +69,57 @@ export function setYieldOp(op: string, callerJobNextSt: Job["_st"]) {
 		throw new Err("RibuErr", sys.runningJob._nm, undefined, errMsg)
 	}
 
-	sys.callerJobToSetSt = callerJobNextSt
-	sys.yieldOp = op
+	sys.callerJobNextSt = callerJobNextSt
+	sys.yieldOpStr = op
 }
 
 
-/** Observer
- * _onTgDone = onTargetDone
- * 	Target calls this to notify me with data/result.
- * _tg = targets LL Head
- * 	Head of targets LL that I'm awaiting data/result.
- *		Needed to remove Observer from all targets if cancelled.
- * _addTg = addTarget to ._tg
- * _rmTg = removeTarget from ._tg
- */
-export type Ob = {
-	_tg: Maybe<Link<Ob, Tg>>
-	_addTg: (link: Link<Ob, Tg>) => void
-	_rmTg: (link: Link<Ob, Tg>) => void
-	_onTgDone: (val: unknown, tg: Tg) => void
+export const VOID_OBJ = {
+	_vo: true,
 }
-
-/** Target
- * _ob: Link<Ob, Tg>,
- * 	Head of observers LL that I will call back with data/result
- * _addOb = addObserver to ._ob
- * _rmOb = removeObserver from ._ob
- */
-export type Tg = {
-	_ob: Maybe<Link<Ob, Tg>>
-	_addOb: (link: Link<Ob, Tg>) => void
-	_rmOb: (link: Link<Ob, Tg>) => void
-	_st: number
-	val: unknown
-}
+export type VoidObj = typeof VOID_OBJ
 
 
-export type Maybe<T> = T | null
+//* ********************  Linked Lists  ************************************ *//
+
+export let VOID_LINK: Link<VoidObj, VoidObj>
+export type VoidLink = typeof VOID_LINK
+
+export type MaybeL<T> = T | VoidLink
 
 /** Link
  * Used as a Doubly LL Node for Observers <-> Targets and several other
- * LLs (some are Singly LL).
+ * 	LLs (some are Singly LL).
  * "Link" terminology is used to differentiate from Node std type.
- * A is Observer (or a generic object)
- * B is Target (or a generic object)
- * nA is next ObjectA Link (towards the tail of LL)
- * pA is previous ObjectA Link
- * nB is next ObjectB Link (towards the tail of LL)
- * pB is previous ObjectB Link
+ * A is Observer (or a generic object A)
+ * B is Target (or a generic object B)
+ * nA is next object A Link (towards the tail of LL)
+ * pA is previous object A Link
+ * nB is next object B Link (towards the tail of LL)
+ * pB is previous object B Link
  */
 export class Link<A = unknown, B = unknown> {
 	a: A
 	b: B
-	nA: Maybe<Link<A, B>> = null
-	pA: Maybe<Link<A, B>> = null
-	nB: Maybe<Link<A, B>> = null
-	pB: Maybe<Link<A, B>> = null
-
+	nA: this | VoidLink = VOID_LINK
+	nB: this | VoidLink = VOID_LINK
+	pA: this | VoidLink = VOID_LINK
+	pB: this | VoidLink = VOID_LINK
 	constructor(a: A, b: B) {
 		this.a = a
 		this.b = b
 	}
 }
 
-export type MaybeLink = Maybe<Link>
+VOID_LINK = new Link(VOID_OBJ, VOID_OBJ)
 
-/**
- * Pool of links to be reused.
+
+/** Link Pool
  * Is a single LL.
  * We use Link's .nA to link to next available Link in pool.
  * todo: manage pool size
  */
-let linkPoolHead: Maybe<Link> = null
+let linkPoolHead = VOID_LINK
 let linkPoolSize = 0
 export function getLinkPoolSize() {
 	return linkPoolSize
@@ -181,15 +130,16 @@ export function disposeLink(link: Link) {
 
 	link.nA = linkPoolHead
 	linkPoolHead = link
-	link.a = null
-	link.b = null
-	link.pA = null
-	link.nB = null
-	link.pB = null
+
+	link.a = VOID_OBJ
+	link.b = VOID_OBJ
+	link.pA = VOID_LINK
+	link.nB = VOID_LINK
+	link.pB = VOID_LINK
 }
 
 export function freshLink<A, B>(a: A, b: B) {
-	if (!linkPoolHead) {
+	if (linkPoolHead === VOID_LINK) {
 		return new Link(a, b)
 	}
 
@@ -197,22 +147,11 @@ export function freshLink<A, B>(a: A, b: B) {
 
 	let link = linkPoolHead
 	linkPoolHead = link.nA
-	link.nA = null
 
+	link.nA = VOID_LINK
 	link.a = a
 	link.b = b
+	// caller will reassign next and prev links
 
 	return link as Link<A, B>
-}
-
-export function linkObAndTg(ob: Ob, tg: Tg) {
-	const link = freshLink(ob, tg)
-	ob._addTg(link)
-	tg._addOb(link)
-}
-
-export function unlinkObAndTg(link: Link<Ob, Tg>) {
-	link.a._rmTg(link)
-	link.b._rmOb(link)
-	disposeLink(link)
 }

@@ -1,7 +1,7 @@
 import { Job } from "./job.js"
-import { sys, iterRes, EMPTY } from "./system.js"
+import { sys, iterRes, VOID_OBJ } from "./system.js"
 
-// channel resumes job if job._state != DONE
+// channel resumes job if job._state !== DONE
 // else, it skips it and pulls another one
 // ie, a blocked job in rec should be skipped (since wont do anything witl the msg)
 // but a blocked job in put, the receveing job should take out its msg from _io
@@ -24,7 +24,7 @@ export function isCh(x: unknown): x is Chan {
 }
 
 // Now we can safely initialize putMsg
-putMsg = EMPTY
+putMsg = VOID_OBJ
 
 type PutVal<V> = V extends undefined ? void : V
 
@@ -40,7 +40,7 @@ export type InCh<out V> = {
 }
 
 // Initialize receivers after EMPTY is available
-type Receivers = typeof EMPTY | Linkable | Queue<Linkable>
+type Receivers = typeof VOID_OBJ | Linkable | Queue<Linkable>
 
 /*
 
@@ -57,8 +57,8 @@ type Receivers = typeof EMPTY | Linkable | Queue<Linkable>
 export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 
 	// unknown value inserted by enQueue
-	putterS: unknown = EMPTY  // Queue<Job | unknown> | Job | unknown
-	receiverS: Receivers = EMPTY
+	putterS: unknown = VOID_OBJ  // Queue<Job | unknown> | Job | unknown
+	receiverS: Receivers = VOID_OBJ
 	_done = false
 	_st = 0
 
@@ -125,18 +125,18 @@ type KOfawaiterS = Recs | Puts
 function processRec<V>(ch_m: Chan<V>) {
 	const { putterS } = ch_m
 
-	if (putterS === EMPTY) {
+	if (putterS === VOID_OBJ) {
 		receiverHasNoPutter(ch_m)
 		return
 	}
 	if (putterS instanceof Job) {
-		ch_m.putterS = EMPTY
+		ch_m.putterS = VOID_OBJ
 		resumeObserverAndMe(putterS, undefined, putterS.val)
 		return
 	}
 	if (putterS instanceof Queue) {
 		const putVal: unknown = putterS.deQ()
-		return putVal === EMPTY ?
+		return putVal === VOID_OBJ ?
 			receiverHasNoPutter(ch_m) :
 			putVal instanceof Job ?
 				resumeObserverAndMe(putVal, undefined, putVal.val) :
@@ -157,7 +157,7 @@ export function addAsWaiter<V>(value: Receivers, hasAwaiterS_m: Chan<V>, kOfawai
 export function addAsWaiter<V>(value: unknown, hasAwaiterS_m: Chan<V>, kOfawaiterS: Puts): void
 export function addAsWaiter<V>(value: unknown, hasAwaiterS_m: Chan<V>, kOfawaiterS: KOfawaiterS): void {
 	const awaiterS = hasAwaiterS_m[kOfawaiterS]
-	if (awaiterS === EMPTY) {
+	if (awaiterS === VOID_OBJ) {
 		hasAwaiterS_m[kOfawaiterS] = value as (typeof kOfawaiterS extends Puts ? unknown : Receivers)
 	}
 	else if (awaiterS instanceof Queue) {
@@ -182,19 +182,19 @@ function processPut<V>(ch_m: Chan<V>) {
 
 	const { receiverS } = ch_m
 
-	if (receiverS === EMPTY) {
+	if (receiverS === VOID_OBJ) {
 		putterHasNoReceiver(ch_m)
 		return
 	}
 	if ("onObservableDone" in receiverS) {
-		ch_m.receiverS = EMPTY
+		ch_m.receiverS = VOID_OBJ
 		resumeObserverAndMe(receiverS, putMsg, undefined)
 		return
 	}
 
 	const receiver = receiverS.deQ()
 
-	if (receiver === EMPTY) {
+	if (receiver === VOID_OBJ) {
 		putterHasNoReceiver(ch_m)
 		return
 	}

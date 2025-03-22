@@ -63,7 +63,7 @@ export class Err<Name extends string> implements Error {
 // make (errInstance instanceof Error) === true
 Object.setPrototypeOf(Err.prototype, Error.prototype)
 
-export type AnErr = Err<string>
+export type RibuErr = Err<string>
 
 export function _Err(cause: unknown, fnName: string, msg = "") {
 	return new Err("Err", fnName, cause, msg)
