@@ -70,7 +70,15 @@ export function throwNotYieldedErr(currentOp: string) {
 
 //* ********************  Linked Lists  ************************************ *//
 
-export const VOID_LINK = newLink(VOID_OBJ, VOID_OBJ)
+export let VOID_LINK = {
+	a: VOID_OBJ,
+	b: VOID_OBJ,
+	nA: VOID_OBJ as unknown as Link<VoidObj, VoidObj>,
+	pA: VOID_OBJ as unknown as Link<VoidObj, VoidObj>,
+	nB: VOID_OBJ as unknown as Link<VoidObj, VoidObj>,
+	pB: VOID_OBJ as unknown as Link<VoidObj, VoidObj>,
+} as Link<VoidObj, VoidObj>
+
 export type VoidLink = typeof VOID_LINK
 
 /** Link
@@ -103,7 +111,6 @@ function newLink<A, B>(a: A, b: B): Link<A, B> {
 		pB: VOID_LINK,
 	}
 }
-
 
 /** Link Pool
  * Is a single LL.
