@@ -1,6 +1,6 @@
 import { CancOK, Err as newErr, go, sleep, allOrErr } from "ribu"
 import { EmptyArgsErr } from "../source/job-helpers.js"
-import { Err } from "../source/errors.js"
+import { ChildErr, Err, OnEndErr } from "../source/errors.js"
 
 function* jobFn(x?: number) {
 	yield* sleep(1)
@@ -46,7 +46,7 @@ const tests = {
 	},
 
 	*["yield* job.cancelErr()"]() {
-		type Exp = CancOK
+		type Exp = CancOK | OnEndErr | ChildErr
 		const x3 = yield* go(jobFn).cancelErr()
 		check_Eq<Exp>()(x3)
 	},

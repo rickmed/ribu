@@ -1,6 +1,5 @@
-import { sys, type Link, VOID_OBJ, disposeLink, freshLink, Itrtor, iterRes, iterator, _Iterable, setYieldOp, VoidObj, VOID_LINK, MaybeL } from "./system.js"
-import { _Err, Err, CANC_OK, CancOK, GenFnErr, OnEndErr, RibuErr, WaitingChldErr } from "./errors.js"
-import { cancelSleep } from "./timers.js"
+import { sys, type Link, VOID_OBJ, disposeLink, freshLink, Itrtor, iterRes, iterator, _Iterable, VoidObj, VOID_LINK, VoidLink, ensurePreviousYieldAndSetCallerJobNextSt } from "./system.js"
+import { _Err, CANC_OK, CancOK, GenFnErr, OnEndErr, RibuErr, ChildErr } from "./errors.js"
 import { Chan } from "./channel.js"
 
 // todo: implement "unsub() to have something like trio's moveOnAfter()
@@ -41,22 +40,19 @@ type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
 	(...args: Args) => RibuGen<Ret>
 
 type JobsLink = Link<Job, Job>
+type JobChanLink = Link<Job, Chan>
+type WaitingChdLink = JobsLink
+type TgOrChdLink = JobChanLink | WaitingChdLink
 
-type ParentLink = JobsLink
+type OnJobDone = (val: unknown, tg: Job, ob: Job) => void
+type ObserverJob = Job
+type CallbackLink = Link<OnJobDone, ObserverJob>
+type ObserverLink = JobsLink | CallbackLink
+
 type SyncFn = () => unknown
 type AsyncFn = () => Promise<unknown>
 type OnEnd = SyncFn | AsyncFn | RibuGenFn
-type OnEndLink = Link<SyncFn, 1> | Link<AsyncFn, 2> | Link<RibuGenFn, 3>
-type PrntOrOnEndLink = ParentLink | OnEndLink
-
-type JobChanLink = Link<Job, Chan>
-type TgOrChdLink =
-	JobChanLink |
-	JobsLink  // if blocked by a job or at waitingChildren()
-
-type OnJobDone = (val: unknown, tg: Job) => void
-type OnJobDoneLink = Link<OnJobDone, VoidObj>
-type ObsLink = JobsLink | OnJobDoneLink
+type OnEndLink = Link<OnEnd, VoidObj>
 
 const DUMMY_GEN = (function* () {})()
 
@@ -75,47 +71,39 @@ const CANCOK = 1 << 10  // 1024
 export const ERR_IN_GENFN = 1 << 11  // 2048
 const ERR_IN_ONEND = 1 << 12  // 4096
 const CANCEL_SIBLINGS_ON_ERR = 1 << 13  // 8192
-const HAS_PARENT = 1 << 14  // 16384
-const HAS_OEND = 1 << 15  // 32768
 // todo: implement this
-// const JOB_IN_POOL = 1 << 16  // 65536
+// const JOB_IN_POOL = 1 << 14  // 16384
 
-const PARKED_NOT_SLEEP = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_CH
-const PARKED = PARKED_NOT_SLEEP | PARKED_SLEEP
+export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_SLEEP | PARKED_CH
 const HAD_ERR = ERR_IN_GENFN | ERR_IN_ONEND
 export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
 
-
-/*
-	todo: store ends at the end of _prnt LL, store how many in flags
-
-	todo: store _ob at the end of _tg, store how many in flags.
-		so now we combine _tg, _chd and _ob into one LL.
-		zeroOrOneYieldTg <-> zeroOrManyChd <-> zeroOrFewOb
-*/
+let self: Job
 
 /** Job Class
  *  val:
  * 	Temporary slot for values; ch.put/rec, errors accumulation...
- * 	When job is settled, it stores its final value.
+ * 	When job is settled, where its final value is stored.
  *  _nm:
  *		Name of the generator function, or the Job-like (set by Ribu).
  *  _st:
  * 	Job state (flags).
  *  _gn:
  * 	Generator object.
+ *  _ob:
+ * 	LL of observers observing this job.
  *  _tg:
  * 	A combined LL of the target the job is blocked by at yield* (tg) and its
  *  	children (chd), as "targets".
  * 	Since a job can only be blocked at yield* by one object at a time, we
  * 	store it as the head of the LL and store its respective PARKED_... flag.
  * 	The next links are to child jobs.
- *  _pr_oe:
- * 	A combined LL of link to parent job (pr) and onEnds (oe).
- * 	Since a job can only have one parent, we store it as the head
- * 	of the LL and store the flag HAS_PARENT. The next links are onEnds.
- *  _ob:
- * 	LL of things observing this job.
+ *  _pr:
+ * 	Link to parent job.
+ *  _oe:
+ * 	Singly LL of onEnds.
+ *  _slp:
+ * 	Timeout when yield* sleep().
  */
 export class Job<OkRet = unknown, GetterErr = unknown> {
 
@@ -123,91 +111,63 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 	_nm: string
 	_st = 0
 	_gn: RibuGen
-	_tg: MaybeL<TgOrChdLink> = VOID_LINK
-	_pr_oe: MaybeL<PrntOrOnEndLink> = VOID_LINK
-	_ob: MaybeL<ObsLink> = VOID_LINK
+	_ob: ObserverLink | VoidLink = VOID_LINK
+	_tg: TgOrChdLink | VoidLink = VOID_LINK
+	_pr: JobsLink | VoidLink = VOID_LINK
+	_oe: OnEndLink | VoidLink = VOID_LINK
+	_slp: NodeJS.Timeout | VoidObj = VOID_OBJ
 
 	constructor(name: string, gen?: RibuGen, parent?: Job) {
 		this._gn = gen ?? DUMMY_GEN
 		this._nm = name
 		if (parent) {
-			this._st |= HAS_PARENT
 			const link = freshLink(parent, this)
-			addParentOrOnEnd(this, link)
+			this._pr = link
 			addTgOrChd(parent, link)
 		}
 	}
+	/*
+	ch.put  // caller.st |= PARKED_CH, ie, caller wants to put
+	yield* job  // if caller is PARKED, throw
+		// but it could have been set by .cancel() prepping
+
+	I think I need different iterable objs.
+
+	ch.put  // caller.st |= PARKED_CH, ie, caller wants to put
+	yield* job.cancel()  // in cancel(), if caller is PARKED, throw
+
+	cancelIterable.[Symbol.iterator]() {
+
+	}
+	*/
 
 	[Symbol.iterator]() {
-		let { callerJobNextSt, runningJob: callerJob } = sys
-		callerJobNextSt = callerJobNextSt || PARKED_JOB
-		callerJob._st |= callerJobNextSt
-
-		// reset ambient/temp state
-		sys.callerJobNextSt = 0
-		sys.yieldOpStr = ""
-
-		if (this._st & DONE) {
-			if (shouldJobFail(callerJob, this)) {
-				genFnFailed(callerJob, this.val)
-				iterRes.done = false
-			}
-			else {
-				iterRes.done = true
-				iterRes.value = this.val
-			}
-		}
-		else {
-			// todo: check this
-			linkJobs(callerJob, this)
-			iterRes.done = false
-		}
-
-		return iterator as Itrtor<OkRet>
+		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, "yield* job")
+		return jobIterator<OkRet>(this)
 	}
 
 	get err() {
-		setYieldOp("job.err", PARKED_CONTINUE)
-		return this as unknown as _Iterable<GetterErr>
+		return this.jobIterable<GetterErr>(PARKED_CONTINUE, "job.err")
 	}
 
 	cancel() {
-		// todo: subsribe caller immediately, after checking if user forgot
-		// to yield* previous op.
-		setYieldOp("job.cancel", PARKED_JOB_CANCEL)
 		cancelJob(this)
-		return this as unknown as _Iterable<CancOK>
+		return this.jobIterable<CancOK>(PARKED_JOB_CANCEL, "job.cancel")
 	}
 
 	cancelErr() {
-		setYieldOp("job.cancelErr", PARKED_CONTINUE)
 		cancelJob(this)
-		return this as unknown as _Iterable<CancOK | Err<string>>
+		return this.jobIterable<CancOK | OnEndErr | ChildErr>(PARKED_CONTINUE, "job.cancelErr")
 	}
 
-	then(res: (val: OkRet) => void, rej: (err: GetterErr) => void) {
-		if (this._st & DONE) {
-			void ((this._st & ANY_ERR_OR_CANCOK) ? rej(this.val as GetterErr) : res(this.val as OkRet))
-		}
-		else {
-			const link = freshLink(promOnJobDone, VOID_OBJ)
-			addObserver(this, link)
-		}
-
-		function promOnJobDone(val: unknown, tgJob: Job) {
-			void ((tgJob._st & ANY_ERR_OR_CANCOK) ? rej(val as GetterErr) : res(val as OkRet))
-		}
-	}
-
-	get promErr() {
-		return new Promise<GetterErr>((res) => {
-			const link = freshLink(res as OnJobDone, VOID_OBJ)
-			addObserver(this, link)
-		})
+	jobIterable<YieldRet>(callerJobNextSt: Job["_st"], opName: string) {
+		self = this
+		ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt, opName)
+		return JOB_ITERABLE as _Iterable<YieldRet>
 	}
 
 	onEnd(onEndFn: OnEnd) {
-		addOnEnd(this, onEndFn)
+		onEnd(onEndFn, this)
 	}
 
 	cancelSiblingsOnErr() {
@@ -217,9 +177,70 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 	isDone() {
 		return this._st & DONE
 	}
+
+	get promErr() {
+		const self = this
+		return new Promise<GetterErr>((res) => {
+			const link = freshLink(res as OnJobDone, self)
+			addObserver(self, link)
+		})
+	}
+
+	then(res: (val: OkRet) => void, rej: (err: GetterErr) => void) {
+		if (this._st & DONE) {
+			resolveJobThenable(res, rej, this)
+		}
+		else {
+			const link = freshLink(onJobDone, this)
+			addObserver(this, link)
+		}
+
+		function onJobDone(_: unknown, thisJob: Job) {
+			resolveJobThenable(res, rej, thisJob)
+		}
+	}
+}
+
+function resolveJobThenable<OkRet, GetterErr>(res: (val: OkRet) => void, rej: (err: GetterErr) => void, thisJob: Job) {
+	const { _st, val } = thisJob
+	if (_st & ANY_ERR_OR_CANCOK) {
+		rej(val as GetterErr)
+	}
+	else {
+		res(val as OkRet)
+	}
+}
+
+function jobIterator<T>(job: Job) {
+	let callerJob = sys.runningJob
+
+	if (job._st & DONE) {
+		if (shouldJobFail(callerJob, job)) {
+			genFnFailed(callerJob, job.val)
+			iterRes.done = false
+		}
+		else {
+			callerJob._st &= ~PARKED
+			iterRes.done = true
+			iterRes.value = job.val
+		}
+	}
+	else {
+		linkJobs(callerJob, job)
+		iterRes.done = false
+	}
+
+	return iterator as Itrtor<T>
+}
+
+const JOB_ITERABLE = {
+	[Symbol.iterator]() {
+		return jobIterator(self)
+	}
 }
 
 export function resumeJob(job: Job, val?: unknown) {
+	job._st &= ~PARKED
 	sys.pushJob(job)
 
 	// Values are never passed into gen.next() because values inside the generator
@@ -274,107 +295,109 @@ function genFnFailed(job: Job, cause: unknown) {
 	onGenFnEnded(job, true)
 }
 
-function execOnEnds(thisJob: Job) {
-	if (thisJob._end === VOID_LINK) {
-		settle(thisJob)
+
+const syncFnCtor = (function DUMMY_SYNC_FN() {}).constructor
+const genFnCtor = (function* DUMMY_GEN_FN() {}).constructor
+
+function execOnEnds(job: Job) {
+	const onEndLink = job._oe
+	if (onEndLink === VOID_LINK) {
+		job._st &= ~WAITING_ONENDS
+		settle(job)
 		return
 	}
 
-	thisJob._st |= WAITING_ONENDS
+	job._st |= WAITING_ONENDS
 
-	const link = thisJob._end
-	const onEnd = link.a
-	const onEndType = link.b
+	const onEnd = onEndLink.a as OnEnd
+	job._oe = onEndLink.nA as OnEndLink
+	disposeLink(onEndLink)
 
-	thisJob._end = link.nA
-	disposeLink(link)
-
-	if (onEndType === 1) {
+	if (onEnd.constructor === syncFnCtor) {
 		try {
 			// eslint-disable-next-line no-var
-			var retVal = (onEnd as SyncFn)()
+			var retVal = onEnd()
 		}
 		catch (e) {
 			retVal = e
 		}
 		if (retVal instanceof Error) {
-			addErrorToJobVal(thisJob, OnEndErr(retVal, onEnd.name), ERR_IN_ONEND, "onEnd")
+			addOnErrInOnEnd(job, retVal)
 		}
-		execOnEnds(thisJob)
+		execOnEnds(job)
 		return
 	}
-	if (onEndType === 2) {
-		(onEnd as AsyncFn)().then(
-			() => {
-				execOnEnds(thisJob)
-			},
-			(err) => {
-				addErrorToJobVal(thisJob, OnEndErr(err, onEnd.name), ERR_IN_ONEND, "onEnd")
-				execOnEnds(thisJob)
-			}
-		)
-		return
-	}
-	if (onEndType === 3) {  // It's a Generator
-		const job = new Job((onEnd as RibuGenFn)(), onEnd.name)
 
-		// add an observer to thisJob
-
-
-
-		const observer = new CustomObserver((val, tg) => {
-			if (tg._st & ERR_IN_GENFN) {
-				addErrorToJobVal(thisJob, OnEndErr(val, onEnd.name), ERR_IN_ONEND, "onEnd")
-			}
-			execOnEnds(thisJob)
-		})
-
+	if (onEnd.constructor === genFnCtor) {
+		const job = new Job(onEnd.name, (onEnd as RibuGenFn)())
+		const observingLink = freshLink(onOnEndJobDone, job)
+		addObserver(job, observingLink)
 		resumeJob(job)
 		return
 	}
 
-	onEndType satisfies never
+	(onEnd as AsyncFn)().then(
+		() => {
+			execOnEnds(job)
+		},
+		(err) => {
+			addOnErrInOnEnd(job, err)
+			execOnEnds(job)
+		}
+	)
 }
 
-function settle(thisJob: Job) {
-	//
-	if (thisJob._st & DONE) {
-		return
-	}
-
-	// removeParent
-	const { _pr_oe_ob: _prnt } = thisJob
-	if (_prnt) {
-		thisJob._pr_oe_ob = null
-		removeLinkFromParent(_prnt)
-		disposeLink(_prnt)
-	}
-
-	finishSettle(thisJob)
+function addOnErrInOnEnd(job: Job, val: unknown) {
+	addErrorToJobVal(job, OnEndErr(val, job._nm), ERR_IN_ONEND, "onEnd")
 }
 
-export function finishSettle(thisJob: Job) {
-	const { _st, val } = thisJob
+function onOnEndJobDone(val: unknown, tg: Job, ob: Job) {
+	if (tg._st & ERR_IN_GENFN) {
+		addOnErrInOnEnd(ob, val)
+	}
+	execOnEnds(ob)
+}
+
+function settle(job: Job) {
+	// Release parent-child link.
+	const { _pr } = job
+	if (_pr !== VOID_LINK) {
+		const link = _pr as JobsLink
+		removeTgOrChd(link.a, link)
+		job._pr = VOID_LINK
+		disposeLink(link)
+	}
+
+	finishSettle(job)
+}
+
+export function finishSettle(job: Job) {
+	const { _st } = job
 
 	if (_st & CANCELLED && !(_st & ERR_IN_ONEND)) {
-		thisJob.val = CANC_OK
-		thisJob._st = CANCOK
+		job.val = CANC_OK
+		job._st = CANCOK
 	}
 
-	thisJob._st |= DONE
+	job._st |= DONE
+
+	const { val } = job
 
 	// notify observers
-	for (let link = thisJob._ob; link !== VOID_LINK; link = link.nA) {
+	let link = job._ob
+	while (link !== VOID_LINK) {
+		const nextLink = link.nA
 		const observer = link.a
 		if (typeof observer === "function") {
-			observer(val, thisJob)
+			observer(val, job, link.b as Job)
 		}
-		else {
-			removeOb(thisJob, link as JobsLink)
+		else {  // JobsLink
+			removeOb(job, link as JobsLink)
 			removeTgOrChd(observer as Job, link as JobsLink)
 			disposeLink(link)
-			onTgJobDone(observer as Job, thisJob)
+			onTgJobDone(observer as Job, job)
 		}
+		link = nextLink
 	}
 }
 
@@ -397,7 +420,7 @@ function onChildDone(job: Job, child: Job) {
 		return
 	}
 
-	addErrorToJobVal(job, child.val as RibuErr, ERR_IN_GENFN, "waitingChildren")
+	addErrorToJobVal(job, child.val as RibuErr, ERR_IN_GENFN, "child")
 
 	if (_tg === VOID_LINK) {
 		execOnEnds(job)
@@ -419,7 +442,8 @@ export function cancelJob(job: Job) {
 	}
 
 	if (_st & PARKED_SLEEP) {
-		cancelSleep(job)
+		clearTimeout(job._slp as NodeJS.Timeout)
+		job._slp = VOID_OBJ
 	}
 	else if (_st & PARKED_CH) {
 		// todo: unsub from channel
@@ -479,14 +503,14 @@ function shouldJobFail(ObJob: Job, tgJob: Job) {
 		(ObJob._st & PARKED_JOB_CANCEL) && (tgJob._st & ERR_IN_ONEND)
 }
 
-type ErrType = "waitingChildren" | "onEnd"
+type ErrType = "child" | "onEnd"
 export function addErrorToJobVal(job: Job, cause: RibuErr, st: Job["_st"], errType: ErrType) {
 	const { _st } = job
 	if (!(_st & HAD_ERR)) {
 		const errMsg = _st & CANCELLED ? "cancelled" : ""
 
-		const err = errType === "waitingChildren" ?
-			WaitingChldErr(job._nm, cause, errMsg) :
+		const err = errType === "child" ?
+			ChildErr(job._nm, cause, errMsg) :
 			OnEndErr(cause, job._nm, errMsg)
 
 		job.val = err
@@ -498,26 +522,6 @@ export function addErrorToJobVal(job: Job, cause: RibuErr, st: Job["_st"], errTy
 	job._st |= st
 }
 
-function addOnEnd(job: Job, onEndFn: OnEnd) {
-	const fnCtorName = onEndFn.constructor.name
-	const linkType =
-		fnCtorName === "GeneratorFunction" ? 3 :
-		fnCtorName === "AsyncFunction" ? 2 :
-		1
-
-	let link = freshLink(onEndFn, linkType) as OnEndLink
-
-	const { _st, _pr_oe_ob } = job
-
-	if (_pr_oe_ob === VOID_LINK) {
-		addParentOrOnEnd(job, link)
-	}
-	else {  // job has parent (in _pr_oe_ob head)
-		link.nA = _pr_oe_ob
-	}
-
-
-}
 
 //* ***********************  Job LLs Operations  ******************** *//
 
@@ -532,19 +536,19 @@ function addOnEnd(job: Job, onEndFn: OnEnd) {
 		VL <-> B <-> A <-> VL
 */
 
-function addObserver(job: Job, link: ObsLink) {
+function addObserver(job: Job, link: ObserverLink) {
 	let head = job._ob
 	job._ob = link
 	link.nA = head
 	head.pA = link
 }
 
-function removeOb(job: Job, link: ObsLink) {
-	let { nA, pA } = link
+function removeOb(job: Job, link: ObserverLink) {
+	let { pA, nA } = link
 	pA.nA = nA
 	nA.pA = pA
-	if (job._ob === link) {
-		job._ob = nA
+	if (nA === VOID_LINK) {
+		job._ob = VOID_LINK
 	}
 }
 
@@ -552,8 +556,8 @@ function removeOb(job: Job, link: ObsLink) {
 // always because:
 // Tg behaves like a stack Link, ie, it is added as head when job is blocked
 // and removed when job is resumed, ie, go(), which adds childs, can never
-// be called in between.
-function addTgOrChd(job: Job, link: JobChanLink | ChildLink) {
+// be called in between block/unblock.
+function addTgOrChd(job: Job, link: TgOrChdLink) {
 	let oldHead = job._tg
 	job._tg = link
 	link.nB = oldHead
@@ -561,34 +565,14 @@ function addTgOrChd(job: Job, link: JobChanLink | ChildLink) {
 }
 
 function removeTgOrChd(job: Job, link: TgOrChdLink) {
-	let { nB, pB } = link
+	let { pB, nB } = link
 	pB.nB = nB
 	nB.pB = pB
-	if (job._tg === link) {
-		job._tg = nB
+	if (nB === VOID_LINK) {
+		job._tg = VOID_LINK
 	}
 	// No need to set link.nA/pA to void since caller should
 	// dispose the link immediately.
-}
-
-function addParentOrOnEnd(job: Job, link: PrntOrOnEndLink) {
-	let head = job._pr_oe
-	job._pr_oe = link
-	link.nA = head
-	head.pA = link
-}
-
-function removeParentOrOnEnd(job: Job, link: PrntOrOnEndLink) {
-	let { nA, pA } = link
-	pA.nA = nA
-	nA.pA = pA
-	if (job._pr_oe === link) {
-		job._pr_oe = nA
-	}
-}
-
-export function popTgHead(thisJob: Job) {
-	return removeTgOrChd(thisJob, thisJob._tg as Link<Ob, Tg>)
 }
 
 export function linkJobs(ob: Job, tg: Job) {
@@ -598,11 +582,14 @@ export function linkJobs(ob: Job, tg: Job) {
 }
 
 
+
 //* ****************   User API   ****************************************** *//
+
+type AllErrs = GenFnErr | OnEndErr | ChildErr
 
 export function go<Args extends unknown[], Ret>(genFn: RibuGenFn<Ret, Args>, ...args: Args) {
 	const gen = genFn(...args)
-	const job = new Job<Exclude<Ret, Error>, Ret | Err<string> | CancOK>(gen, genFn.name, sys.runningJob)
+	const job = new Job<Exclude<Ret, Error>, Ret | AllErrs | CancOK>(genFn.name, gen, sys.runningJob)
 	resumeJob(job)
 	return job
 }
@@ -611,8 +598,11 @@ export function me(): Job {
 	return sys.runningJob
 }
 
-export function onEnd(newOnEnd: OnEnd) {
-	addOnEnd(sys.runningJob, newOnEnd)
+export function onEnd(onEnd: OnEnd, job = sys.runningJob) {
+	let link = freshLink(onEnd, VOID_OBJ)
+	let head = job._oe
+	job._oe = link
+	link.nA = head
 }
 
 

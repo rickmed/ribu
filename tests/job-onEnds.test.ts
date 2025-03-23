@@ -3,9 +3,10 @@ import { go, sleep, onEnd } from "ribu"
 import { sleepProm } from "./utils.js"
 
 
-describe.skip("onEnds run when job's generator function returns", () => {
+describe.skip("onEnds run just before job is settled", () => {
 
-	it("works with sync fn, async fn and job. Are executed in reverse added order", async () => {
+	it("Works with sync fn, async fn and job. Are executed in reverse/sequential" +
+		"order", async () => {
 
 		let onEnds: string[] = []
 

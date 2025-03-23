@@ -1,13 +1,15 @@
 import { Err } from "./errors.js"
-import { type Job } from "./job.js"
+import { PARKED, type Job } from "./job.js"
+
+
+export const VOID_OBJ = { _v: 1 } as const
+export type VoidObj = typeof VOID_OBJ
+
 
 class System {
 	#stack: Array<Job> = []  // todo: optimize to Linked List
 	runningJob: Job = VOID_OBJ as unknown as Job
 	deadline = 5000
-	callerJobNextSt: Job["_st"] = 0
-	yieldOp = 0 as YieldOp
-	yieldOpStr = ""
 
 	pushJob(job: Job) {
 		this.runningJob = job
@@ -21,10 +23,6 @@ class System {
 }
 
 export let sys = new System()
-
-
-export const SLEEP_OP = 1
-type YieldOp = typeof SLEEP_OP
 
 
 export type IterRes = IteratorResult<unknown>
@@ -45,47 +43,35 @@ export type _Iterable<V> = {
 }
 export const iterable = {
 	[Symbol.iterator]() {
-		(sys.yieldable as Yieldable).execYield(sys.runningJob, iterRes)
-		sys.yieldable = VOID_OBJ
 		return iterator
 	}
 }
 
-export function sysIterable<YieldRet>(yieldable: Yieldable) {
-	sys.yieldable = yieldable
-	return iterable as _Iterable<YieldRet>
-}
 
-
-export function setYieldOp(op: string, callerJobNextSt: Job["_st"]) {
-	const { yieldOpStr: yieldOp } = sys
-	if (yieldOp !== "") {
-		const errMsg = `
-			RIBU: Did you forget to yield* at operation before this one?
-			Previous operation: ${yieldOp}
-			Current operation: ${op}
-		`
-		// eslint-disable-next-line @typescript-eslint/only-throw-error
-		throw new Err("RibuErr", sys.runningJob._nm, undefined, errMsg)
+export function ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt: Job["_st"], opName: string) {
+	const callerJob = sys.runningJob
+	if (callerJob._st & PARKED) {
+		throwNotYieldedErr(opName)
 	}
-
-	sys.callerJobNextSt = callerJobNextSt
-	sys.yieldOpStr = op
+	// eslint-disable-next-line functional/immutable-data
+	callerJob._st |= callerJobNextSt
 }
 
-
-export const VOID_OBJ = {
-	_vo: true,
+export function throwNotYieldedErr(currentOp: string) {
+	const errMsg = `
+		Ribu: Did you forget to yield* at the operation before this one?
+		Current yieldable operation: ${currentOp}.
+		Job: ${sys.runningJob._nm}.
+	`
+	// eslint-disable-next-line @typescript-eslint/only-throw-error
+	throw new Err("RibuErr", sys.runningJob._nm, undefined, errMsg)
 }
-export type VoidObj = typeof VOID_OBJ
 
 
 //* ********************  Linked Lists  ************************************ *//
 
-export let VOID_LINK: Link<VoidObj, VoidObj>
+export const VOID_LINK = newLink(VOID_OBJ, VOID_OBJ)
 export type VoidLink = typeof VOID_LINK
-
-export type MaybeL<T> = T | VoidLink
 
 /** Link
  * Used as a Doubly LL Node for Observers <-> Targets and several other
@@ -98,20 +84,25 @@ export type MaybeL<T> = T | VoidLink
  * nB is next object B Link (towards the tail of LL)
  * pB is previous object B Link
  */
-export class Link<A = unknown, B = unknown> {
+export interface Link<A = unknown, B = unknown> {
 	a: A
 	b: B
-	nA: this | VoidLink = VOID_LINK
-	nB: this | VoidLink = VOID_LINK
-	pA: this | VoidLink = VOID_LINK
-	pB: this | VoidLink = VOID_LINK
-	constructor(a: A, b: B) {
-		this.a = a
-		this.b = b
-	}
+	nA: this | VoidLink
+	pA: this | VoidLink
+	nB: this | VoidLink
+	pB: this | VoidLink
 }
 
-VOID_LINK = new Link(VOID_OBJ, VOID_OBJ)
+function newLink<A, B>(a: A, b: B): Link<A, B> {
+	return {
+		a,
+		b,
+		nA: VOID_LINK,
+		pA: VOID_LINK,
+		nB: VOID_LINK,
+		pB: VOID_LINK,
+	}
+}
 
 
 /** Link Pool
@@ -119,7 +110,7 @@ VOID_LINK = new Link(VOID_OBJ, VOID_OBJ)
  * We use Link's .nA to link to next available Link in pool.
  * todo: manage pool size
  */
-let linkPoolHead = VOID_LINK
+let linkPoolHead: Link | VoidLink = VOID_LINK
 let linkPoolSize = 0
 export function getLinkPoolSize() {
 	return linkPoolSize
@@ -138,9 +129,9 @@ export function disposeLink(link: Link) {
 	link.pB = VOID_LINK
 }
 
-export function freshLink<A, B>(a: A, b: B) {
+export function freshLink<A, B>(a: A, b: B): Link<A, B> {
 	if (linkPoolHead === VOID_LINK) {
-		return new Link(a, b)
+		return newLink(a, b)
 	}
 
 	linkPoolSize--
@@ -151,7 +142,7 @@ export function freshLink<A, B>(a: A, b: B) {
 	link.nA = VOID_LINK
 	link.a = a
 	link.b = b
-	// caller will reassign next and prev links
+	// caller will reassign next and prev props.
 
 	return link as Link<A, B>
 }
