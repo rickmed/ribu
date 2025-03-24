@@ -2,13 +2,13 @@ import { Err } from "./errors.js"
 import { PARKED, type Job } from "./job.js"
 
 
-export const VOID_OBJ = { _v: 1 } as const
+export const VOID_OBJ = { _v: 0 } as const
 export type VoidObj = typeof VOID_OBJ
 
 
 class System {
 	#stack: Array<Job> = []  // todo: optimize to Linked List
-	runningJob: Job = VOID_OBJ as unknown as Job
+	runningJob = null as unknown as Job
 	deadline = 5000
 
 	pushJob(job: Job) {
@@ -73,11 +73,13 @@ export function throwNotYieldedErr(currentOp: string) {
 export let VOID_LINK = {
 	a: VOID_OBJ,
 	b: VOID_OBJ,
-	nA: VOID_OBJ as unknown as Link<VoidObj, VoidObj>,
-	pA: VOID_OBJ as unknown as Link<VoidObj, VoidObj>,
-	nB: VOID_OBJ as unknown as Link<VoidObj, VoidObj>,
-	pB: VOID_OBJ as unknown as Link<VoidObj, VoidObj>,
 } as Link<VoidObj, VoidObj>
+
+// Set to same object type as Link ctor to prevent V8 to deopt, maybe.
+VOID_LINK.nA = VOID_LINK
+VOID_LINK.pA = VOID_LINK
+VOID_LINK.nB = VOID_LINK
+VOID_LINK.pB = VOID_LINK
 
 export type VoidLink = typeof VOID_LINK
 
@@ -91,8 +93,7 @@ export type VoidLink = typeof VOID_LINK
  * pA is previous object A Link
  * nB is next object B Link (towards the tail of LL)
  * pB is previous object B Link
- */
-export interface Link<A = unknown, B = unknown> {
+ */ export interface Link<A = unknown, B = unknown> {
 	a: A
 	b: B
 	nA: this | VoidLink
@@ -149,7 +150,6 @@ export function freshLink<A, B>(a: A, b: B): Link<A, B> {
 	link.nA = VOID_LINK
 	link.a = a
 	link.b = b
-	// caller will reassign next and prev props.
 
 	return link as Link<A, B>
 }

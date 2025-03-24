@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest"
 import { go, onEnd, cancel, CANC_OK, Err, sleep, Job } from "ribu"
-import { assertRibuErr } from "./utils.js"
-
 
 function* child(ctx: {count: number}) {
 	yield* sleep(3)
@@ -36,9 +34,9 @@ describe("job.cancel()", () => {
 		}
 
 		function* main() {
-			const childJob = go(parent)
+			const job = go(parent)
 			yield* sleep(1)
-			yield* childJob.cancel()
+			yield* job.cancel()
 		}
 
 		await go(main)

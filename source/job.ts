@@ -267,7 +267,7 @@ export function resumeJob(job: Job, val?: unknown) {
 		}
 		else {
 			job.val = value
-			onGenFnEnded(job)
+			onGenFnDone(job)
 		}
 	}
 	catch (e) {
@@ -278,7 +278,7 @@ export function resumeJob(job: Job, val?: unknown) {
 	}
 }
 
-function onGenFnEnded(job: Job, cancelChildren = false) {
+function onGenFnDone(job: Job, cancelChildren = false) {
 	if (job._tg === VOID_LINK) {
 		execOnEnds(job)
 		return
@@ -292,7 +292,7 @@ function genFnFailed(job: Job, cause: unknown) {
 	job._st |= ERR_IN_GENFN
 	job._st |= CANCEL_SIBLINGS_ON_ERR
 	job.val = GenFnErr(job._nm, cause)
-	onGenFnEnded(job, true)
+	onGenFnDone(job, true)
 }
 
 
@@ -404,6 +404,7 @@ export function finishSettle(job: Job) {
 function onTgJobDone(job: Job, tgJob: Job) {
 	if (job._st & WAITING_CHILDREN) {
 		onChildDone(job, tgJob)
+		return
 	}
 	// Parked at yield* tgJob.
 	if (shouldJobFail(job, tgJob)) {
@@ -414,21 +415,17 @@ function onTgJobDone(job: Job, tgJob: Job) {
 }
 
 function onChildDone(job: Job, child: Job) {
-	let { _tg, _st } = job
-
-	if (!(child._st & HAD_ERR)) {
-		return
+	if (child._st & HAD_ERR) {
+		addErrorToJobVal(job, child.val as RibuErr, ERR_IN_GENFN, "child")
+		const { _st } = job
+		if ((_st & CANCEL_SIBLINGS_ON_ERR) && !(_st & CHILDREN_CANCELLED)) {
+			loopChildren(job, false, true)
+		}
 	}
 
-	addErrorToJobVal(job, child.val as RibuErr, ERR_IN_GENFN, "child")
-
-	if (_tg === VOID_LINK) {
+	if (job._tg === VOID_LINK) {
 		execOnEnds(job)
 		return
-	}
-
-	if ((_st & CANCEL_SIBLINGS_ON_ERR) && !(_st & CHILDREN_CANCELLED)) {
-		loopChildren(job, false, true)
 	}
 }
 
@@ -441,8 +438,11 @@ export function cancelJob(job: Job) {
 		return
 	}
 
+	job._st |= CANCELLED
+
 	if (_st & PARKED_SLEEP) {
 		clearTimeout(job._slp as NodeJS.Timeout)
+		job._st &= ~PARKED_SLEEP
 		job._slp = VOID_OBJ
 	}
 	else if (_st & PARKED_CH) {
@@ -484,15 +484,20 @@ function loopChildren(job: Job, observe: boolean, cancel: boolean) {
 	let childLink = job._tg
 	// Can start loop right away bc caller guards against job state.
 	do {
-		const childJob = childLink.b
+		let childJob = childLink.b as Job
 		if (observe) {
-			addObserver(job, childLink as JobsLink)
+			// Parent-child are already connected via ._tg/._pr, so we need to
+			// move child._pr link and add it to child._ob, so child doesn't
+			// process its relationship in settle() with parent twice (once via
+			// .pr and once via ._ob).
+			addObserver(childJob, childJob._pr as JobsLink)
+			childJob._pr = VOID_LINK
 		}
 		// Need to save nextLink here because child can resolve its cancellation
 		// synchronously and remove link from .tg_ch LL.
 		const nextLink = childLink.nB
 		if (cancel) {
-			cancelJob(childJob as Job)
+			cancelJob(childJob)
 		}
 		childLink = nextLink
 	} while (childLink !== VOID_LINK)
@@ -529,25 +534,31 @@ export function addErrorToJobVal(job: Job, cause: RibuErr, st: Job["_st"], errTy
 
 	obj.LLHead
 				\
-		VL <-> A <-> VL
+		VL <- A -> VL
 
 	obj.LLHead
 				\
-		VL <-> B <-> A <-> VL
+		VL <- B <-> A -> VL
 */
 
 function addObserver(job: Job, link: ObserverLink) {
 	let head = job._ob
-	job._ob = link
 	link.nA = head
-	head.pA = link
+	job._ob = link
+	if (head !== VOID_LINK) {
+		head.pA = link
+	}
 }
 
 function removeOb(job: Job, link: ObserverLink) {
 	let { pA, nA } = link
-	pA.nA = nA
-	nA.pA = pA
-	if (nA === VOID_LINK) {
+	if (nA !== VOID_LINK) {
+		nA.pA = pA
+	}
+	if (pA !== VOID_LINK) {
+		pA.nA = nA
+	}
+	if (nA === VOID_LINK) {  // link is head
 		job._ob = VOID_LINK
 	}
 }
@@ -558,18 +569,24 @@ function removeOb(job: Job, link: ObserverLink) {
 // and removed when job is resumed, ie, go(), which adds childs, can never
 // be called in between block/unblock.
 function addTgOrChd(job: Job, link: TgOrChdLink) {
-	let oldHead = job._tg
+	let head = job._tg
+	link.nB = head
 	job._tg = link
-	link.nB = oldHead
-	oldHead.pB = link
+	if (head !== VOID_LINK) {
+		head.pB = link
+	}
 }
 
 function removeTgOrChd(job: Job, link: TgOrChdLink) {
 	let { pB, nB } = link
-	pB.nB = nB
-	nB.pB = pB
-	if (nB === VOID_LINK) {
-		job._tg = VOID_LINK
+	if (nB !== VOID_LINK) {
+		nB.pB = pB
+	}
+	if (pB !== VOID_LINK) {
+		pB.nB = nB
+	}
+	if (pB === VOID_LINK) {  // link is head
+		job._tg = nB
 	}
 	// No need to set link.nA/pA to void since caller should
 	// dispose the link immediately.
