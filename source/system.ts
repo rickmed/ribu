@@ -3,6 +3,7 @@ import { PARKED, type Job } from "./job.js"
 
 
 export const VOID_OBJ = { _v: 0 } as const
+Object.freeze(VOID_OBJ)
 export type VoidObj = typeof VOID_OBJ
 
 
@@ -80,6 +81,8 @@ VOID_LINK.nA = VOID_LINK
 VOID_LINK.pA = VOID_LINK
 VOID_LINK.nB = VOID_LINK
 VOID_LINK.pB = VOID_LINK
+
+Object.freeze(VOID_LINK)
 
 export type VoidLink = typeof VOID_LINK
 

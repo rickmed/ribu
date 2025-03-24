@@ -43,6 +43,7 @@ export class Err<Name extends string> implements Error {
 		return ""  // todo
 	}
 
+	// todo: evaluate this, maybe it's confusing.
 	get cause() {
 		return Array.isArray(this._errors) ? this._errors[0] : this._errors
 	}
@@ -72,11 +73,6 @@ export function _Err(cause: unknown, fnName: string, msg = "") {
 export type OnEndErr = Err<"OnEndErr">
 export function OnEndErr(cause: unknown, fnName: string, msg = ""): OnEndErr {
 	return new Err("OnEndErr", fnName, cause, msg)
-}
-
-export type ChildErr = Err<"ChildErr">
-export function ChildErr(fnName: string, cause: unknown,  msg = ""): ChildErr {
-	return new Err("ChildErr", fnName, cause, msg)
 }
 
 export type GenFnErr = Err<"GenFnErr">

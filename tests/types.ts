@@ -1,6 +1,6 @@
-import { CancOK, Err as newErr, go, sleep, allOrErr } from "ribu"
-import { EmptyArgsErr } from "../source/job-helpers.js"
-import { ChildErr, Err, OnEndErr } from "../source/errors.js"
+import { CancOK, Err as newErr, go, sleep } from "ribu"
+import { Err, GenFnErr, OnEndErr } from "../source/errors.js"
+import { cancel } from "../source/job.js"
 
 function* jobFn(x?: number) {
 	yield* sleep(1)
@@ -26,8 +26,8 @@ const tests = {
 
 	*["yield* job: the returned type exclude all Error types"]() {
 		type Exp1 = false | 1
-		const rec1 = yield* go(jobFn)
-		check_Eq<Exp1>()(rec1)
+		const rec = yield* go(jobFn)
+		check_Eq<Exp1>()(rec)
 	},
 
 	/* When using .err, the returned type is the type returned from the
@@ -35,42 +35,69 @@ const tests = {
 		generic Ribu Err from thrown values.
 	*/
 	*["yield* job.err"]() {
-		const x2 = yield* go(jobFn).err
-		check_Eq<All>()(x2)
+		const rec = yield* go(jobFn).err
+		check_Eq<All>()(rec)
 	},
 
 	*["yield* job.cancel()"]() {
 		type Exp = CancOK
-		const x3 = yield* go(jobFn).cancel()
-		check_Eq<Exp>()(x3)
+		const rec = yield* go(jobFn).cancel()
+		check_Eq<Exp>()(rec)
 	},
 
 	*["yield* job.cancelErr()"]() {
-		type Exp = CancOK | OnEndErr | ChildErr
-		const x3 = yield* go(jobFn).cancelErr()
-		check_Eq<Exp>()(x3)
+		type Exp = CancOK | OnEndErr
+		const rec = yield* go(jobFn).cancelErr()
+		check_Eq<Exp>()(rec)
 	},
 
 
-	/* *************** allOrErr() ************************************* */
+	/* *************** cancel(...jobs) *************************************** */
 
-	*["yield* allOrErr()"]() {
-		type Exp = NotErrs[]
-		const x3 = yield* allOrErr(go(jobFn), go(jobFn))
-		check_Eq<Exp>()(x3)
+	*["yield* cancel(...jobs)"]() {
+		type Exp = void
+		const rec = yield* cancel(go(jobFn), go(jobFn))
+		check_Eq<Exp>()(rec)
 	},
 
-	*["yield* allOrErr().err"]() {
-		type Exp = NotErrs[] | EmptyArgsErr | Err<string>
-		const x3 = yield* allOrErr(go(jobFn), go(jobFn)).err
-		check_Eq<Exp>()(x3)
+	*["yield* cancel(...jobs).maxWait(ms)"]() {
+		type Exp = void
+		const rec = yield* cancel(go(jobFn), go(jobFn)).maxWait(1)
+		check_Eq<Exp>()(rec)
 	},
 
-	*["yield* allOrErr().cancel()"]() {
-		type Exp = CancOK
-		const x3 = yield* allOrErr(go(jobFn), go(jobFn)).cancel()
-		check_Eq<Exp>()(x3)
+	*["yield* cancel(...jobs).err"]() {
+		type Exp = void | GenFnErr
+		const rec = yield* cancel(go(jobFn), go(jobFn)).err
+		check_Eq<Exp>()(rec)
 	},
+
+	*["yield* cancel(...jobs).maxWait(ms).err"]() {
+		type Exp = void | GenFnErr
+		const rec = yield* cancel(go(jobFn), go(jobFn)).maxWait(1).err
+		check_Eq<Exp>()(rec)
+	},
+
+
+	/* *************** allOrErr() ******************************************** */
+
+	// *["yield* allOrErr()"]() {
+	// 	type Exp = NotErrs[]
+	// 	const rec = yield* allOrErr(go(jobFn), go(jobFn))
+	// 	check_Eq<Exp>()(rec)
+	// },
+
+	// *["yield* allOrErr().err"]() {
+	// 	type Exp = NotErrs[] | EmptyArgsErr | Err<string>
+	// 	const rec = yield* allOrErr(go(jobFn), go(jobFn)).err
+	// 	check_Eq<Exp>()(rec)
+	// },
+
+	// *["yield* allOrErr().cancel()"]() {
+	// 	type Exp = CancOK
+	// 	const rec = yield* allOrErr(go(jobFn), go(jobFn)).cancel()
+	// 	check_Eq<Exp>()(rec)
+	// },
 }
 
 

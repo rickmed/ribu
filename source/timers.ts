@@ -4,7 +4,7 @@ import { _Iterable, iterable, ensurePreviousYieldAndSetCallerJobNextSt, iterRes,
 export function sleep(ms: number) {
 	ensurePreviousYieldAndSetCallerJobNextSt(PARKED_SLEEP, "sleep")
 	let callerJob = sys.runningJob
-	callerJob._slp = setTimeout(timeOutCB, ms, callerJob)
+	callerJob._tm = setTimeout(timeOutCB, ms, callerJob)
 	callerJob._st |= PARKED_SLEEP
 	iterRes.done = false
 	return iterable as _Iterable<undefined>

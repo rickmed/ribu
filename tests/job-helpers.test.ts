@@ -130,8 +130,8 @@ describe.skip("first()", () => {
 
 		go(main)
 		await sleepProm(15)
-		expect(rec).toStrictEqual(2)
-		expect(job1WasCancelled).toStrictEqual(true)
+		expect(rec).toBe(2)
+		expect(job1WasCancelled).toBe(true)
 	})
 })
 
@@ -167,8 +167,8 @@ describe.skip("firstOK()", () => {
 		go(main)
 		await sleepProm(15)
 
-		expect(rec).toStrictEqual(3)
-		expect(job1WasCancelled).toStrictEqual(true)
+		expect(rec).toBe(3)
+		expect(job1WasCancelled).toBe(true)
 	})
 
 	it("settles with correct error if all jobs failed", async () => {

@@ -1,7 +1,7 @@
 import { expect, it } from "vitest"
 import { go, me, sleep } from "ribu"
 import { _Err } from "./utils.js"
-import { GenFnErr, ChildErr } from "../source/errors.js"
+import { GenFnErr } from "../source/errors.js"
 
 /*
 	This suite is focused on what happens when a job returns and still
@@ -81,7 +81,7 @@ it("if child fails, parent waits for its other children to settle" +
 	}
 
 	const rec = await go(main).promErr
-	const exp = ChildErr("main", GenFnErr("child1", Error("Bad")))
+	const exp = GenFnErr("main", GenFnErr("child1", Error("Bad")))
 	expect(rec).toStrictEqual(exp)
 	expect(child2Finished).toBe(true)
 })
@@ -115,7 +115,7 @@ it("if child fails and parent is set up at cancelSiblingsOnErr(), parent" +
 	}
 
 	const rec = await go(main).promErr
-	const exp = ChildErr("main", GenFnErr("child1", Error("Bad")))
+	const exp = GenFnErr("main", GenFnErr("child1", Error("Bad")))
 	expect(rec).toStrictEqual(exp)
 	expect(childrenFinished).toBe(0)
 })

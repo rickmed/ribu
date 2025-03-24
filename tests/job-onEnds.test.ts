@@ -3,45 +3,40 @@ import { go, sleep, onEnd } from "ribu"
 import { sleepProm } from "./utils.js"
 
 
-describe.skip("onEnds run just before job is settled", () => {
+it("can run sync functions, async functions and job generator functions." +
+	"Are executed in reverse/sequential order", async () => {
 
-	it("Works with sync fn, async fn and job. Are executed in reverse/sequential" +
-		"order", async () => {
+	let onEnds: string[] = []
 
-		let onEnds: string[] = []
+	function* main() {
 
-		function* main() {
+		onEnd(() => {
+			onEnds.push("sync")
+		})
 
-			onEnd(() => {
-				onEnds.push("sync cleanup")
-			})
+		onEnd(async () => {
+			onEnds.push("async")
+			const sleepMs = random(0, 10)
+			await sleepProm(sleepMs)
+		})
 
-			onEnd(async () => {
-				onEnds.push("async cleanup")
-				await sleepProm(1)
-			})
+		onEnd(function* () {
+			onEnds.push("job")
+			const sleepMs = random(0, 10)
+			yield* sleep(sleepMs)
+		})
 
-			onEnd(function* () {
-				onEnds.push("job cleanup")
-				yield* sleep(1)
-			})
+		yield* sleep(1)
+	}
 
-			onEnd(() => go(function* () {
-				onEnds.push("job2 cleanup")
-				yield* sleep(1)
-			}))
-
-			yield* sleep(1)
-		}
-
-		await go(main)
-		expect(onEnds).toStrictEqual(["job2 cleanup", "job cleanup", "async cleanup", "sync cleanup"])
-	})
+	await go(main)
+	expect(onEnds).toStrictEqual(["job", "async", "sync"])
 })
 
 
 
-describe.todo("using yield* job.cancelErr(), user can handle cancellation errors", () => {
+
+describe.skip("using yield* job.cancelErr(), user can handle cancellation errors", () => {
 
 	it("a job stops execution when cancelled", async () => {
 
@@ -105,7 +100,20 @@ describe.todo("using yield* job.cancelErr(), user can handle cancellation errors
 		}
 
 		const rec = await go(main).promErr
-		expect(rec).not.toStrictEqual(CANC_OK)
+		expect(rec).not.toBe(CANC_OK)
 		expect(rec).toEqual(err)
 	})
 })
+
+describe.todo("with cancel(...jobs)", () => {
+
+	it("a job can cancel several jobs concurrently", async () => {
+
+	})
+
+})
+
+
+function random(min: number, max: number) {
+	return Math.floor(Math.random() * (max - min) + min)
+}
