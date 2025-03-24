@@ -364,7 +364,7 @@ function settle(job: Job) {
 		const link = _pr as JobsLink
 		removeTgOrChd(link.a, link)
 		job._pr = VOID_LINK
-		disposeLink(link)
+		disposeLink(_pr)
 	}
 
 	finishSettle(job)
