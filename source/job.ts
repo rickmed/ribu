@@ -146,20 +146,20 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 	}
 
 	get err() {
-		return this.jobIterable<GetterErr>(PARKED_CONTINUE, "job.err")
+		return this._jobIterable<GetterErr>(PARKED_CONTINUE, "job.err")
 	}
 
 	cancel() {
 		cancelJob(this)
-		return this.jobIterable<CancOK>(PARKED_JOB_CANCEL, "job.cancel")
+		return this._jobIterable<CancOK>(PARKED_JOB_CANCEL, "job.cancel")
 	}
 
 	cancelErr() {
 		cancelJob(this)
-		return this.jobIterable<CancOK | OnEndErr | ChildErr>(PARKED_CONTINUE, "job.cancelErr")
+		return this._jobIterable<CancOK | OnEndErr | ChildErr>(PARKED_CONTINUE, "job.cancelErr")
 	}
 
-	jobIterable<YieldRet>(callerJobNextSt: Job["_st"], opName: string) {
+	_jobIterable<YieldRet>(callerJobNextSt: Job["_st"], opName: string) {
 		self = this
 		ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt, opName)
 		return JOB_ITERABLE as _Iterable<YieldRet>
@@ -378,11 +378,13 @@ export function finishSettle(job: Job) {
 		job._st = CANCOK
 	}
 
-	job._st |= DONE
+	notifyObservers(job)
+}
 
+function notifyObservers(job: Job) {
+	job._st |= DONE
 	const { val } = job
 
-	// notify observers
 	let link = job._ob
 	while (link !== VOID_LINK) {
 		const nextLink = link.nA
@@ -664,25 +666,23 @@ class CancelAll extends Job {
 	_nm = "cancel"
 
 	_onTgJobDone(tgJob: Job) {
-		const { val, _tg } = this
 		if (tgJob._st & ERR_IN_ONEND) {
-			// addErrorToJobVal(this, tgVal as Err)
+			addErrorToJobVal(this, tgJob.val as RibuErr, ERR_IN_GENFN, "child")
 		}
-		if (!_tg) {
-			this._st |= DONE
-			notifyObservers(this, val)
+		if (this._tg === VOID_LINK) {
+			notifyObservers(this)
 		}
 	}
 }
 
-export function subscribeToAllJobs(jobs: Job[], ob: Ob, cancel = false) {
+export function subscribeToAllJobs(jobs: Job[], obJob: Job, cancel = false) {
 	for (let i = 0; i < jobs.length; i++) {
 		const job = jobs[i]!
 		if (job._st & DONE) {
-			ob._onTgDone(job.val, job)
+			obJob._onTgJobDone(job)
 			return
 		}
-		linkJobs(ob, job)
+		linkJobs(obJob, job)
 		if (cancel) {
 			cancelJob(job)
 		}
