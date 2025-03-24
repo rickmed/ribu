@@ -71,7 +71,7 @@ const CANCOK = 1 << 10  // 1024
 export const ERR_IN_GENFN = 1 << 11  // 2048
 const ERR_IN_ONEND = 1 << 12  // 4096
 const CANCEL_SIBLINGS_ON_ERR = 1 << 13  // 8192
-// todo: implement this
+// todo: implement this when [Symbol.dispose] is implemented
 // const JOB_IN_POOL = 1 << 14  // 16384
 
 export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_SLEEP | PARKED_CH
@@ -126,20 +126,19 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 			addTgOrChd(parent, link)
 		}
 	}
-	/*
-	ch.put  // caller.st |= PARKED_CH, ie, caller wants to put
-	yield* job  // if caller is PARKED, throw
-		// but it could have been set by .cancel() prepping
 
-	I think I need different iterable objs.
-
-	ch.put  // caller.st |= PARKED_CH, ie, caller wants to put
-	yield* job.cancel()  // in cancel(), if caller is PARKED, throw
-
-	cancelIterable.[Symbol.iterator]() {
-
+	_onTgJobDone(tgJob: Job) {
+		if (this._st & WAITING_CHILDREN) {
+			onChildDone(this, tgJob)
+			return
+		}
+		// Parked at yield* tgJob.
+		if (shouldJobFail(this, tgJob)) {
+			genFnFailed(this, tgJob.val)
+			return
+		}
+		resumeJob(this, tgJob.val)
 	}
-	*/
 
 	[Symbol.iterator]() {
 		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, "yield* job")
@@ -395,23 +394,10 @@ export function finishSettle(job: Job) {
 			removeOb(job, link as JobsLink)
 			removeTgOrChd(observer as Job, link as JobsLink)
 			disposeLink(link)
-			onTgJobDone(observer as Job, job)
+			;(observer as Job)._onTgJobDone(job)
 		}
 		link = nextLink
 	}
-}
-
-function onTgJobDone(job: Job, tgJob: Job) {
-	if (job._st & WAITING_CHILDREN) {
-		onChildDone(job, tgJob)
-		return
-	}
-	// Parked at yield* tgJob.
-	if (shouldJobFail(job, tgJob)) {
-		genFnFailed(job, tgJob.val)
-		return
-	}
-	resumeJob(job, tgJob.val)
 }
 
 function onChildDone(job: Job, child: Job) {
@@ -638,10 +624,10 @@ FAIL/CANCELLING INNER:
 	- Helpers never cancel jobs when finishing. But they implement:
 		- cancel() (cancels passed in jobs)
 		- unsub() (unsubs from passed in jobs so caller can move on)
-	- at const res = yield* helper(jobs...), and helper fails, it fails caller
+	- At const res = yield* helper(jobs...), and helper fails, it fails caller
 		(but it only unsub from jobs).
 		- If jobs are caller's children, they'll be cancelled via parent's
-			structured concurrency.
+			structured concurrency anyway.
 
 
 => IMPLEMENTATION. Need:
@@ -656,7 +642,7 @@ firstOK
 
 
 cancel(...jobs):
-	- No way to cancel what cancel(...jobs) returns.
+	- Doesn't have .cancel() method.
 		- can only .unsub() from it.
 	- cancell inner jobs
 
@@ -665,43 +651,45 @@ cancel(...jobs):
 
 */
 
+export function cancel(...jobs: Job[]) {
+	let callerJob = sys.runningJob
+	callerJob._st |= PARKED_JOB_CANCEL
+	const cancelAllJobish = new CancelAll()
+	subscribeToAllJobs(jobs, cancelAllJobish, true)
+	// return cancelAllJobish as WithMethods<CancelAll, "err" | >
+}
+
+class CancelAll extends Job {
+
+	_nm = "cancel"
+
+	_onTgJobDone(tgJob: Job) {
+		const { val, _tg } = this
+		if (tgJob._st & ERR_IN_ONEND) {
+			// addErrorToJobVal(this, tgVal as Err)
+		}
+		if (!_tg) {
+			this._st |= DONE
+			notifyObservers(this, val)
+		}
+	}
+}
+
+export function subscribeToAllJobs(jobs: Job[], ob: Ob, cancel = false) {
+	for (let i = 0; i < jobs.length; i++) {
+		const job = jobs[i]!
+		if (job._st & DONE) {
+			ob._onTgDone(job.val, job)
+			return
+		}
+		linkJobs(ob, job)
+		if (cancel) {
+			cancelJob(job)
+		}
+	}
+}
 
 
-// export function cancel(...jobs: Job[]) {
-// 	let callerJob = sys.runningJob
-// 	callerJob._st |= PARKED_JOB_CANCEL
-// 	const observer = new CancelAll()
-// 	subscribeToAllJobs(jobs, observer, true)
-// }
-
-// class CancelAll extends Job {
-
-// 	_nm = "cancel"
-// 	val: GetterErr = VOID_OBJ as GetterErr
-
-
-// 	_onTgDone(tgVal: unknown, tg: Job) {
-// 		const { val, _tg } = this
-// 		if (tg._st & ERR_IN_ONEND) {
-// 			// addErrorToJobVal(this, tgVal as Err)
-// 		}
-// 		if (!_tg) {
-// 			this._st |= DONE
-// 			notifyObservers(this, val)
-// 		}
-// 	}
-// }
-
-// export function subscribeToAllJobs(jobs: Job[], ob: Ob, cancel = false) {
-// 	for (let i = 0; i < jobs.length; i++) {
-// 		const job = jobs[i]!
-// 		if (job._st & DONE) {
-// 			ob._onTgDone(job.val, job)
-// 			return
-// 		}
-// 		linkJobs(ob, job)
-// 		if (cancel) {
-// 			cancelJob(job)
-// 		}
-// 	}
-// }
+type WithMethods<T, K extends keyof T> = {
+	[P in K]: T[P] extends (...args: unknown[]) => unknown ? T[P] : never;
+ }
