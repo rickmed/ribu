@@ -18,7 +18,7 @@ export class Err<Name extends string = string> implements Error {
 	readonly message: string
 	readonly fn: string
 	// Errors from yield* job and/or from waiting children (both always ::Err)
-	private _errs: unknown  // unknown | unknown[]
+	private _errs?: unknown  // unknown | unknown[]
 	// Errors from onEnd() functions
 	private _oe?: Error | Error[]
 
@@ -27,17 +27,20 @@ export class Err<Name extends string = string> implements Error {
 		this.message = msg
 		this.fn = fnName
 		// todo, instantiate one dummy RibuErr as VOID_LINK in system.ts
-		this._oe = onEndErrs || ({} as Error)
-		this._errs = errs || ({} as Error)
+		this._oe = onEndErrs
+		this._errs = errs
 	}
 
 	_addErr(error: Error) {
 		const { _errs } = this
-		if (Array.isArray(_errs)) {
+		if (_errs === undefined) {
+			this._errs = error
+		}
+		else if (Array.isArray(_errs)) {
 			(_errs as unknown[]).push(error)
 		}
 		else {
-			this._errs = error
+			this._errs = [_errs, error]
 		}
 		return this
 	}
@@ -47,12 +50,15 @@ export class Err<Name extends string = string> implements Error {
 	}
 
 	_addOnEndErr(error: Error) {
-		const { _oe: _errors } = this
-		if (Array.isArray(_errors)) {
-			_errors.push(error)
+		const { _oe } = this
+		if (_oe === undefined) {
+			this._oe = error
+		}
+		else if (Array.isArray(_oe)) {
+			_oe.push(error)
 		}
 		else {
-			this._oe = error
+			this._oe = [_oe, error]
 		}
 		return this
 	}

@@ -364,7 +364,8 @@ function execOnEnds(job: Job) {
 
 	(onEnd as AsyncFn)()
 		.then(val => handleOneOnEndResult(job, val, onEnd))
-		.catch(e => handleOneOnEndResult(job, e, onEnd, true))
+		.catch(e =>
+			handleOneOnEndResult(job, e, onEnd, true))
 }
 
 function handleOneOnEndResult(job: Job, onEndResult: unknown, onEnd: OnEnd, threw = false) {

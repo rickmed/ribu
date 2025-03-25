@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest"
 import { go, sleep, onEnd, Err } from "ribu"
 import { sleepProm } from "./utils.js"
 import { _Err } from "../source/errors.js"
+import { lg } from "./setup.js"
 
 
 it("can run sync functions, async functions and job generator functions." +
@@ -34,7 +35,7 @@ it("can run sync functions, async functions and job generator functions." +
 	expect(onEnds).toStrictEqual(["job", "async", "sync"])
 })
 
-it.only("job fails with correct Err if onEnd fails", async () => {
+it("job fails with correct Err if onEnd fails", async () => {
 
 	function* main() {
 
@@ -54,9 +55,9 @@ it.only("job fails with correct Err if onEnd fails", async () => {
 it("job executes all onEnds even if some of them fail. " +
 	"Settles with correct Err", async () => {
 
-	function* main() {
+	let finished: string[] = []
 
-		let finished: string[] = []
+	function* main() {
 
 		onEnd(function badSync() {
 			return Err("BadSync")
@@ -71,7 +72,7 @@ it("job executes all onEnds even if some of them fail. " +
 			return Err("BadJob")
 		})
 
-		onEnd(function* () {
+		onEnd(function* goodJob() {
 			yield* sleep(1)
 			finished.push("job")
 		})
@@ -90,8 +91,13 @@ it("job executes all onEnds even if some of them fail. " +
 	}
 
 	const rec = await go(main).promErr
-	lg(rec)
-	expect(rec).toStrictEqual(Error)
+	const exp = _Err(
+		"main",
+		undefined,
+		[Error("BadAsync"), Err("BadJob", "badJob"), Err("BadSync", "badSync")]
+	)
+	expect(rec).toStrictEqual(exp)
+	expect(finished).toStrictEqual(["async", "job", "sync"])
 })
 
 
