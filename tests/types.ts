@@ -1,6 +1,6 @@
 import { CancOK, Err as newErr, go, sleep } from "ribu"
 import { Er, Err } from "../source/errors.js"
-import { cancel } from "../source/job.js"
+import { cancel, CancelAllTimeout } from "../source/job.js"
 
 function* jobFn(x?: number) {
 	yield* sleep(1)
@@ -70,7 +70,7 @@ export const tests = {
 	},
 
 	*["yield* cancel(...jobs).maxWait(ms).err"]() {
-		type Exp = void | Er
+		type Exp = void | Er | CancelAllTimeout
 		const rec = yield* cancel(go(jobFn), go(jobFn)).maxWait(1).err
 		check_Eq<Exp>()(rec)
 	},

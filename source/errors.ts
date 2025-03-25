@@ -85,11 +85,6 @@ export function _Err(fnName: string, errs?: Err["_errs"], onEndErrs?: Err["_oe"]
 	return new Err(RIBU_ERR_NAME, fnName, errs, onEndErrs, msg)
 }
 
-
-export class CancOK {}
-export const CANC_OK = new CancOK()
-Object.freeze(CANC_OK)
-
 export function userErrCtor<Name extends string>(name: Name, fnName = "", msg = "", ribuErr?: Err): Err<Name> {
 	return new Err<Name>(name, fnName, ribuErr, undefined, msg)
 }

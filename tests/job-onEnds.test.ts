@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { go, sleep, onEnd, Err } from "ribu"
-import { sleepProm } from "./utils.js"
+import { go, sleep, onEnd, Err, cancel } from "ribu"
+import { child2, sleepProm } from "./utils.js"
 import { _Err } from "../source/errors.js"
 
 
@@ -169,7 +169,30 @@ describe.skip("using yield* job.cancelErr(), user can handle cancellation errors
 	})
 })
 
-describe.todo("with cancel(...jobs)", () => {
+describe.todo("cancel(...jobs)", () => {
+
+	it.only("fails caller if any job fails to cancel with correct error propagation", async () => {
+
+		let ctx = { count: 0 }
+
+		function* child() {
+			throw new Error("BadChild")
+			yield* sleep(3)
+			ctx.count++
+		}
+
+		function* main() {
+			const job1 = go(child)
+			const job2 = go(child2, ctx)
+			yield* sleep(1)
+			yield* cancel(job1, job2)
+		}
+
+		const rec = await go(main).promErr
+		lg(rec)
+		expect(ctx.count).toBe(0)
+		expect(rec).toBe(undefined)
+	})
 
 	it("a job can cancel several jobs concurrently", async () => {
 

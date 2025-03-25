@@ -1,5 +1,5 @@
 import { sys, type Link, VOID_OBJ, disposeLink, freshLink, Itrtor, iterRes, iterator, _Iterable, VoidObj, VOID_LINK, VoidLink, ensurePreviousYieldAndSetCallerJobNextSt } from "./system.js"
-import { CANC_OK, CancOK, Er, Err, _Err } from "./errors.js"
+import { Er, Err, _Err } from "./errors.js"
 import { Chan } from "./channel.js"
 
 // todo: implement "unsub() to have something like trio's moveOnAfter()
@@ -55,6 +55,11 @@ type OnEnd = SyncFn | AsyncFn | RibuGenFn
 type OnEndLink = Link<OnEnd, Job>
 
 const DUMMY_GEN = (function* () {})()
+
+export type CancOK = Err<"CancOK">
+function CancOK(fnName: string): CancOK {
+	return new Err("CancOK", fnName)
+}
 
 // State Flags
 const PARKED_CONTINUE = 1 << 0  // 1
@@ -143,23 +148,23 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 	}
 
 	[Symbol.iterator]() {
-		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, currentOp || "yield* job")
+		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, currentOp || "yield*")
 		currentOp = ""
 		return jobIterator<OkRet>(this)
 	}
 
 	get err() {
-		return this._jobIterable<GetterErr>(PARKED_CONTINUE, "job.err")
+		return this._jobIterable<GetterErr>(PARKED_CONTINUE, ".err")
 	}
 
 	cancel() {
 		cancelJob(this)
-		return this._jobIterable<CancOK>(PARKED_JOB_CANCEL, "job.cancel")
+		return this._jobIterable<CancOK>(PARKED_JOB_CANCEL, ".cancel")
 	}
 
 	cancelErr() {
 		cancelJob(this)
-		return this._jobIterable<CancOK | Er>(PARKED_CONTINUE, "job.cancelErr")
+		return this._jobIterable<CancOK | Er>(PARKED_CONTINUE, ".cancelErr")
 	}
 
 	// todo: move to standalone function
@@ -257,9 +262,9 @@ export function resumeJob(job: Job, val?: unknown) {
 	job._st &= ~PARKED
 	sys.pushJob(job)
 
-	// Values are never passed into gen.next() because values inside the generator
-	// function are received mutating iteratorResult object of the
-	// delegated iterator.
+	// Values are never passed into gen.next() because values inside the
+	// generator function are received mutating iteratorResult object
+	// of the delegated iterator.
 
 	// The function/object which yield* is called upon will mutate the
 	// iteratorResult object to .done = false to park the job.
@@ -270,7 +275,7 @@ export function resumeJob(job: Job, val?: unknown) {
 	// same iteratorResult object, but now mutated to resume the job.
 
 	iterRes.done = true
-	iterRes.value = val
+	iterRes.value = val  // This is the value passed-in to the generator function.
 
 	let genFnThrew = false
 	try {
@@ -410,7 +415,7 @@ function settleJob(job: Job) {
 	}
 
 	if (_st & CANCELLED && !(_st & ERR_IN_ONEND)) {
-		job.val = CANC_OK
+		job.val = CancOK(job._nm)
 		job._st = CANCOK
 	}
 
@@ -676,6 +681,8 @@ firstOK
 */
 
 const CANCEL_ALL_OP_NAME = "cancel(...jobs)"
+export const CANCEL_ALL_TIMEOUT = new Err("CancelTimeout", CANCEL_ALL_OP_NAME)
+export type CancelAllTimeout = typeof CANCEL_ALL_TIMEOUT
 
 export function cancel(...jobs: Job[]) {
 	const cancelJobs = new CancelJobs()
@@ -695,9 +702,12 @@ class CancelJobs extends Job<void, void | Er> {
 		const { _st, _tg } = this
 		if (_st & TIME_LIMIT_FIRED) {  // timeout fired
 			this._tm = VOID_OBJ
-			// reset ._st and .val if some jobs already settled with Err.
+			// reset ._st and .val in case some jobs already settled with Err.
 			this._st = 0
-			this.val = undefined
+			// settle with some sigil
+			this.val = CANCEL_ALL_TIMEOUT as unknown as Er
+			// Make caller fail if it didn't call .err to handle the unhappy paths.
+			this._st |= ERR_IN_GENFN
 			unlinkFromAllJobs(this)
 			settleJobish(this)
 			return
@@ -715,12 +725,12 @@ class CancelJobs extends Job<void, void | Er> {
 	}
 
 	maxWait(ms: number) {
-		this._tm = setTimeout(dueFired, ms, this)
-		return this
+		this._tm = setTimeout(maxWaitFired, ms, this)
+		return this as Job<void, void | Er | CancelAllTimeout>
 	}
 }
 
-function dueFired(cancelAll: CancelJobs) {
+function maxWaitFired(cancelAll: CancelJobs) {
 	cancelAll._st |= TIME_LIMIT_FIRED
 	cancelAll._onTgJobDone(cancelAll)
 }
@@ -737,15 +747,25 @@ function unlinkFromAllJobs(obJob: Job) {
 }
 
 export function linkWithAllJobs(jobs: Job[], obJob: Job, cancel = false) {
+
+	// If all of the jobs are already settled, cancel would never settle
+	// because no job would callback, so if there's no links, cancel
+	// needs to settle immediately.
+	let hasLink = false
+
 	for (let i = 0; i < jobs.length; i++) {
 		const job = jobs[i]!
 		if (job._st & DONE) {
-			obJob._onTgJobDone(job)
-			return
+			continue
 		}
+		hasLink = true
 		linkJobs(obJob, job)
 		if (cancel) {
 			cancelJob(job)
 		}
+	}
+	if (!hasLink) {
+		// Make jobIterator resume caller immediately.
+		obJob._st |= DONE
 	}
 }
