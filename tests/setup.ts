@@ -1,4 +1,4 @@
-export function log(...args: unknown[]) {
+export function lg(...args: unknown[]) {
 	for (const arg of args) {
 		if (typeof arg === "string") {
 			process.stdout.write(arg)
@@ -16,5 +16,5 @@ export function log(...args: unknown[]) {
 
 if (process.env.DEBUG === "true") {
 	// @ts-ignore: Adding log to globalThis
-	globalThis.log = log
+	globalThis.lg = lg
 }

@@ -1,5 +1,5 @@
 import { CancOK, Err as newErr, go, sleep } from "ribu"
-import { Err, GenFnErr, OnEndErr } from "../source/errors.js"
+import { Er, Err } from "../source/errors.js"
 import { cancel } from "../source/job.js"
 
 function* jobFn(x?: number) {
@@ -16,11 +16,7 @@ function* jobFn(x?: number) {
 	return newErr("Error2")
 }
 
-type NotErrs = false | 1
-type All = NotErrs | Err<"Error1"> | Err<"Error2"> | Err<string> | CancOK
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const tests = {
+export const tests = {
 
 	/* ********** Basic Job Tests ********** */
 
@@ -35,8 +31,9 @@ const tests = {
 		generic Ribu Err from thrown values.
 	*/
 	*["yield* job.err"]() {
+		type Exp = false | 1 | Err<"Error1"> | Err<"Error2"> | Er | CancOK
 		const rec = yield* go(jobFn).err
-		check_Eq<All>()(rec)
+		check_Eq<Exp>()(rec)
 	},
 
 	*["yield* job.cancel()"]() {
@@ -46,7 +43,7 @@ const tests = {
 	},
 
 	*["yield* job.cancelErr()"]() {
-		type Exp = CancOK | OnEndErr
+		type Exp = CancOK | Er
 		const rec = yield* go(jobFn).cancelErr()
 		check_Eq<Exp>()(rec)
 	},
@@ -67,13 +64,13 @@ const tests = {
 	},
 
 	*["yield* cancel(...jobs).err"]() {
-		type Exp = void | GenFnErr
+		type Exp = void | Er
 		const rec = yield* cancel(go(jobFn), go(jobFn)).err
 		check_Eq<Exp>()(rec)
 	},
 
 	*["yield* cancel(...jobs).maxWait(ms).err"]() {
-		type Exp = void | GenFnErr
+		type Exp = void | Er
 		const rec = yield* cancel(go(jobFn), go(jobFn)).maxWait(1).err
 		check_Eq<Exp>()(rec)
 	},

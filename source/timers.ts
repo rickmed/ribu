@@ -1,3 +1,4 @@
+import { lg } from "../tests/setup.js"
 import { resumeJob, PARKED_SLEEP, Job } from "./job.js"
 import { _Iterable, iterable, ensurePreviousYieldAndSetCallerJobNextSt, iterRes, sys } from "./system.js"
 

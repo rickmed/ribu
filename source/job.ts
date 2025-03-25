@@ -1,5 +1,5 @@
 import { sys, type Link, VOID_OBJ, disposeLink, freshLink, Itrtor, iterRes, iterator, _Iterable, VoidObj, VOID_LINK, VoidLink, ensurePreviousYieldAndSetCallerJobNextSt } from "./system.js"
-import { _Err, CANC_OK, CancOK, GenFnErr, OnEndErr, RibuErr } from "./errors.js"
+import { CANC_OK, CancOK, Er, Err, _Err } from "./errors.js"
 import { Chan } from "./channel.js"
 
 // todo: implement "unsub() to have something like trio's moveOnAfter()
@@ -134,9 +134,9 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 			onChildDone(this, tgJob)
 			return
 		}
-		// Parked at yield* tgJob.
+		// Parked at yield* tgJob or yield* tgJob.err/cancel/cancelErr.
 		if (shouldJobFail(this, tgJob)) {
-			genFnFailed(this, tgJob.val)
+			genFnFailed(this, _Err(this._nm, tgJob.val as Err))
 			return
 		}
 		resumeJob(this, tgJob.val)
@@ -159,7 +159,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 
 	cancelErr() {
 		cancelJob(this)
-		return this._jobIterable<CancOK | OnEndErr>(PARKED_CONTINUE, "job.cancelErr")
+		return this._jobIterable<CancOK | Er>(PARKED_CONTINUE, "job.cancelErr")
 	}
 
 	// todo: move to standalone function
@@ -230,7 +230,7 @@ function jobIterator<T>(job: Job) {
 
 	if (job._st & DONE) {
 		if (shouldJobFail(callerJob, job)) {
-			genFnFailed(callerJob, job.val)
+			genFnFailed(callerJob, _Err(callerJob._nm, job.val as Err))
 			iterRes.done = false
 		}
 		else {
@@ -271,25 +271,37 @@ export function resumeJob(job: Job, val?: unknown) {
 
 	iterRes.done = true
 	iterRes.value = val
+
+	let genFnThrew = false
 	try {
-		const { done, value} = job._gn.next()
-		if (!done) {
-			return
-		}
-		if (value instanceof Error) {
-			genFnFailed(job, value)
-		}
-		else {
-			job.val = value
-			onGenFnDone(job)
-		}
+		// eslint-disable-next-line no-var
+		var { done, value } = job._gn.next()
 	}
 	catch (e) {
-		genFnFailed(job, e)
+		genFnThrew = true
+		value = e
 	}
-	finally {
-		sys.popJob()
+
+	sys.popJob()
+
+	if (done === false) {
+		return
 	}
+
+	if (value instanceof Err) {
+		// @ts-ignore mutation of .fn readonly property
+		value.fn = job._nm
+		genFnFailed(job, value as Err)
+		return
+	}
+
+	if (genFnThrew) {
+		genFnFailed(job, _Err(job._nm, value))
+		return
+	}
+
+	job.val = value
+	onGenFnDone(job)
 }
 
 function onGenFnDone(job: Job, cancelChildren = false) {
@@ -302,13 +314,12 @@ function onGenFnDone(job: Job, cancelChildren = false) {
 	loopChildren(job, true, cancelChildren)
 }
 
-function genFnFailed(job: Job, cause: unknown) {
+function genFnFailed(job: Job, jobVal: Err) {
+	job.val = jobVal
 	job._st |= ERR_IN_GENFN
 	job._st |= CANCEL_SIBLINGS_ON_ERR
-	job.val = GenFnErr(job._nm, cause)
 	onGenFnDone(job, true)
 }
-
 
 const syncFnCtor = (function DUMMY_SYNC_FN() {}).constructor
 const genFnCtor = (function* DUMMY_GEN_FN() {}).constructor
@@ -327,22 +338,23 @@ function execOnEnds(job: Job) {
 	job._oe = onEndLink.nA as OnEndLink
 	disposeLink(onEndLink)
 
-	if (onEnd.constructor === syncFnCtor) {
+	const onEndCtor = onEnd.constructor
+
+	if (onEndCtor === syncFnCtor) {
+		let threw = false
 		try {
 			// eslint-disable-next-line no-var
 			var retVal = onEnd()
 		}
 		catch (e) {
 			retVal = e
+			threw = true
 		}
-		if (retVal instanceof Error) {
-			addOnErrInOnEnd(job, retVal)
-		}
-		execOnEnds(job)
+		handleOneOnEndResult(job, retVal, onEnd, threw)
 		return
 	}
 
-	if (onEnd.constructor === genFnCtor) {
+	if (onEndCtor === genFnCtor) {
 		const onEndJob = new Job(onEnd.name, (onEnd as RibuGenFn)())
 		const observingLink = freshLink(onOnEndJobDone, job)
 		addObserver(onEndJob, observingLink)
@@ -350,26 +362,41 @@ function execOnEnds(job: Job) {
 		return
 	}
 
-	(onEnd as AsyncFn)().then(
-		() => {
-			execOnEnds(job)
-		},
-		(err) => {
-			addOnErrInOnEnd(job, err)
-			execOnEnds(job)
-		}
-	)
+	(onEnd as AsyncFn)()
+		.then(val => handleOneOnEndResult(job, val, onEnd))
+		.catch(e => handleOneOnEndResult(job, e, onEnd, true))
 }
 
-function addOnErrInOnEnd(job: Job, val: unknown) {
-	addErrorToJobVal(job, OnEndErr(val, job._nm), ERR_IN_ONEND)
+function handleOneOnEndResult(job: Job, onEndResult: unknown, onEnd: OnEnd, threw = false) {
+	if (onEndResult instanceof Err) {
+		// @ts-ignore mutation of .fn readonly property
+		onEndResult.fn = onEnd.name
+		addOnEndErr(job, onEndResult as Err)
+	}
+	else if (onEndResult instanceof Error) {
+		addOnEndErr(job, onEndResult)
+	}
+	else if (threw) {  // threw something weird.
+		addOnEndErr(job, _Err(onEnd.name, onEndResult))
+	}
+	execOnEnds(job)
 }
 
 function onOnEndJobDone(val: unknown, tg: Job, ob: Job) {
-	if (tg._st & ERR_IN_GENFN) {
-		addOnErrInOnEnd(ob, val)
+	if (tg._st & HAD_ERR) {
+		addOnEndErr(ob, val as Err)
 	}
 	execOnEnds(ob)
+}
+
+const CANCELLED_STR = "Cancelled"
+
+function addOnEndErr(job: Job, err: Error) {
+	addErrorToJobVal(job, err, ERR_IN_ONEND)
+	if (job._st & CANCELLED) {
+		// @ts-ignore job.val is Err now and mutation of .message readonly property
+		job.val.message = CANCELLED_STR
+	}
 }
 
 function settleJob(job: Job) {
@@ -412,7 +439,7 @@ function settleJobish(job: Job) {
 
 function onChildDone(job: Job, child: Job) {
 	if (child._st & HAD_ERR) {
-		addErrorToJobVal(job, child.val as RibuErr, ERR_IN_GENFN)
+		addErrorToJobVal(job, child.val as Err, ERR_IN_GENFN)
 		const { _st } = job
 		if ((_st & CANCEL_SIBLINGS_ON_ERR) && !(_st & CHILDREN_CANCELLED)) {
 			loopChildren(job, false, true)
@@ -504,22 +531,17 @@ function shouldJobFail(ObJob: Job, tgJob: Job) {
 		(ObJob._st & PARKED_JOB_CANCEL) && (tgJob._st & ERR_IN_ONEND)
 }
 
-const CANCELLED_STR = "cancelled"
-export function addErrorToJobVal(job: Job, cause: RibuErr, errFlag: Job["_st"]) {
-	const { _st } = job
-	if (!(_st & HAD_ERR)) {
-		const errMsg = _st & CANCELLED ? CANCELLED_STR : ""
-
-		const err = errFlag === ERR_IN_GENFN ?
-			GenFnErr(job._nm, cause, errMsg) :
-			OnEndErr(cause, job._nm, errMsg)
-
-		job.val = err
+export function addErrorToJobVal(job: Job, err: Error, errFlag: Job["_st"]) {
+	if (!(job._st & HAD_ERR)) {
+		job.val = _Err(job._nm)
+	}
+	const errVal = job.val as Err
+	if (errFlag & ERR_IN_GENFN) {
+		errVal._addErr(err)
 	}
 	else {
-		(job.val as RibuErr).addErr(cause)
+		errVal._addOnEndErr(err)
 	}
-
 	job._st |= errFlag
 }
 
@@ -598,11 +620,9 @@ export function linkJobs(ob: Job, tg: Job) {
 
 //* ****************   User API   ****************************************** *//
 
-type AllErrs = GenFnErr | OnEndErr
-
 export function go<Args extends unknown[], Ret>(genFn: RibuGenFn<Ret, Args>, ...args: Args) {
 	const gen = genFn(...args)
-	const job = new Job<Exclude<Ret, Error>, Ret | AllErrs | CancOK>(genFn.name, gen, sys.runningJob)
+	const job = new Job<Exclude<Ret, Error>, Ret | Er | CancOK>(genFn.name, gen, sys.runningJob)
 	resumeJob(job)
 	return job
 }
@@ -679,7 +699,7 @@ export function cancel(...jobs: Job[]) {
 // if timeout fires at yield* cancel(...jobs).maxWait(ms),
 // caller should move on
 
-class CancelJobs extends Job<void, void | GenFnErr> {
+class CancelJobs extends Job<void, void | Er> {
 
 	constructor() {
 		super(CANCEL_ALL_OP_NAME)
@@ -697,8 +717,8 @@ class CancelJobs extends Job<void, void | GenFnErr> {
 			settleJobish(this)
 			return
 		}
-		if (tgJob._st & ERR_IN_ONEND) {
-			addErrorToJobVal(this, tgJob.val as RibuErr, ERR_IN_GENFN)
+		if (tgJob._st & HAD_ERR) {
+			addErrorToJobVal(this, tgJob.val as Err, ERR_IN_GENFN)
 		}
 		if (_tg === VOID_LINK) {
 			if (_st & HAS_TIME_LIMIT) {

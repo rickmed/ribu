@@ -1,7 +1,7 @@
 import { expect, it } from "vitest"
-import { go, me, sleep } from "ribu"
-import { _Err } from "./utils.js"
-import { GenFnErr } from "../source/errors.js"
+import { Err, go, me, sleep } from "ribu"
+import { _Err, GenFnErr } from "../source/errors.js"
+import { lg } from "./setup.js"
 
 /*
 	This suite is focused on what happens when a job returns and still
@@ -37,12 +37,12 @@ it("if parent fails, it cancels its children", async () => {
 	let finished = 0
 
 	function* child1() {
-		yield* sleep(2)
+		yield* sleep(3)
 		finished++
 	}
 
 	function* child2() {
-		yield* sleep(3)
+		yield* sleep(4)
 		finished++
 	}
 
@@ -54,12 +54,12 @@ it("if parent fails, it cancels its children", async () => {
 	}
 
 	const rec = await go(main).promErr
-	const exp = GenFnErr("main", Error("Bad"))
+	const exp = _Err("main", Error("Bad"))
 	expect(rec).toStrictEqual(exp)
 	expect(finished).toBe(0)
 })
 
-it("if child fails, parent waits for its other children to settle" +
+it("if child fails, parent waits for its other children to settle " +
 	"and fails with correct Error", async () => {
 
 	let child2Finished = false
@@ -81,7 +81,7 @@ it("if child fails, parent waits for its other children to settle" +
 	}
 
 	const rec = await go(main).promErr
-	const exp = GenFnErr("main", GenFnErr("child1", Error("Bad")))
+	const exp = _Err("main", _Err("child1", Error("Bad")))
 	expect(rec).toStrictEqual(exp)
 	expect(child2Finished).toBe(true)
 })
@@ -93,7 +93,7 @@ it("if child fails and parent is set up at cancelSiblingsOnErr(), parent" +
 
 	function* child1() {
 		yield* sleep(2)
-		throw Error("Bad")
+		return Err("Bad")
 	}
 
 	function* child2() {
@@ -115,7 +115,7 @@ it("if child fails and parent is set up at cancelSiblingsOnErr(), parent" +
 	}
 
 	const rec = await go(main).promErr
-	const exp = GenFnErr("main", GenFnErr("child1", Error("Bad")))
+	const exp = _Err("main", Err("Bad", "child1"))
 	expect(rec).toStrictEqual(exp)
 	expect(childrenFinished).toBe(0)
 })

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest"
 import { go, sleep, Err } from "ribu"
-import { _Err } from "./utils.js"
+import { _Err, GenFnErr } from "../source/errors.js"
+import { lg } from "./setup.js"
 
 describe("Job properly propagates errrors", () => {
 
@@ -13,11 +14,11 @@ describe("Job properly propagates errrors", () => {
 
 		function* main() {
 			yield* go(inner)
-			return `won't appear in settled value`
+			return "ok"
 		}
 
 		const rec = await go(main).promErr
-		const exp = _Err("main", _Err("inner", Err("SomeErrType")))
+		const exp = _Err("main", Err("SomeErrType", "inner"))
 		expect(rec).toStrictEqual(exp)
 	})
 
@@ -30,27 +31,10 @@ describe("Job properly propagates errrors", () => {
 
 		function* main() {
 			yield* go(inner)
-			return `won't appear in settled value`
+			return "ok"
 		}
 
 		let rec = await go(main).promErr
-		const exp = _Err("main", _Err("inner", Error("a msg")))
-		expect(rec).toStrictEqual(exp)
-	})
-
-	it("yield*, genFn returns ::Error", async () => {
-
-		function* inner() {
-			yield* sleep(1)
-			return Error("a msg")
-		}
-
-		function* main() {
-			yield* go(inner)
-			return `won't appear in settled value`
-		}
-
-		const rec = await go(main).promErr
 		const exp = _Err("main", _Err("inner", Error("a msg")))
 		expect(rec).toStrictEqual(exp)
 	})

@@ -48,7 +48,7 @@ describe("job.cancel()", () => {
 
 		function* child1() {
 			yield* sleep(1)
-			return Err("")
+			return Err("Bad")
 		}
 
 		let chldJob!: Job
@@ -57,11 +57,11 @@ describe("job.cancel()", () => {
 			chldJob = go(child1)
 			yield* sleep(2)
 			yield* chldJob.cancel()
-			return "error NOT propagated"
+			return "ok"
 		}
 
 		const rec = await go(main).promErr
-		expect(rec).toEqual("error NOT propagated")
+		expect(rec).toEqual("ok")
 		expect(chldJob.val).not.toBe(CANC_OK)
 	})
 })

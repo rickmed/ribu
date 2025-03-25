@@ -5,3 +5,5 @@ it("job resolves promise immediately if already done", async () => {
 
 	await go(function* job() {})
 })
+
+it.todo("promise rejects if job fails")

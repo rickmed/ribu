@@ -1,6 +1,6 @@
 import { bench, run } from "mitata"
 import { Banca } from "./banca.js"
-import { log } from "../tests/setup.js"
+import { lg } from "../tests/setup.js"
 import { nConcurrentJobsEach3Deep } from "./dummy-jobs.js"
 import { nConcurrentPromsEach3Deep } from "./dummy-promises.js"
 import { sortedReport } from "./mitata-utils.js"
@@ -22,7 +22,7 @@ await new Banca({iterations})
 		await nConcurrentPromsEach3Deep(3, sleepMs)
 	}, {gc: true})
 	// .disable()
-	.run(log)
+	.run(lg)
 
 await new Banca({iterations})
 	.add("Jobs 10 concurrent", async () => {
@@ -33,7 +33,7 @@ await new Banca({iterations})
 		await nConcurrentPromsEach3Deep(10, sleepMs)
 	}, {gc: true})
 	.disable()
-	.run(log)
+	.run(lg)
 
 await new Banca({iterations})
 	.add("Jobs 20_000 concurrent", async () => {
@@ -44,7 +44,7 @@ await new Banca({iterations})
 		await nConcurrentPromsEach3Deep(20_000)
 	}, {gc: true})
 	.disable()
-	.run(log)
+	.run(lg)
 
 
 bench("Jobs 3 concurrent", async () => {

@@ -1,7 +1,5 @@
-// so ts doesn't flatten unknown | unknown[] into unknown
-type SingleValue = { __brand?: "single" }
-type ArrayValue = [] & { __brand?: "array" }
-type UnknownOrArrayOfUnknown = SingleValue | ArrayValue
+const RIBU_ERR_NAME = "Err"
+export type Er = Err<typeof RIBU_ERR_NAME>
 
 /**
  * Ribu Err Class
@@ -11,81 +9,83 @@ type UnknownOrArrayOfUnknown = SingleValue | ArrayValue
  *
  * @param fn The name of the job's generator function or the name of the function if
  *           the user wants to return Err objects in sync functions.
+ * _oe:
+ * 	Errors that occurred in onEnd() functions.
  */
-export class Err<Name extends string> implements Error {
+export class Err<Name extends string = string> implements Error {
 
 	readonly name: Name
 	readonly message: string
 	readonly fn: string
-	private _errors?: UnknownOrArrayOfUnknown
+	// Errors from yield* job and/or from waiting children (both always ::Err)
+	private _errs: unknown  // unknown | unknown[]
+	// Errors from onEnd() functions
+	private _oe?: Error | Error[]
 
-	constructor(name: Name, fnName: string, cause?: unknown, msg = "") {
+	constructor(name: Name, fnName: string, errs?: Err["_errs"], onEndErrs?: Err["_oe"], msg = "") {
 		this.name = name
 		this.message = msg
 		this.fn = fnName
-		this._errors = cause as UnknownOrArrayOfUnknown
+		// todo, instantiate one dummy RibuErr as VOID_LINK in system.ts
+		this._oe = onEndErrs || ({} as Error)
+		this._errs = errs || ({} as Error)
 	}
 
-	addErr(maybeErr: unknown) {
-		if (!this._errors) {
-			this._errors = maybeErr as UnknownOrArrayOfUnknown
-		}
-		else if (Array.isArray(this._errors)) {
-			(this._errors as unknown[]).push(maybeErr)
+	_addErr(error: Error) {
+		const { _errs } = this
+		if (Array.isArray(_errs)) {
+			(_errs as unknown[]).push(error)
 		}
 		else {
-			this._errors = [this._errors, maybeErr] as UnknownOrArrayOfUnknown
+			this._errs = error
+		}
+		return this
+	}
+
+	get errors() {
+		return this._errs
+	}
+
+	_addOnEndErr(error: Error) {
+		const { _oe: _errors } = this
+		if (Array.isArray(_errors)) {
+			_errors.push(error)
+		}
+		else {
+			this._oe = error
 		}
 		return this
 	}
 
 	get stack(): string {
+		// if first in _errors is not OnEndErr, then it was the callee
 		return ""  // todo
 	}
 
-	// todo: evaluate this, maybe it's confusing.
-	get cause() {
-		return Array.isArray(this._errors) ? this._errors[0] : this._errors
+	get onEndErrors() {
+		return Array.isArray(this._oe) ? this._oe : [this._oe]
 	}
 
-	get errors() {
-		return this._errors
-	}
-
-	_Err(fnName: string, cause?: unknown, msg = "") {
-		return this.addErr(new Err("Err", fnName, cause, msg))
-	}
-
-	Err<Name extends string>(name: Name, fn = "", msg = "") {
-		return new Err(name, fn, this, msg)
-	}
+	// todo: implement this
+	// Err<Name extends string>(name: Name, fn = "", msg = "") {
+	// 	return new Err(name, fn, this, msg)
+	// }
 }
 
-// make (errInstance instanceof Error) === true
+// Make (errInstance instanceof Error) === true
 Object.setPrototypeOf(Err.prototype, Error.prototype)
 
-export type RibuErr = Err<string>
-
-export function _Err(cause: unknown, fnName: string, msg = "") {
-	return new Err("Err", fnName, cause, msg)
+export function _Err(fnName: string, errs?: Err["_errs"], onEndErrs?: Err["_oe"], msg = "") {
+	return new Err(RIBU_ERR_NAME, fnName, errs, onEndErrs, msg)
 }
 
-export type OnEndErr = Err<"OnEndErr">
-export function OnEndErr(cause: unknown, fnName: string, msg = ""): OnEndErr {
-	return new Err("OnEndErr", fnName, cause, msg)
-}
-
-export type GenFnErr = Err<"GenFnErr">
-export function GenFnErr(fnName: string, cause: unknown, msg = "") {
-	return new Err("GenFnErr", fnName, cause, msg)
-}
 
 export class CancOK {}
 export const CANC_OK = new CancOK()
+Object.freeze(CANC_OK)
 
-
-export function userErrCtor<Name extends string>(name: Name, fnName = "", msg = "", cause?: unknown): Err<Name> {
-	return new Err<Name>(name, fnName, cause, msg)
+export function userErrCtor<Name extends string>(name: Name, fnName = "", msg = "", ribuErr?: Err): Err<Name> {
+	return new Err<Name>(name, fnName, ribuErr, undefined, msg)
 }
 
 export function isErr(x: unknown): x is Err<string> {

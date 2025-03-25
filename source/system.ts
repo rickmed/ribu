@@ -64,7 +64,7 @@ export function throwNotYieldedErr(currentOp: string) {
 		Current yieldable operation: ${currentOp}.
 		Job: ${sys.runningJob._nm}.
 	`
-	// eslint-disable-next-line @typescript-eslint/only-throw-error
+
 	throw new Err("RibuErr", sys.runningJob._nm, undefined, errMsg)
 }
 

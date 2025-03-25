@@ -1,6 +1,6 @@
 import { bench, run } from "mitata"
 import { Banca } from "./banca.js"
-import { log } from "../tests/setup.js"
+import { lg } from "../tests/setup.js"
 import { go } from "../source/job.js"
 import { sortedReport } from "./mitata-utils.js"
 import { nSequentialJobs0Deep } from "./dummy-jobs.js"
@@ -25,7 +25,7 @@ await new Banca({iterations})
 		await nSequentialProms0Deep(nSequential1, sleepMs)
 	}, {gc: true})
 	.disable()
-	.run(log)
+	.run(lg)
 
 await new Banca({iterations})
 	.add(`Jobs ${nSequential2} sequential`, async () => {
@@ -36,7 +36,7 @@ await new Banca({iterations})
 		await nSequentialProms0Deep(nSequential2, sleepMs)
 	}, {gc: true})
 	// .disable()
-	.run(log)
+	.run(lg)
 
 
 bench(`Jobs ${nSequential1} sequential`, async () => {

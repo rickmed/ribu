@@ -1,7 +1,7 @@
 import { bench, run } from "mitata"
 import { sortedReport } from "./mitata-utils.js"
 import { Banca } from "./banca.js"
-import { log } from "../tests/setup.js"
+import { lg } from "../tests/setup.js"
 
 
 class Thenable {
@@ -55,7 +55,7 @@ await new Banca({iterations: 1_000})
 		}
 	}, {gc: true})
 	.disable()
-	.run(log)
+	.run(lg)
 
 
 let promTime = 0

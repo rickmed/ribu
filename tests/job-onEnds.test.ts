@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest"
-import { go, sleep, onEnd } from "ribu"
+import { go, sleep, onEnd, Err } from "ribu"
 import { sleepProm } from "./utils.js"
+import { _Err } from "../source/errors.js"
 
 
 it("can run sync functions, async functions and job generator functions." +
-	"Are executed in reverse/sequential order", async () => {
+	"Are executed sequentially and in reverse order of registration", async () => {
 
 	let onEnds: string[] = []
 
@@ -33,7 +34,65 @@ it("can run sync functions, async functions and job generator functions." +
 	expect(onEnds).toStrictEqual(["job", "async", "sync"])
 })
 
+it.only("job fails with correct Err if onEnd fails", async () => {
 
+	function* main() {
+
+		onEnd(function badSync() {
+			return Err("BadSync")
+		})
+
+		yield* sleep(1)
+	}
+
+	const rec = await go(main).promErr
+	const exp = _Err("main")._addOnEndErr(Err("BadSync", "badSync"))
+	expect(rec).toStrictEqual(exp)
+})
+
+
+it("job executes all onEnds even if some of them fail. " +
+	"Settles with correct Err", async () => {
+
+	function* main() {
+
+		let finished: string[] = []
+
+		onEnd(function badSync() {
+			return Err("BadSync")
+		})
+
+		onEnd(() => {
+			finished.push("sync")
+		})
+
+		onEnd(function* badJob() {
+			yield* sleep(1)
+			return Err("BadJob")
+		})
+
+		onEnd(function* () {
+			yield* sleep(1)
+			finished.push("job")
+		})
+
+		onEnd(async function badAsync() {
+			await sleepProm(1)
+			throw Error("BadAsync")
+		})
+
+		onEnd(async () => {
+			await sleepProm(1)
+			finished.push("async")
+		})
+
+		yield* sleep(1)
+	}
+
+	const rec = await go(main).promErr
+	lg(rec)
+	expect(rec).toStrictEqual(Error)
+})
 
 
 describe.skip("using yield* job.cancelErr(), user can handle cancellation errors", () => {
@@ -112,6 +171,8 @@ describe.todo("with cancel(...jobs)", () => {
 	})
 
 })
+
+
 
 
 function random(min: number, max: number) {
