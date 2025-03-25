@@ -77,8 +77,11 @@ export const ERR_IN_GENFN = 1 << 11  // 2048
 const ERR_IN_ONEND = 1 << 12  // 4096
 const CANCEL_SIBLINGS_ON_ERR = 1 << 13  // 8192
 const TIME_LIMIT_FIRED = 1 << 14  // 16384
+// Used in situations where job is linking to other jobs, but target job
+// notifies (and removes link) observer job immediately/synchronously.
+const LINKING = 1 << 15  // 32768
 // todo: implement this when [Symbol.dispose] is implemented
-// const JOB_IN_POOL = 1 << 15  // 32768
+// const JOB_IN_POOL = 1 << 16  // 65536
 
 export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_SLEEP | PARKED_CH
 const HAD_ERR = ERR_IN_GENFN | ERR_IN_ONEND
@@ -715,7 +718,7 @@ class CancelJobs extends Job<void, void | Er> {
 		if (tgJob._st & HAD_ERR) {
 			addErrorToJobVal(this, tgJob.val as Err, ERR_IN_GENFN)
 		}
-		if (_tg === VOID_LINK) {
+		if (!(_st & LINKING) && _tg === VOID_LINK) {
 			if (this._tm !== VOID_OBJ) {
 				clearTimeout(this._tm as NodeJS.Timeout)
 				this._tm = VOID_OBJ
@@ -748,24 +751,34 @@ function unlinkFromAllJobs(obJob: Job) {
 
 export function linkWithAllJobs(jobs: Job[], obJob: Job, cancel = false) {
 
-	// If all of the jobs are already settled, cancel would never settle
-	// because no job would callback, so if there's no links, cancel
-	// needs to settle immediately.
-	let hasLink = false
+	// Since jobs can settle synchronously, it could remove itself from obJob's
+	// _tg, so obJob may think it has no more jobs to handle (via _tg check) and
+	// it could erroneously settle immediately.
+	// So, we need to tell obJob that it shouldn't settle until LINKING is off.
+	// This is the most common scenario.
+	obJob._st |= LINKING
 
-	for (let i = 0; i < jobs.length; i++) {
+	const len = jobs.length
+	const lastIdx = len - 1
+	for (let i = 0; i < len; i++) {
 		const job = jobs[i]!
 		if (job._st & DONE) {
 			continue
 		}
-		hasLink = true
+		// If this is the last job, we can turn off LINKING so obJob can settle.
+		if (i === lastIdx) {
+			obJob._st &= ~LINKING
+		}
 		linkJobs(obJob, job)
 		if (cancel) {
 			cancelJob(job)
 		}
 	}
-	if (!hasLink) {
-		// Make jobIterator resume caller immediately.
-		obJob._st |= DONE
+
+	// If LINKING is on, it means, last job was skipped because it is already
+	// settled. So we need to force obJob to settle immediately or it will
+	// never settle via _onTgJobDone().
+	if (obJob._st & LINKING) {
+		obJob._st |= DONE  // Make jobIterator resume caller immediately.
 	}
 }

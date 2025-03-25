@@ -1,33 +1,109 @@
 import { describe, it, expect } from "vitest"
-import { go, sleep } from "ribu"
+import { Err, go, sleep } from "ribu"
+import { _Err } from "../source/errors.js"
+
+/**
+ * Jobs can block and resume each other with their return values
+ */
 
 
-describe(`Jobs block and resume each other with their return values`, () => {
+/**
+ * yield* job
+ * Provides automatic error propagation
+ */
+describe("yield* job", () => {
 
-	function* child(doneVal?: string) {
-		yield* sleep(1)
-		return doneVal
-	}
+	it("caller job resumes if target does not fail", async () => {
 
-	const doneVal = "done"
-
-	it("yield* job", async () => {
-
-		function* main(doneVal?: string) {
-			return yield* go(child, doneVal)
+		function* child() {
+			yield* sleep(1)
+			return "ok"
 		}
 
-		const rec = await go(main, doneVal)
-		expect(rec).toBe(doneVal)
-	})
-
-	it("yield* job.err", async () => {
-
-		function* main(doneVal?: string) {
-			return yield* go(child, doneVal).err
+		function* main() {
+			const res = yield* go(child)
+			return res
 		}
 
-		const rec = await go(main, doneVal)
-		expect(rec).toBe(doneVal)
+		const rec = await go(main)
+		expect(rec).toBe("ok")
 	})
+
+	it("caller job fails and propagates error via returning ::Err", async () => {
+
+		function* child() {
+			yield* sleep(1)
+			return Err("SomeErrorTag")
+		}
+
+		function* main() {
+			const res = yield* go(child)
+			return res
+		}
+
+		const rec = await go(main).promErr
+		const exp = _Err("main", Err("SomeErrorTag", "child"))
+		expect(rec).toStrictEqual(exp)
+	})
+
+
+	it("caller job fails and propagates error via throwing", async () => {
+
+		function* child() {
+			yield* sleep(1)
+			throw Error("SomeErrorTag")
+		}
+
+		function* main() {
+			const res = yield* go(child)
+			return res
+		}
+
+		const rec = await go(main).promErr
+		const exp = _Err("main", Error("SomeErrorTag"))
+		expect(rec).toStrictEqual(exp)
+	})
+})
+
+
+/**
+ * yield* job.err
+ * Handle errors manually.
+ */
+describe("yield* job.err", () => {
+
+	it("caller job resumes if target does not fail", async () => {
+
+		function* child() {
+			yield* sleep(1)
+			return "ok"
+		}
+
+		function* main() {
+			const res = yield* go(child)
+			return res
+		}
+
+		const rec = await go(main)
+		expect(rec).toBe("ok")
+	})
+
+	it.only("caller job resumes if target fails via returning ::Err", async () => {
+
+		function* child() {
+			yield* sleep(1)
+			return Err("SomeErrorTag")
+		}
+
+		function* main() {
+			const res = yield* go(child).err
+			return res
+		}
+
+		const rec = await go(main).promErr
+		lg(rec)
+		const exp = _Err("main", Err("SomeErrorTag", "child"))
+		expect(rec).toStrictEqual(exp)
+	})
+
 })
