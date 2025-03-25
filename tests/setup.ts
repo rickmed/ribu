@@ -1,4 +1,4 @@
-export function lg(...args: unknown[]) {
+function lg(...args: unknown[]) {
 	for (const arg of args) {
 		if (typeof arg === "string") {
 			process.stdout.write(arg)

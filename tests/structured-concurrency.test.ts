@@ -1,7 +1,6 @@
 import { expect, it } from "vitest"
 import { Err, go, me, sleep } from "ribu"
-import { _Err, GenFnErr } from "../source/errors.js"
-import { lg } from "./setup.js"
+import { _Err } from "../source/errors.js"
 
 /*
 	This suite is focused on what happens when a job returns and still
@@ -13,12 +12,12 @@ it("parent waits until its children settle", async () => {
 	let jobsDone = 0
 
 	function* child1() {
-		yield* sleep(2)
+		yield* sleep(3)
 		jobsDone++
 	}
 
 	function* child2() {
-		yield* sleep(2)
+		yield* sleep(3)
 		jobsDone++
 	}
 

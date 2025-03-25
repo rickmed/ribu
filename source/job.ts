@@ -71,7 +71,7 @@ const CANCOK = 1 << 10  // 1024
 export const ERR_IN_GENFN = 1 << 11  // 2048
 const ERR_IN_ONEND = 1 << 12  // 4096
 const CANCEL_SIBLINGS_ON_ERR = 1 << 13  // 8192
-const HAS_TIME_LIMIT = 1 << 14  // 16384
+const TIME_LIMIT_FIRED = 1 << 14  // 16384
 // todo: implement this when [Symbol.dispose] is implemented
 // const JOB_IN_POOL = 1 << 15  // 32768
 
@@ -673,15 +673,6 @@ allSettled
 first
 firstOK
 
-
-cancel(...jobs):
-	- Doesn't have .cancel() method.
-		- can only .unsub() from it.
-	- cancell inner jobs
-
-	- get err()
-	- .cancelErr()
-
 */
 
 const CANCEL_ALL_OP_NAME = "cancel(...jobs)"
@@ -693,13 +684,6 @@ export function cancel(...jobs: Job[]) {
 	return cancelJobs as Pick<CancelJobs, "err" | typeof Symbol.iterator | "maxWait">
 }
 
-// yield* cancel(...jobs) sets caller at PARKED_JOB
-// cancel() fails caller if ._st = ERR_IN_GENFN | ERR_IN_ONEND | CANCOK
-// so succesfull cancel musn't be .val = CANC_OK
-
-// if timeout fires at yield* cancel(...jobs).maxWait(ms),
-// caller should move on
-
 class CancelJobs extends Job<void, void | Er> {
 
 	constructor() {
@@ -709,7 +693,7 @@ class CancelJobs extends Job<void, void | Er> {
 
 	_onTgJobDone(tgJob: Job) {
 		const { _st, _tg } = this
-		if (_st & HAS_TIME_LIMIT) {  // timeout fired
+		if (_st & TIME_LIMIT_FIRED) {  // timeout fired
 			this._tm = VOID_OBJ
 			// reset ._st and .val if some jobs already settled with Err.
 			this._st = 0
@@ -722,9 +706,8 @@ class CancelJobs extends Job<void, void | Er> {
 			addErrorToJobVal(this, tgJob.val as Err, ERR_IN_GENFN)
 		}
 		if (_tg === VOID_LINK) {
-			if (_st & HAS_TIME_LIMIT) {
+			if (this._tm !== VOID_OBJ) {
 				clearTimeout(this._tm as NodeJS.Timeout)
-				this._st &= ~HAS_TIME_LIMIT
 				this._tm = VOID_OBJ
 			}
 			settleJobish(this)
@@ -732,13 +715,13 @@ class CancelJobs extends Job<void, void | Er> {
 	}
 
 	maxWait(ms: number) {
-		this._st |= HAS_TIME_LIMIT
 		this._tm = setTimeout(dueFired, ms, this)
 		return this
 	}
 }
 
 function dueFired(cancelAll: CancelJobs) {
+	cancelAll._st |= TIME_LIMIT_FIRED
 	cancelAll._onTgJobDone(cancelAll)
 }
 

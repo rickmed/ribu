@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest"
 import { go, sleep, onEnd, Err } from "ribu"
 import { sleepProm } from "./utils.js"
 import { _Err } from "../source/errors.js"
-import { lg } from "./setup.js"
 
 
 it("can run sync functions, async functions and job generator functions." +
