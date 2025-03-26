@@ -59,6 +59,7 @@ export function ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt: Job["_
 	}
 	// eslint-disable-next-line functional/immutable-data
 	callerJob._st |= callerJobNextSt
+	return callerJob
 }
 
 export function throwNotYielded(currentOp: string) {

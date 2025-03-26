@@ -221,11 +221,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 }
 
 function handleCancel(job: Job, opName: string, callerJobNextSt: Job["_st"]) {
-	let callerJob = sys.runningJob
-
-	if (callerJob._st & PARKED) {
-		throwNotYielded(opName)
-	}
+	const callerJob = ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt, opName)
 
 	if (job._st & DONE) {
 		iterRes.done = true
@@ -254,7 +250,6 @@ function handleCancel(job: Job, opName: string, callerJobNextSt: Job["_st"]) {
 		return
 	}
 
-	callerJob._st |= callerJobNextSt
 	linkJobs(callerJob, job)
 	iterRes.done = false
 }
