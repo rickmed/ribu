@@ -1,109 +1,213 @@
-import { Job } from "./job.js"
-import { sys, iterRes, VOID_OBJ } from "./system.js"
+import { addTgLink, Job, PARKED, PARKED_CH_PUT, PARKED_CH_REC, removeTgLink, resumeJob } from "./job.js"
+import { SYS_ITERABLE, freshLink, iterRes, type Link, type VoidLink, VOID_LINK, disposeLink, sys, throwNotYielded } from "./system.js"
 
-// channel resumes job if job._state !== DONE
-// else, it skips it and pulls another one
-// ie, a blocked job in rec should be skipped (since wont do anything witl the msg)
-// but a blocked job in put, the receveing job should take out its msg from _io
-
-// Optimization: lots of Channels are to send only one msg,
-// so only instantiate internal queue at second queued msg.
-
-const REC = 0
-const PUT = 1
-let op: typeof REC | typeof PUT = PUT
-// Store putMsg later when we can safely access EMPTY
-let putMsg: unknown
-
-export function Ch<V = undefined>(): Chan<V> {
-	return new Chan<V>()
-}
-
-export function isCh(x: unknown): x is Chan {
-	return x instanceof Chan
-}
-
-// Now we can safely initialize putMsg
-putMsg = VOID_OBJ
-
-type PutVal<V> = V extends undefined ? void : V
-
-// todo, type for unclosable channel
-
-export type OutCh<in V> = {
-	put: (msg: PutVal<V>) => Iterable<undefined>
-	enQ: (msg: PutVal<V>) => void
-}
-
-export type InCh<out V> = {
-	rec: Iterable<V>
-}
-
-// Initialize receivers after EMPTY is available
-type Receivers = typeof VOID_OBJ | Linkable | Queue<Linkable>
 
 /*
 
-** Jobs and Chan checks before .onObservableDone(val) if observer is
-	Select, so it puts itself on system variable
-
-** Could implement "buffered" channels by:
+** User can have "buffered" channels by:
 	ch.enQ(1)
 	ch.enQ(2)
 	check (ch.size === 3)
 	yield* ch.put(3)
-
 */
+
+type PutterJob = Job
+type PutterJobLink = Link<PutterJob, 0>
+type enQLink = Link<unknown, 1>
+export type PutterLink = PutterJobLink | enQLink
+
+type ReceiverJob = Job
+export type ReceiverLink = Link<ReceiverJob, ReceiverJob>
+
+
+/** Chan Class
+ *  _rc:
+ * 	LL of receiver jobs waiting for putter to put their msg.
+ *  _pt:
+ * 	LL of putter jobs waiting for receiver to take their msg.
+ *
+ *  Dequeues from head.
+ *  Enqueues to tail.
+ *  _pt/_rc .pA points to tail so we can enqueue jobs into LL's tail.
+ */
 export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 
-	// unknown value inserted by enQueue
-	putterS: unknown = VOID_OBJ  // Queue<Job | unknown> | Job | unknown
-	receiverS: Receivers = VOID_OBJ
+	_st = 0  // todo: necessary?
+	_size = 0
 	_done = false
-	_st = 0
+	_pt: PutterLink | VoidLink = VOID_LINK
+	_rc: ReceiverLink | VoidLink = VOID_LINK
 
-	done() {
-		this._done = true
-	}
-
-	// todo: skip if job is !blocked (done, cancelling,...)
 	get rec() {
-		op = REC
-		// needs to return blockJobIterable as TheIterable<typeof this.val>
-		// so that caller can't call .put() on it after it called .rec and vice versa
-		return this as Iterable<V>
-	}
-
-	put(msg: PutVal<V>): Iterable<undefined> {
-		throwIfDone<V>(this)
-		op = PUT
-		putMsg = msg
-		return this as Iterable<undefined>
-	}
-
-	[Symbol.iterator]() {
-		if (op === REC) {
-			processRec(this)
+		const recJob = sys.runningJob
+		if (recJob._st & PARKED) {
+			throwNotYielded("ch.rec")
 		}
+
+		const { _pt } = this
+
+		// No putter waiting, so enqueue and block receiver.
+		if (_pt === VOID_LINK) {
+
+			// Enqueue receiver as LL tail
+			const link = freshLink(recJob, recJob)
+
+			const { _rc } = this
+			if (_rc === VOID_LINK) {
+				this._rc = link
+				link.pA = link  // Head points to tail
+			} else {
+				let tail = _rc.pA
+				tail.nA = link
+				link.pA = tail
+				_rc.pA = link  // Update Head pointer to tail.
+			}
+
+			// Add link to receiver Job so it can unlink if cancelled.
+			addTgLink(recJob, link)
+
+			// Block receiver
+			recJob._st |= PARKED_CH_REC
+			iterRes.done = false
+		}
+		else {  // There's a putter waiting, so resume both receiver and putter.
+			this._size--
+
+			// Remove putter from _pt LL (is head).
+			let nextLink = _pt.nA
+			if (nextLink === VOID_LINK) {
+				this._pt = VOID_LINK
+			} else {
+				const tail = _pt.pA
+				nextLink.pA = tail
+				this._pt = nextLink
+			}
+
+			// Resume putter (first, if it's a job), then receiver.
+
+			const putType = _pt.b
+			const putVal = _pt.a
+
+
+			if (putType === 0) {  // putter is a job
+				const putJob = putVal as Job
+				const msg = putJob.val
+				removeTgLink(putJob, _pt)
+				resumeJob(putJob)
+				iterRes.value = msg
+			}
+			else {  // putter is a value from .enQ()
+				iterRes.value = putVal
+			}
+
+			disposeLink(_pt)
+			iterRes.done = true
+		}
+
+		return CHAN_ITERABLE as SYS_ITERABLE<V>
+	}
+
+	put(msg: PutVal<V>) {
+		const putJob = sys.runningJob
+		if (putJob._st & PARKED) {
+			throwNotYielded("ch.put")
+		}
+
+		const link = pullRecLink(this)
+
+		// No receiver waiting, so enqueue and block putter.
+		if (link === false) {
+			this._size++
+			const link = freshLink(putJob, 0 as const)
+			enQPutter(this, link)
+			// Add link to putter Job so it can unlink if cancelled.
+			addTgLink(putJob, link)
+			putJob._st |= PARKED_CH_PUT
+			putJob.val = msg
+			iterRes.done = false
+		}
+		// There's a receiver waiting, so resume receiver (first) and putter.
 		else {
-			processPut(this)
+			const recjob = link.a
+			removeTgLink(recjob, link)
+			resumeJob(recjob, msg)
+			disposeLink(link)
+			iterRes.value = undefined
+			iterRes.done = true
 		}
-		return iter as Iter<V>
+
+		return CHAN_ITERABLE as SYS_ITERABLE<undefined>
 	}
 
-	enQ(msg: PutVal<V>) {
-		throwIfDone<V>(this)
-		putMsg = msg
-		processPut(this)
-		return this
+	enQ(msg: PutVal<V>): void {
+		this._size++
+		const link = pullRecLink(this)
+		if (link === false) {
+			const link = freshLink(msg, 1 as const)
+			enQPutter(this, link)
+			return
+		}
+		resumeJob(link.a, msg)
+		disposeLink(link)
 	}
 
-	// there maybe values in queue by putter jobs waiting or inserted by enQueue
-	get notDone() {
-		// todo
-		return null
+	size() {
+		return this._size
 	}
 
+	// todo
+	// they're maybe values in queue by putter jobs waiting or inserted by enQueue
+	// get notDone() {
+	// }
+
+	// todo
+	// setDone() {
+	// 	this._done = true
+	// }
+
+}
+
+function pullRecLink<V>(ch: Chan<V>) {
+	const { _rc } = ch
+
+	if (_rc === VOID_LINK) {
+		return false
+	}
+
+	// Remove receiver from _rc LL (is head).
+	let nextLink = _rc.nA
+	if (nextLink === VOID_LINK) {
+		ch._rc = VOID_LINK
+	} else {
+		ch._rc = nextLink
+		const tail = _rc.pA
+		nextLink.pA = tail
+	}
+	return _rc as ReceiverLink
+}
+
+function enQPutter<V>(ch: Chan<V>, link: PutterLink) {
+	const { _pt } = ch
+	if (_pt === VOID_LINK) {
+		ch._pt = link
+		link.pA = link  // Head points to tail
+	} else {
+		let tail = _pt.pA
+		tail.nA = link
+		link.pA = tail
+		_pt.pA = link  // Update Head pointer to tail.
+	}
+}
+
+export const CHAN_ITERATOR = {
+	next() {
+		return iterRes
+	}
+}
+const CHAN_ITERABLE = {
+	[Symbol.iterator]() {
+		return CHAN_ITERATOR
+	}
 }
 
 export function enQueue<V>(ch: Chan<V>, msg: PutVal<V>): void {
@@ -116,95 +220,29 @@ function throwIfDone<V>(ch: Chan<V>) {
 	}
 }
 
-const RECS = "receiverS"
-type Recs = typeof RECS
-const PUTS = "putterS"
-type Puts = typeof PUTS
-type KOfawaiterS = Recs | Puts
 
-function processRec<V>(ch_m: Chan<V>) {
-	const { putterS } = ch_m
 
-	if (putterS === VOID_OBJ) {
-		receiverHasNoPutter(ch_m)
-		return
-	}
-	if (putterS instanceof Job) {
-		ch_m.putterS = VOID_OBJ
-		resumeObserverAndMe(putterS, undefined, putterS.val)
-		return
-	}
-	if (putterS instanceof Queue) {
-		const putVal: unknown = putterS.deQ()
-		return putVal === VOID_OBJ ?
-			receiverHasNoPutter(ch_m) :
-			putVal instanceof Job ?
-				resumeObserverAndMe(putVal, undefined, putVal.val) :
-				continueRunningJob(putVal)  // a value inserted by .enQueue()
-	}
 
-	// a sole value inserted by .enQueue()
-	continueRunningJob(putterS)
+
+/* *********************  API  ******************** */
+
+export function Ch<V = undefined>(): Chan<V> {
+	return new Chan<V>()
 }
 
-function receiverHasNoPutter<V>(ch: Chan<V>) {
-	addAsWaiter(sys.runningJob, ch, RECS)
-	iterRes.done = false
-	iterRes.value = YIELD
+export function isCh(x: unknown): x is Chan {
+	return x instanceof Chan
 }
 
-export function addAsWaiter<V>(value: Receivers, hasAwaiterS_m: Chan<V>, kOfawaiterS: Recs): void
-export function addAsWaiter<V>(value: unknown, hasAwaiterS_m: Chan<V>, kOfawaiterS: Puts): void
-export function addAsWaiter<V>(value: unknown, hasAwaiterS_m: Chan<V>, kOfawaiterS: KOfawaiterS): void {
-	const awaiterS = hasAwaiterS_m[kOfawaiterS]
-	if (awaiterS === VOID_OBJ) {
-		hasAwaiterS_m[kOfawaiterS] = value as (typeof kOfawaiterS extends Puts ? unknown : Receivers)
-	}
-	else if (awaiterS instanceof Queue) {
-		awaiterS.enQ(value)
-	}
-	else {
-		const queue = new Queue()
-		queue.enQ(awaiterS).enQ(value)
-		hasAwaiterS_m[kOfawaiterS] = queue as (typeof kOfawaiterS extends Puts ? unknown : Queue<Linkable>)
-	}
+export type OutCh<in V> = {
+	put: (msg: PutVal<V>) => SYS_ITERABLE<undefined>
+	enQ: (msg: PutVal<V>) => void
 }
 
-function resumeObserverAndMe(observer: Linkable, msgToObserver: unknown, msgToRunningJob: unknown) {
-	//.onTgDone() checks job.state, sets iterRer and .resumes() gen.next()
-	observer._onTgDone(msgToObserver)
-	// I think same here
-	continueRunningJob(msgToRunningJob)
+export type InCh<out V> = {
+	rec: SYS_ITERABLE<V>
 }
 
+// todo, type for unclosable channel
 
-function processPut<V>(ch_m: Chan<V>) {
-
-	const { receiverS } = ch_m
-
-	if (receiverS === VOID_OBJ) {
-		putterHasNoReceiver(ch_m)
-		return
-	}
-	if ("onObservableDone" in receiverS) {
-		ch_m.receiverS = VOID_OBJ
-		resumeObserverAndMe(receiverS, putMsg, undefined)
-		return
-	}
-
-	const receiver = receiverS.deQ()
-
-	if (receiver === VOID_OBJ) {
-		putterHasNoReceiver(ch_m)
-		return
-	}
-
-	resumeObserverAndMe(receiver, putMsg, undefined)
-}
-
-
-function putterHasNoReceiver<V>(ch: Chan<V>) {
-	addAsWaiter<V>(sys.runningJob, ch, PUTS)
-	iterRes.done = false
-	iterRes.value = YIELD
-}
+type PutVal<V> = V extends undefined ? void : V

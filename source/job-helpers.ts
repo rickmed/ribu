@@ -1,6 +1,6 @@
-import { DONE, ANY_ERR_OR_CANCOK, addErrorToJobVal, cancel, go, me, addObserver, resumeJob, onEnd, type Job } from "./job.js"
+import { DONE, ANY_ERR_OR_CANCOK, addErrorToJobVal, cancel, go, me, addObserver, onEnd, type Job } from "./job.js"
 import { userErrCtor, _Err, Err } from "./errors.js"
-import { freshLink, iterator, iterRes, Itrtor, Link, sys } from "./system.js"
+import { freshLink, SYS_ITERATOR, iterRes, SysIterator, Link, sys } from "./system.js"
 import { Ch, Chan } from "./channel.js"
 import { sleep } from "./timers.js"
 
@@ -51,8 +51,8 @@ function* _allOrErr(jobs: Job[]) {
 	observeJobs(jobs, jobsDone)
 
 	while (jobs.length > result.length) {
-		const job = yield* sleep(0)
-		// if (job._st & ANY_ERR_OR_CANCOK) {
+		// const job = yield* sleep(0)
+		// if (job.failedOrCancelled) {
 		// 	return job.val
 		// }
 		// result.push(job.val)

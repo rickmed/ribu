@@ -32,8 +32,8 @@ export let iterRes = {
 	value: 0 as unknown,
 }
 
-export type Itrtor<V> = Iterator<unknown, V>
-export const iterator = {
+export type SysIterator<V> = Iterator<unknown, V>
+export const SYS_ITERATOR = {
 	next() {
 		if (iterRes.done === true) {
 			sys.runningJob._st &= ~PARKED
@@ -42,12 +42,12 @@ export const iterator = {
 	}
 }
 
-export type _Iterable<V> = {
-	[Symbol.iterator]: () => Itrtor<V>
+export type SYS_ITERABLE<V> = {
+	[Symbol.iterator]: () => SysIterator<V>
 }
-export const sysIterable = {
+export const SYS_ITERABLE = {
 	[Symbol.iterator]() {
-		return iterator
+		return SYS_ITERATOR
 	}
 }
 

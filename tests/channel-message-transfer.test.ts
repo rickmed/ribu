@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest"
+import {  expect, it } from "vitest"
 import { Ch, go } from "ribu"
 
 
-it.skip("putter arrives first", async () => {
+it("putter arrives first", async () => {
 
 	const ch = Ch<string>()
 
@@ -15,11 +15,11 @@ it.skip("putter arrives first", async () => {
 		return msg
 	})
 
-	const res = await receiver.promfy
+	const res = await receiver
 	expect(res).toBe("hello")
 })
 
-it.skip("receiver arrives first", async () => {
+it("receiver arrives first", async () => {
 
 	const ch = Ch<string>()
 
@@ -32,38 +32,38 @@ it.skip("receiver arrives first", async () => {
 		yield* ch.put("hi")
 	})
 
-	const res = await receiver.promfy
+	const res = await receiver
 	expect(res).toBe("hi")
 })
 
-it.skip("multiple puts and receives in order", async () => {
+it("multiple puts and receives in order", async () => {
 
-	const ch = Ch<string>()
-	let outMessages = ["one", "two", "three"]
+	const ch = Ch<number>()
+	const msgs = [1, 2, 3] as const
 
-	go(function* main() {
-		yield* ch.put("one")
-		yield* ch.put("two")
-		yield* ch.put("three")
+	go(function* putter() {
+		yield* ch.put(msgs[0])
+		yield* ch.put(msgs[1])
+		yield* ch.put(msgs[2])
 	})
 
 	const receiver = go(function* receiver() {
-		let inMsgs: string[] = []
-		for (const _ of range(outMessages.length)) {
+		let inMsgs: number[] = []
+		for (let i = 0; i < msgs.length; i++) {
 			const msg = yield* ch.rec
 			inMsgs.push(msg)
 		}
 		return inMsgs
 	})
 
-	const result = await receiver.promfy
-	expect(result).toEqual(["one", "two", "three"])
+	const result = await receiver
+	expect(result).toStrictEqual(msgs)
 })
 
-it.skip("multiple producers to single consumer", async () => {
+it("multiple producers to single consumer", async () => {
 
 	const ch = Ch<number>()
-	let values = [1, 2, 3]
+	const values = [1, 2, 3]
 
 	for (const val of values) {
 		go(function* producer() {
@@ -72,18 +72,19 @@ it.skip("multiple producers to single consumer", async () => {
 	}
 
 	const receiver = go(function* receiver() {
-		let received: number[] = []
+		let inMsgs: number[] = []
 		for (let i = 0; i < values.length; i++) {
-			received.push(yield* ch.rec)
+			const msg = yield* ch.rec
+			inMsgs.push(msg)
 		}
-		return received
+		return inMsgs
 	})
 
-	const res = await receiver.promfy
-	expect(res).toEqual(values.sort())
+	const res = await receiver
+	expect(res).toStrictEqual(values.slice().sort())
 })
 
-it.skip("single producer to multiple consumers", async () => {
+it("single producer to multiple consumers", async () => {
 
 	const ch = Ch<number>()
 	const messages = [0, 1, 2]
@@ -100,32 +101,6 @@ it.skip("single producer to multiple consumers", async () => {
 		})
 	)
 
-	const results = await Promise.all(consumers.map(c => c.promfy))
+	const results = await Promise.all(consumers)
 	expect(results).toEqual([0, 1, 2])
 })
-
-
-function* range(n: number) {
-	for (let i = 0; i < n; i++) {
-		yield i
-	}
-}
-
-/*
-	put:
-		1) sets whoever job yield* first to park/resume via the iterator result
-		2) Enqueues job/thing (or continues)
-
-	ch.put(1)
-	ch.put(1)
-	yield* sleep(1000)
-
-	BAD: would put runningJob in the queue twice and resume at sleep (if receiver resumes me, before sleep)
-	BAD: should not be possible to put me in the queue twice (Channel aren't buffered)
-		,ie, a receiver will try to resume me if blocked doing waiting for something else
-
-
-	todo: test that ch.put() or .rec without yield* does nothing.
-*/
-
-// todo: test .rec and put returns correct types

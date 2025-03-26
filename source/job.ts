@@ -1,6 +1,6 @@
-import { sys, type Link, VOID_OBJ, disposeLink, freshLink, Itrtor, iterRes, iterator, _Iterable, VoidObj, VOID_LINK, VoidLink, ensurePreviousYieldAndSetCallerJobNextSt, throwNotYielded, sysIterable } from "./system.js"
+import { sys, type Link, VOID_OBJ, disposeLink, freshLink, SysIterator, iterRes, SYS_ITERATOR, VoidObj, VOID_LINK, VoidLink, ensurePreviousYieldAndSetCallerJobNextSt, SYS_ITERABLE } from "./system.js"
 import { CANC_OK, CancOK, Er, Err, _Err } from "./errors.js"
-import { Chan } from "./channel.js"
+import { Chan, PutterLink, ReceiverLink } from "./channel.js"
 
 // todo: implement "unsub() to have something like trio's moveOnAfter()
 // 	for jobs and job-helpers
@@ -15,8 +15,6 @@ import { Chan } from "./channel.js"
 
 
 
-
-
 /* => DOING, make tests pass
 Job's targets:
 	Job, JobHelper (::Job), cancel (needs to be ::Job)
@@ -24,9 +22,6 @@ Job's targets:
 	Chan, Select
 		calls resumeJob() directly.
 
-Job's observers:
-	Job, Promise
-		just branch on type
 */
 
 
@@ -45,7 +40,7 @@ type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
 type JobsLink = Link<Job, Job>
 type JobChanLink = Link<Job, Chan>
 type WaitingChdLink = JobsLink
-type TgOrChdLink = JobChanLink | WaitingChdLink
+type TgLink = JobChanLink | WaitingChdLink | PutterLink | ReceiverLink
 
 type OnJobDone<T = Job> = (val: unknown, tg: Job, bPosInLink: T) => void
 type CallbackLink<T = Job> = Link<OnJobDone<T>, T>
@@ -62,23 +57,25 @@ const PARKED_JOB = 1 << 1  // 2
 const PARKED_CANCEL = 1 << 2  // 4
 const PARKED_CANCEL_ERR = 1 << 3  // 8
 export const PARKED_SLEEP = 1 << 4  // 16
-const PARKED_CH = 1 << 5  // 32
-const WAITING_CHILDREN = 1 << 6  // 64
-const CHILDREN_CANCELLED = 1 << 7  // 128
-const WAITING_ONENDS = 1 << 8  // 256
-export const CANCELLED = 1 << 9  // 512
-export const DONE = 1 << 10  // 1024
-const CANCOK = 1 << 11  // 2048
-export const ERR_IN_GENFN = 1 << 12  // 4096
-const ERR_IN_ONEND = 1 << 13  // 8192
-const CANCEL_SIBLINGS_ON_ERR = 1 << 14  // 16384
-const TIME_LIMIT_FIRED = 1 << 15  // 32768
+export const PARKED_CH_PUT = 1 << 5  // 32
+export const PARKED_CH_REC = 1 << 6  // 64
+const WAITING_CHILDREN = 1 << 7  // 128
+const CHILDREN_CANCELLED = 1 << 8  // 256
+const WAITING_ONENDS = 1 << 9  // 512
+export const CANCELLED = 1 << 10  // 1024
+export const DONE = 1 << 11  // 2048
+const CANCOK = 1 << 12  // 4096
+export const ERR_IN_GENFN = 1 << 13  // 8192
+const ERR_IN_ONEND = 1 << 14  // 16384
+const CANCEL_SIBLINGS_ON_ERR = 1 << 15  // 32768
+const TIME_LIMIT_FIRED = 1 << 16  // 65536
 // Used in situations where job is linking to other jobs, but target job
 // notifies (and removes link) observer job immediately/synchronously.
-const LINKING = 1 << 16  // 65536
+const LINKING = 1 << 17  // 131072
 // todo: implement this when [Symbol.dispose] is implemented
-// const JOB_IN_POOL = 1 << 17  // 131072
+// const JOB_IN_POOL = 1 << 18  // 262144
 
+const PARKED_CH = PARKED_CH_PUT | PARKED_CH_REC
 export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_CANCEL | PARKED_CANCEL_ERR| PARKED_SLEEP | PARKED_CH
 const HAD_ERR = ERR_IN_GENFN | ERR_IN_ONEND
 export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
@@ -115,7 +112,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 	_st = 0
 	_gn: RibuGen
 	_ob: ObserverLink | VoidLink = VOID_LINK
-	_tg: TgOrChdLink | VoidLink = VOID_LINK
+	_tg: TgLink | VoidLink = VOID_LINK
 	_pr: JobsLink | VoidLink = VOID_LINK
 	_oe: OnEndLink | VoidLink = VOID_LINK
 	_tm: NodeJS.Timeout | VoidObj = VOID_OBJ
@@ -126,7 +123,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 		if (parent) {
 			const link = freshLink(parent, this)
 			this._pr = link
-			addTgOrChd(parent, link)
+			addTgLink(parent, link)
 		}
 	}
 
@@ -154,24 +151,24 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 	}
 
 	[Symbol.iterator]() {
-		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, "yield*")
+		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, "yield* job")
 		return jobIterator<OkRet>(this)
 	}
 
 	get err() {
 		self = this
-		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, ".err")
-		return JOB_ITERABLE as _Iterable<GetterErr>
+		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, "job.err")
+		return JOB_ITERABLE as SYS_ITERABLE<GetterErr>
 	}
 
 	cancel() {
-		handleCancel(this, ".cancel()", PARKED_CANCEL)
-		return sysIterable as _Iterable<void>
+		handleCancel(this, "job.cancel()", PARKED_CANCEL)
+		return SYS_ITERABLE as SYS_ITERABLE<void>
 	}
 
 	cancelErr() {
-		handleCancel(this, ".cancelErr()", PARKED_CANCEL_ERR)
-		return sysIterable as _Iterable<void | Er>
+		handleCancel(this, "job.cancelErr()", PARKED_CANCEL_ERR)
+		return SYS_ITERABLE as SYS_ITERABLE<void | Er>
 	}
 
 	onEnd(onEndFn: OnEnd) {
@@ -191,10 +188,6 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 		// }
 		// removeOb(this, _ob)
 		// this._ob = VOID_LINK
-	}
-
-	isDone() {
-		return this._st & DONE
 	}
 
 	get promErr() {
@@ -217,6 +210,14 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 		function onJobDone(_: unknown, thisJob: Job) {
 			resolveJobThenable(res, rej, thisJob)
 		}
+	}
+
+	get isDone() {
+		return this._st & DONE
+	}
+
+	get failedOrCancelled() {
+		return this._st & ANY_ERR_OR_CANCOK
 	}
 }
 
@@ -290,7 +291,7 @@ function jobIterator<T>(job: Job) {
 		iterRes.done = false
 	}
 
-	return iterator as Itrtor<T>
+	return SYS_ITERATOR as SysIterator<T>
 }
 
 
@@ -435,7 +436,7 @@ function settleJob(job: Job) {
 	// Release parent-child link.
 	const { _pr, _st } = job
 	if (_pr !== VOID_LINK) {
-		removeTgOrChd(_pr.a as Job, _pr as JobsLink)
+		removeTgLink(_pr.a as Job, _pr as JobsLink)
 		job._pr = VOID_LINK
 		disposeLink(_pr)
 	}
@@ -465,7 +466,7 @@ function settleJobish(job: Job) {
 		}
 		else {  // JobsLink
 			removeOb(job, obLink as JobsLink)
-			removeTgOrChd(observer as Job, obLink as JobsLink)
+			removeTgLink(observer as Job, obLink as JobsLink)
 			disposeLink(obLink)
 			;(observer as Job)._onTgJobDone(job)
 		}
@@ -509,7 +510,7 @@ export function cancelJob(job: Job) {
 	}
 	else { // parked by a ::Job
 		const link = job._tg as JobsLink
-		removeTgOrChd(job, link)
+		removeTgLink(job, link)
 		removeOb(link.b, link)
 		disposeLink(link)
 	}
@@ -617,7 +618,7 @@ function removeOb(job: Job, link: ObserverLink) {
 // Tg behaves like a stack Link, ie, it is added as head when job is blocked
 // and removed when job is resumed, ie, go(), which adds childs, can never
 // be called in between block/unblock.
-function addTgOrChd(job: Job, link: TgOrChdLink) {
+export function addTgLink(job: Job, link: TgLink) {
 	let head = job._tg
 	link.nB = head
 	job._tg = link
@@ -626,7 +627,7 @@ function addTgOrChd(job: Job, link: TgOrChdLink) {
 	}
 }
 
-function removeTgOrChd(job: Job, link: TgOrChdLink) {
+export function removeTgLink(job: Job, link: TgLink) {
 	let { pB, nB } = link
 	if (nB !== VOID_LINK) {
 		nB.pB = pB
@@ -643,7 +644,7 @@ function removeTgOrChd(job: Job, link: TgOrChdLink) {
 
 export function linkJobs(ob: Job, tg: Job) {
 	const link = freshLink(ob, tg)
-	addTgOrChd(ob, link)
+	addTgLink(ob, link)
 	addObserver(tg, link)
 }
 
@@ -740,7 +741,7 @@ function unlinkFromAllJobs(obJob: Job) {
 	while (tgLink !== VOID_LINK) {
 		const nextLink = tgLink.nB
 		removeOb(tgLink.b as Job, tgLink as JobsLink)
-		removeTgOrChd(obJob, tgLink as JobsLink)
+		removeTgLink(obJob, tgLink as JobsLink)
 		disposeLink(tgLink)
 		tgLink = nextLink
 	}
