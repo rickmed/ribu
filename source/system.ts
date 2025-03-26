@@ -42,7 +42,7 @@ export const iterator = {
 export type _Iterable<V> = {
 	[Symbol.iterator]: () => Itrtor<V>
 }
-export const iterable = {
+export const sysIterable = {
 	[Symbol.iterator]() {
 		return iterator
 	}
@@ -52,13 +52,13 @@ export const iterable = {
 export function ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt: Job["_st"], opName: string) {
 	const callerJob = sys.runningJob
 	if (callerJob._st & PARKED) {
-		throwNotYieldedErr(opName)
+		throwNotYielded(opName)
 	}
 	// eslint-disable-next-line functional/immutable-data
 	callerJob._st |= callerJobNextSt
 }
 
-export function throwNotYieldedErr(currentOp: string) {
+export function throwNotYielded(currentOp: string) {
 	const errMsg = `
 		Ribu: Did you forget to yield* at the operation before this one?
 		Current yieldable operation: ${currentOp}.

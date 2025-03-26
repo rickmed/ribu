@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { go, CANC_OK, Err, sleep, Job } from "ribu"
+import { go, Err, sleep, Job, onEnd } from "ribu"
+import { _Err } from "../source/errors.js"
 
 function* child(ctx: {count: number}) {
 	yield* sleep(3)
@@ -19,6 +20,35 @@ describe("job.cancel()", () => {
 		}
 
 		await go(main)
+		expect(ctx.count).toBe(0)
+	})
+
+	/**
+	 * NOTE:
+	 * Users should NOT use plain `yield* cancel()` to handle the return value.
+	 * Use `.cancelErr()` instead.
+	 */
+	it("returns undefined if job cancelled ok", async () => {
+
+		let ctx = { count: 0 }
+
+		function* child1() {
+			onEnd(() => {
+				return "ok"
+			})
+			yield* sleep(3)
+			ctx.count++
+		}
+
+		function* main() {
+			const chld = go(child1)
+			yield* sleep(1)
+			const res = yield* chld.cancel()
+			return res
+		}
+
+		const rec = await go(main).promErr
+		expect(rec).toStrictEqual(undefined)
 		expect(ctx.count).toBe(0)
 	})
 
@@ -43,13 +73,49 @@ describe("job.cancel()", () => {
 		expect(ctx.count).toBe(0)
 	})
 
+	it("caller fails if target fails cancelling", async () => {
+
+		let ctx = { count: 0 }
+
+		function* child1() {
+			onEnd(() => {
+				throw Error("Bad")
+			})
+			yield* sleep(4)
+			ctx.count++
+		}
+
+		function* main() {
+			const chld = go(child1)
+			yield* sleep(2)
+			yield* chld.cancel()
+		}
+
+		const rec = await go(main).promErr
+
+		const exp =
+			_Err("main",
+				_Err("child1",
+					undefined,
+					_Err("", Error("Bad")),
+					"Cancelled"
+				),
+			)
+
+		expect(ctx.count).toBe(0)
+		expect(rec).toStrictEqual(exp)
+	})
+
 	/**
-	 * If a job is already settled, calling `.cancel()` won't change the state of
-	 * the target job.
-	 * Also, even if the target job settled with errors, those errors won't be
-	 * propagated to the caller.
+	 *  If a job is already settled, calling `.cancel()` won't change the state
+	 *  of the target job. Even if the target job settled with errors, those
+	 *  errors won't be propagated to the caller.
+	 *
+	 * NOTE:
+	 *  Users should NOT use plain `yield* cancel()` to handle the return value.
+	 *  Use `.cancelErr()` instead.
 	 */
-	it(".cancel() is a no-op on already settled jobs", async () => {
+	it(".cancel() is a no-op on already settled jobs and returns undefined", async () => {
 
 		function* child1() {
 			yield* sleep(1)
@@ -61,12 +127,116 @@ describe("job.cancel()", () => {
 		function* main() {
 			chldJob = go(child1)
 			yield* sleep(3)
-			yield* chldJob.cancel()
-			return "ok"
+			return yield* chldJob.cancel()
 		}
 
 		const rec = await go(main).promErr
-		expect(rec).toEqual("ok")
-		expect(chldJob.val).toStrictEqual(Err("Bad", "child1"))
+		expect(rec).toStrictEqual(undefined)
+		expect(chldJob.val).toStrictEqual(_Err("child1", Err("Bad")))
+	})
+})
+
+
+/**
+ * Handle unhappy paths manually.
+ */
+describe("yield* job.cancelErr()", () => {
+
+	it("user can recover from cancelling errors", async () => {
+
+		function* child1() {
+			onEnd(() => Err("Bad"))
+			yield* sleep(3)
+		}
+
+		function* main() {
+			const chld = go(child1)
+			yield* sleep(1)
+			const res = yield* chld.cancelErr()
+			// Recovering: if res !== undefined, cancelling failed.
+			if (res) {
+				return "saved"
+			}
+			return "never reached"
+		}
+
+		const rec = await go(main).promErr
+		expect(rec).toEqual("saved")
+	})
+
+	it("returns undefined if target job cancelled ok", async () => {
+
+		let ctx = { count: 0 }
+
+		function* main() {
+			const chld = go(child, ctx)
+			yield* sleep(1)
+			return yield* chld.cancelErr()
+		}
+
+		const rec = await go(main).promErr
+		expect(rec).toBe(undefined)
+		expect(ctx.count).toBe(0)
+	})
+
+	it("returns target job settle value if fails cancelling", async () => {
+
+		let ctx = { count: 0 }
+
+		function* child1() {
+			onEnd(() => {
+				throw Error("Bad")
+			})
+			yield* sleep(4)
+			ctx.count++
+		}
+
+		function* main() {
+			const chld = go(child1)
+			yield* sleep(2)
+			const rec = yield* chld.cancelErr()
+			return { rec }
+		}
+
+		const rec = await go(main).promErr
+
+		expect(ctx.count).toBe(0)
+
+		const childSettleVal =
+			_Err("child1", undefined,
+				_Err("", Error("Bad")),
+				"Cancelled")
+
+		const exp = {
+			rec: childSettleVal,
+		}
+
+		expect(rec).toEqual(exp)
+	})
+
+	/**
+	 * If a job is already settled, calling `cancel()` won't change the state of
+	 * the target job.
+	 * Also, even if the target job settled with errors, those errors won't be
+	 * propagated to the caller.
+	 */
+	it("is a no-op on already settled jobs", async () => {
+
+		function* child1() {
+			yield* sleep(1)
+			return Err("Bad")
+		}
+
+		let chldJob!: Job
+
+		function* main() {
+			chldJob = go(child1)
+			yield* sleep(3)
+			return yield* chldJob.cancelErr()
+		}
+
+		const rec = await go(main).promErr
+		expect(rec).toEqual(undefined)
+		expect(chldJob.val).toStrictEqual(_Err("child1", Err("Bad")))
 	})
 })

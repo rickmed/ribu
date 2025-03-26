@@ -1,5 +1,5 @@
-import { sys, type Link, VOID_OBJ, disposeLink, freshLink, Itrtor, iterRes, iterator, _Iterable, VoidObj, VOID_LINK, VoidLink, ensurePreviousYieldAndSetCallerJobNextSt } from "./system.js"
-import { Er, Err, _Err } from "./errors.js"
+import { sys, type Link, VOID_OBJ, disposeLink, freshLink, Itrtor, iterRes, iterator, _Iterable, VoidObj, VOID_LINK, VoidLink, ensurePreviousYieldAndSetCallerJobNextSt, throwNotYielded, sysIterable } from "./system.js"
+import { CANC_OK, CancOK, Er, Err, _Err } from "./errors.js"
 import { Chan } from "./channel.js"
 
 // todo: implement "unsub() to have something like trio's moveOnAfter()
@@ -56,39 +56,34 @@ type OnEndLink = Link<OnEnd, Job>
 
 const DUMMY_GEN = (function* () {})()
 
-export type CancOK = Err<"CancOK">
-function CancOK(fnName: string): CancOK {
-	return new Err("CancOK", fnName)
-}
-
 // State Flags
 const PARKED_CONTINUE = 1 << 0  // 1
 const PARKED_JOB = 1 << 1  // 2
-const PARKED_JOB_CANCEL = 1 << 2  // 4
-export const PARKED_SLEEP = 1 << 3  // 8
-const PARKED_CH = 1 << 4  // 16
-const WAITING_CHILDREN = 1 << 5  // 32
-const CHILDREN_CANCELLED = 1 << 6  // 64
-const WAITING_ONENDS = 1 << 7  // 128
-export const CANCELLED = 1 << 8  // 256
-export const DONE = 1 << 9  // 512
-const CANCOK = 1 << 10  // 1024
-export const ERR_IN_GENFN = 1 << 11  // 2048
-const ERR_IN_ONEND = 1 << 12  // 4096
-const CANCEL_SIBLINGS_ON_ERR = 1 << 13  // 8192
-const TIME_LIMIT_FIRED = 1 << 14  // 16384
+const PARKED_CANCEL = 1 << 2  // 4
+const PARKED_CANCEL_ERR = 1 << 3  // 8
+export const PARKED_SLEEP = 1 << 4  // 16
+const PARKED_CH = 1 << 5  // 32
+const WAITING_CHILDREN = 1 << 6  // 64
+const CHILDREN_CANCELLED = 1 << 7  // 128
+const WAITING_ONENDS = 1 << 8  // 256
+export const CANCELLED = 1 << 9  // 512
+export const DONE = 1 << 10  // 1024
+const CANCOK = 1 << 11  // 2048
+export const ERR_IN_GENFN = 1 << 12  // 4096
+const ERR_IN_ONEND = 1 << 13  // 8192
+const CANCEL_SIBLINGS_ON_ERR = 1 << 14  // 16384
+const TIME_LIMIT_FIRED = 1 << 15  // 32768
 // Used in situations where job is linking to other jobs, but target job
 // notifies (and removes link) observer job immediately/synchronously.
-const LINKING = 1 << 15  // 32768
+const LINKING = 1 << 16  // 65536
 // todo: implement this when [Symbol.dispose] is implemented
-// const JOB_IN_POOL = 1 << 16  // 65536
+// const JOB_IN_POOL = 1 << 17  // 131072
 
-export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_JOB_CANCEL | PARKED_SLEEP | PARKED_CH
+export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_CANCEL | PARKED_CANCEL_ERR| PARKED_SLEEP | PARKED_CH
 const HAD_ERR = ERR_IN_GENFN | ERR_IN_ONEND
 export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
 
 let self: Job
-let currentOp = ""
 
 /** Job Class
  *  val:
@@ -138,43 +133,93 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 	}
 
 	_onTgJobDone(tgJob: Job) {
-		if (this._st & WAITING_CHILDREN) {
+		const { _st } = this
+
+		if (_st & WAITING_CHILDREN) {
 			onChildDone(this, tgJob)
 			return
 		}
+
 		// Parked at yield* tgJob or yield* tgJob.err/cancel/cancelErr.
-		if (shouldJobFail(this, tgJob)) {
+		const { _st: tgSt } = tgJob
+
+		const shouldThisJobFail =
+			(_st & PARKED_JOB) && (tgSt & ANY_ERR_OR_CANCOK) ||
+			(_st & PARKED_CANCEL) && (tgSt & ERR_IN_ONEND)
+
+		if (shouldThisJobFail) {
 			genFnFailed(this, _Err(this._nm, tgJob.val as Err))
 			return
 		}
+
 		resumeJob(this, tgJob.val)
 	}
 
 	[Symbol.iterator]() {
-		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, currentOp || "yield*")
-		currentOp = ""
+		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, "yield*")
 		return jobIterator<OkRet>(this)
 	}
 
 	get err() {
-		return this._jobIterable<GetterErr>(PARKED_CONTINUE, ".err")
+		self = this
+		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, ".err")
+		return JOB_ITERABLE as _Iterable<GetterErr>
 	}
 
 	cancel() {
-		cancelJob(this)
-		return this._jobIterable<CancOK>(PARKED_JOB_CANCEL, ".cancel")
+		const callerJob = sys.runningJob
+		if (callerJob._st & PARKED) {
+			throwNotYielded(".cancel()")
+		}
+		if (this._st & DONE) {
+			iterRes.done = true
+			iterRes.value = undefined
+		}
+		else {
+			cancelJob(this)
+			const { _st, val } = this
+			if (_st & DONE) {  // job settled synchronously
+				if (_st & ERR_IN_ONEND) {
+					iterRes.done = false
+					genFnFailed(callerJob, _Err(callerJob._nm, val))
+				}
+				else {
+					iterRes.done = true
+					iterRes.value = undefined
+				}
+			}
+			else {
+				callerJob._st |= PARKED_CANCEL
+				linkJobs(callerJob, this)
+				iterRes.done = false
+			}
+		}
+		return sysIterable as _Iterable<void>
 	}
 
 	cancelErr() {
-		cancelJob(this)
-		return this._jobIterable<CancOK | Er>(PARKED_CONTINUE, ".cancelErr")
-	}
-
-	// todo: move to standalone function
-	_jobIterable<YieldRet>(callerJobNextSt: Job["_st"], opName: string) {
-		self = this
-		ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt, opName)
-		return JOB_ITERABLE as _Iterable<YieldRet>
+		const callerJob = sys.runningJob
+		if (callerJob._st & PARKED) {
+			throwNotYielded(".cancelErr()")
+		}
+		if (this._st & DONE) {
+			iterRes.done = true
+			iterRes.value = undefined
+		}
+		else {
+			cancelJob(this)
+			const { _st, val } = this
+			if (_st & DONE) {  // job settled synchronously
+				iterRes.done = true
+				iterRes.value = _st & ERR_IN_ONEND ? val : undefined
+			}
+			else {
+				callerJob._st |= PARKED_CANCEL_ERR
+				linkJobs(callerJob, this)
+				iterRes.done = false
+			}
+		}
+		return sysIterable as _Iterable<void | Er>
 	}
 
 	onEnd(onEndFn: OnEnd) {
@@ -233,11 +278,18 @@ function resolveJobThenable<OkRet, GetterErr>(res: (val: OkRet) => void, rej: (e
 	}
 }
 
+
 function jobIterator<T>(job: Job) {
 	let callerJob = sys.runningJob
+	const callerSt = callerJob._st
+	const { _st } = job
 
-	if (job._st & DONE) {
-		if (shouldJobFail(callerJob, job)) {
+	if (_st & DONE) {
+
+		const shouldCallerFail =
+			(callerSt & PARKED_JOB) && (_st & ANY_ERR_OR_CANCOK)
+
+		if (shouldCallerFail) {
 			genFnFailed(callerJob, _Err(callerJob._nm, job.val as Err))
 			iterRes.done = false
 		}
@@ -254,6 +306,7 @@ function jobIterator<T>(job: Job) {
 
 	return iterator as Itrtor<T>
 }
+
 
 const JOB_ITERABLE = {
 	[Symbol.iterator]() {
@@ -296,14 +349,7 @@ export function resumeJob(job: Job, val?: unknown) {
 		return
 	}
 
-	if (value instanceof Err) {
-		// @ts-ignore mutation of .fn readonly property
-		value.fn = job._nm
-		genFnFailed(job, value as Err)
-		return
-	}
-
-	if (genFnThrew) {
+	if (genFnThrew || value instanceof Err) {
 		genFnFailed(job, _Err(job._nm, value))
 		return
 	}
@@ -372,20 +418,11 @@ function execOnEnds(job: Job) {
 
 	(onEnd as AsyncFn)()
 		.then(val => handleOneOnEndResult(job, val, onEnd))
-		.catch(e =>
-			handleOneOnEndResult(job, e, onEnd, true))
+		.catch(e => handleOneOnEndResult(job, e, onEnd, true))
 }
 
 function handleOneOnEndResult(job: Job, onEndResult: unknown, onEnd: OnEnd, threw = false) {
-	if (onEndResult instanceof Err) {
-		// @ts-ignore mutation of .fn readonly property
-		onEndResult.fn = onEnd.name
-		addOnEndErr(job, onEndResult as Err)
-	}
-	else if (onEndResult instanceof Error) {
-		addOnEndErr(job, onEndResult)
-	}
-	else if (threw) {  // threw something weird.
+	if (threw || onEndResult instanceof Err) {
 		addOnEndErr(job, _Err(onEnd.name, onEndResult))
 	}
 	execOnEnds(job)
@@ -418,7 +455,7 @@ function settleJob(job: Job) {
 	}
 
 	if (_st & CANCELLED && !(_st & ERR_IN_ONEND)) {
-		job.val = CancOK(job._nm)
+		job.val = CANC_OK
 		job._st = CANCOK
 	}
 
@@ -463,7 +500,7 @@ function onChildDone(job: Job, child: Job) {
 
 // Is cancelJob() caller responsibility to not subscribe if job is done,
 // otherwise, observer job will be blocked forever.
-const CANCEL_NOOP = DONE | CANCELLED | WAITING_ONENDS
+const CANCEL_NOOP = DONE | WAITING_ONENDS
 export function cancelJob(job: Job) {
 	const { _st } = job
 	if (_st & CANCEL_NOOP) {
@@ -533,11 +570,6 @@ function loopChildren(job: Job, observe: boolean, cancel: boolean) {
 		}
 		childLink = nextLink
 	} while (childLink !== VOID_LINK)
-}
-
-function shouldJobFail(ObJob: Job, tgJob: Job) {
-	return (ObJob._st & PARKED_JOB) && (tgJob._st & ANY_ERR_OR_CANCOK) ||
-		(ObJob._st & PARKED_JOB_CANCEL) && (tgJob._st & ERR_IN_ONEND)
 }
 
 export function addErrorToJobVal(job: Job, err: Error, errFlag: Job["_st"]) {
@@ -653,52 +685,27 @@ export function onEnd(onEnd: OnEnd, job = sys.runningJob) {
 
 //* **********************  cancel(...jobs) ******************************** *//
 
-/*
-- SelectJob works super cool
-
-allOrErr
-allSettled
-first
-firstOK
-
-FAIL/CANCELLING INNER:
-	- Helpers never cancel jobs when finishing. But they implement:
-		- cancel() (cancels passed in jobs)
-		- unsub() (unsubs from passed in jobs so caller can move on)
-	- At const res = yield* helper(jobs...), and helper fails, it fails caller
-		(but it only unsub from jobs).
-		- If jobs are caller's children, they'll be cancelled via parent's
-			structured concurrency anyway.
-
-
-=> IMPLEMENTATION. Need:
-
-
-get err()
-allOrErr
-	i think works as is.
-allSettled
-first
-firstOK
-
-*/
-
-const CANCEL_ALL_OP_NAME = "cancel(...jobs)"
-export const CANCEL_ALL_TIMEOUT = new Err("CancelTimeout", CANCEL_ALL_OP_NAME)
-export type CancelAllTimeout = typeof CANCEL_ALL_TIMEOUT
+export const CANCEL_ALL_OP_NAME = "cancel(...jobs)"
+export const TIME_OUT = new Err("CancelTimeout", "")
+export type Timeout = typeof TIME_OUT
 
 export function cancel(...jobs: Job[]) {
-	const cancelJobs = new CancelJobs()
+	const cancelJobs = new CancelAll()
 	linkWithAllJobs(jobs, cancelJobs, true)
-	currentOp = CANCEL_ALL_OP_NAME
-	return cancelJobs as Pick<CancelJobs, "err" | typeof Symbol.iterator | "maxWait">
+	return cancelJobs as Pick<CancelAll, "err" | typeof Symbol.iterator | "maxWait">
 }
 
-class CancelJobs extends Job<void, void | Er> {
+class CancelAll extends Job<void, void | Er | Timeout> {
 
 	constructor() {
 		super(CANCEL_ALL_OP_NAME)
 		this.val = undefined
+	}
+
+	[Symbol.iterator]() {
+		// CancelAll uses the same semantics of PARKED_JOB's yield* and yield* .err
+		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, CANCEL_ALL_OP_NAME)
+		return jobIterator<void>(this)
 	}
 
 	_onTgJobDone(tgJob: Job) {
@@ -708,7 +715,7 @@ class CancelJobs extends Job<void, void | Er> {
 			// reset ._st and .val in case some jobs already settled with Err.
 			this._st = 0
 			// settle with some sigil
-			this.val = CANCEL_ALL_TIMEOUT as unknown as Er
+			this.val = TIME_OUT
 			// Make caller fail if it didn't call .err to handle the unhappy paths.
 			this._st |= ERR_IN_GENFN
 			unlinkFromAllJobs(this)
@@ -729,11 +736,11 @@ class CancelJobs extends Job<void, void | Er> {
 
 	maxWait(ms: number) {
 		this._tm = setTimeout(maxWaitFired, ms, this)
-		return this as Job<void, void | Er | CancelAllTimeout>
+		return this as Job<void, void | Er | Timeout>
 	}
 }
 
-function maxWaitFired(cancelAll: CancelJobs) {
+function maxWaitFired(cancelAll: CancelAll) {
 	cancelAll._st |= TIME_LIMIT_FIRED
 	cancelAll._onTgJobDone(cancelAll)
 }

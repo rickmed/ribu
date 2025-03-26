@@ -114,7 +114,12 @@ it("if child fails and parent is set up at cancelSiblingsOnErr(), parent" +
 	}
 
 	const rec = await go(main).promErr
-	const exp = _Err("main", Err("Bad", "child1"))
+	const exp =
+		_Err("main",
+			_Err("child1",
+				Err("Bad")
+			)
+		)
 	expect(rec).toStrictEqual(exp)
 	expect(childrenFinished).toBe(0)
 })

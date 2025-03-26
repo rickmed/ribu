@@ -42,7 +42,12 @@ describe("yield* job", () => {
 		}
 
 		const rec = await go(main).promErr
-		const exp = _Err("main", Err("SomeErrorTag", "child"))
+		const exp =
+			_Err("main",
+				_Err("child",
+					Err("SomeErrorTag")
+				)
+			)
 		expect(rec).toStrictEqual(exp)
 	})
 
@@ -60,7 +65,12 @@ describe("yield* job", () => {
 		}
 
 		const rec = await go(main).promErr
-		const exp = _Err("main", Error("SomeErrorTag"))
+		const exp =
+			_Err("main",
+				_Err("child",
+					Error("SomeErrorTag")
+				)
+			)
 		expect(rec).toStrictEqual(exp)
 	})
 })
@@ -88,7 +98,7 @@ describe("yield* job.err", () => {
 		expect(rec).toBe("ok")
 	})
 
-	it.only("caller job resumes if target fails via returning ::Err", async () => {
+	it("caller job resumes if target fails via returning ::Err", async () => {
 
 		function* child() {
 			yield* sleep(1)
@@ -101,8 +111,12 @@ describe("yield* job.err", () => {
 		}
 
 		const rec = await go(main).promErr
-		lg(rec)
-		const exp = _Err("main", Err("SomeErrorTag", "child"))
+		const exp =
+			_Err("main",
+				_Err("child",
+					Err("SomeErrorTag")
+				)
+			)
 		expect(rec).toStrictEqual(exp)
 	})
 

@@ -72,6 +72,10 @@ export class Err<Name extends string = string> implements Error {
 		return Array.isArray(this._oe) ? this._oe : [this._oe]
 	}
 
+	isCancOK() {
+		return this instanceof CancOK
+	}
+
 	// todo: implement this
 	// Err<Name extends string>(name: Name, fn = "", msg = "") {
 	// 	return new Err(name, fn, this, msg)
@@ -88,6 +92,14 @@ export function _Err(fnName: string, errs?: Err["_errs"], onEndErrs?: Err["_oe"]
 export function userErrCtor<Name extends string>(name: Name, fnName = "", msg = "", ribuErr?: Err): Err<Name> {
 	return new Err<Name>(name, fnName, ribuErr, undefined, msg)
 }
+
+export class CancOK extends Err {
+	constructor() {
+		super("CancOK", "")
+	}
+}
+export const CANC_OK = new CancOK()
+
 
 export function isErr(x: unknown): x is Err<string> {
 	return x instanceof Err

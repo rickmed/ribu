@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest"
-import { go, sleep, onEnd, Err, cancel } from "ribu"
-import { child2, sleepProm } from "./utils.js"
+import { it, expect } from "vitest"
+import { go, sleep, onEnd, Err } from "ribu"
+import { sleepProm } from "./utils.js"
 import { _Err } from "../source/errors.js"
 
 
@@ -46,10 +46,9 @@ it("job fails with correct Err if onEnd fails", async () => {
 	}
 
 	const rec = await go(main).promErr
-	const exp = _Err("main")._addOnEndErr(Err("BadSync", "badSync"))
+	const exp = _Err("main", undefined, _Err("badSync", Err("BadSync")))
 	expect(rec).toStrictEqual(exp)
 })
-
 
 it("job executes all onEnds even if some of them fail. " +
 	"Settles with correct Err", async () => {
@@ -90,117 +89,16 @@ it("job executes all onEnds even if some of them fail. " +
 	}
 
 	const rec = await go(main).promErr
-	const exp = _Err(
-		"main",
-		undefined,
-		[Error("BadAsync"), Err("BadJob", "badJob"), Err("BadSync", "badSync")]
+	const exp = _Err("main", undefined,
+		[
+			_Err("badAsync", Error("BadAsync")),
+			_Err("badJob", Err("BadJob")),
+			_Err("badSync", Err("BadSync"))
+		]
 	)
 	expect(rec).toStrictEqual(exp)
 	expect(finished).toStrictEqual(["async", "job", "sync"])
 })
-
-
-describe.skip("using yield* job.cancelErr(), user can handle cancellation errors", () => {
-
-	it("a job stops execution when cancelled", async () => {
-
-		let childReturned = 0
-
-		function* child() {
-			yield* sleep(4)
-			childReturned++
-		}
-
-		function* main() {
-			const chld = go(child)
-			yield* sleep(2)
-			yield* chld.cancelErr()
-		}
-
-		await go(main)
-		expect(childReturned).toBe(0)
-	})
-
-	it("when a job is cancelled, all its descendants stop execution", async () => {
-
-		let childReturned = 0
-
-		function* grandChild() {
-			yield* sleep(2)
-			childReturned++
-		}
-
-		function* child() {
-			const grandChildJob = go(grandChild)
-			yield* sleep(2)
-			yield* grandChildJob
-			childReturned++
-		}
-
-		function* main() {
-			const childJob = go(child)
-			yield* sleep(1)
-			yield* childJob.cancel()
-		}
-
-		await go(main)
-		expect(childReturned).toBe(0)
-	})
-
-	it("when job to cancel is already settled, .cancel() has no effect and returns the original value", async () => {
-
-		const err = Err("even if job ended with error")
-
-		function* child() {
-			yield* sleep(1)
-			return err
-		}
-
-		function* main() {
-			const chld = go(child)
-			yield* sleep(2)
-			yield* chld.cancel()
-			return chld.val
-		}
-
-		const rec = await go(main).promErr
-		expect(rec).not.toBe(CANC_OK)
-		expect(rec).toEqual(err)
-	})
-})
-
-describe.todo("cancel(...jobs)", () => {
-
-	it.only("fails caller if any job fails to cancel with correct error propagation", async () => {
-
-		let ctx = { count: 0 }
-
-		function* child() {
-			throw new Error("BadChild")
-			yield* sleep(3)
-			ctx.count++
-		}
-
-		function* main() {
-			const job1 = go(child)
-			const job2 = go(child2, ctx)
-			yield* sleep(1)
-			yield* cancel(job1, job2)
-		}
-
-		const rec = await go(main).promErr
-		lg(rec)
-		expect(ctx.count).toBe(0)
-		expect(rec).toBe(undefined)
-	})
-
-	it("a job can cancel several jobs concurrently", async () => {
-
-	})
-
-})
-
-
 
 
 function random(min: number, max: number) {

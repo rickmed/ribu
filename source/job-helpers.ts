@@ -2,6 +2,18 @@ import { DONE, ANY_ERR_OR_CANCOK, Job, Job, addErrorToJobVal, cancel, go, notify
 import { userErrCtor, _Err, Err } from "./errors.js"
 import { Ob, Tg, unlinkObAndTg } from "./system.js"
 
+/*
+
+FAIL/CANCELLING INNER:
+	- Helpers never cancel jobs when finishing. But they implement:
+		- cancel() (cancels passed in jobs)
+		- unsub() (unsubs from passed in jobs so caller can move on)
+	- At const res = yield* helper(jobs...), and helper fails, it fails caller
+		(but it only unsub from jobs).
+		- If jobs are caller's children, they'll be cancelled via parent's
+			structured concurrency anyway.
+*/
+
 
 const EmptyArgsErr = userErrCtor("EmptyArgumentsErr")
 export type EmptyArgsErr = typeof EmptyArgsErr

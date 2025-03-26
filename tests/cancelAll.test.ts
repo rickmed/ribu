@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest"
 import { go, cancel, sleep, Err, Job, onEnd } from "ribu"
 import { child, child2, sleepProm } from "./utils.js"
 import { _Err } from "../source/errors.js"
-import { CANCEL_ALL_TIMEOUT } from "../source/job.js"
+import { CANCEL_ALL_OP_NAME, TIME_OUT } from "../source/job.js"
 
 
 describe("yield* cancel(...jobs)", () => {
@@ -68,7 +68,8 @@ describe("yield* cancel(...jobs)", () => {
 
 		const rec = await go(main).promErr
 		expect(rec).toEqual("ok")
-		expect(chldJob.val).toStrictEqual(Err("Bad", "child1"))
+		const exp = _Err("child1", Err("Bad"))
+		expect(chldJob.val).toStrictEqual(exp)
 	})
 })
 
@@ -93,6 +94,33 @@ describe("yield* cancel(...jobs).err", () => {
 		const rec = await go(main).promErr
 		expect(ctx.count).toBe(0)
 		expect(rec).toBe(undefined)
+	})
+
+	it("user can recover from cancelling errors", async () => {
+
+		let ctx = { count: 0 }
+
+		function* badChild(ctx: {count: number}) {
+			onEnd(() => Err("Bad"))
+			yield* sleep(3)
+			ctx.count++
+		}
+
+		function* main() {
+			const job1 = go(child, ctx)
+			const job2 = go(badChild, ctx)
+			yield* sleep(1)
+			const res = yield* cancel(job1, job2).err
+			// Recovering: if res !== undefined, cancelling failed.
+			if (res) {
+				return "saved"
+			}
+			return "never reached"
+		}
+
+		const rec = await go(main).promErr
+		expect(rec).toBe("saved")
+		expect(ctx.count).toBe(0)
 	})
 
 	it("returns accumulated errors of jobs' cancellation failures", async () => {
@@ -191,29 +219,30 @@ describe("yield* cancel(...jobs).err", () => {
 		const rec = await go(main).promErr
 		expect(ctx.count).toBe(0)
 
-		const exp = _Err("main", [
-			_Err("syncBad1", undefined,
-				Err("SyncBad1"),
-				"Cancelled"),
+		const exp =
+			_Err("main",
+				_Err(CANCEL_ALL_OP_NAME, [
+					_Err("syncBad1", undefined,
+						_Err("", Err("SyncBad1")),
+						"Cancelled"),
 
-			_Err("syncBad2", undefined,
-				Error("SyncBad2"),
-				"Cancelled"),
+					_Err("syncBad2", undefined,
+						_Err("", Error("SyncBad2")),
+						"Cancelled"),
 
-			_Err("jobBad1", undefined,
-				Err("JobBad1", "jobBad1OE"),
-				"Cancelled"),
+					_Err("jobBad1", undefined,
+						_Err("jobBad1OE", Err("JobBad1")),
+						"Cancelled"),
 
-			_Err("jobBad2", undefined,
-				_Err("jobBad2OE",
-					Error("JobBad2"),
-				),
-				"Cancelled"),
+					_Err("jobBad2", undefined,
+						_Err("jobBad2OE", Error("JobBad2")),
+						"Cancelled"),
 
-			_Err("AsyncBad", undefined,
-				Error("AsyncBad"),
-				"Cancelled"),
-		])
+					_Err("AsyncBad", undefined,
+						_Err("", Error("AsyncBad")),
+						"Cancelled"),
+				])
+			)
 
 		expect(rec).toStrictEqual(exp)
 	})
@@ -242,7 +271,8 @@ describe("yield* cancel(...jobs).err", () => {
 
 		const rec = await go(main).promErr
 		expect(rec).toEqual("ok")
-		expect(chldJob.val).toStrictEqual(Err("Bad", "child1"))
+		const exp = _Err("child1", Err("Bad"))
+		expect(chldJob.val).toStrictEqual(exp)
 	})
 })
 
@@ -271,7 +301,7 @@ describe("cancel(...jobs).maxWait(ms)", () => {
 		expect(rec).toBe(undefined)
 	})
 
-	it.only("caller fails if all jobs don't finish their cancellation on time", async () => {
+	it("caller fails if all jobs don't finish their cancellation on time", async () => {
 
 		let ctx = { count: 0 }
 
@@ -301,8 +331,7 @@ describe("cancel(...jobs).maxWait(ms)", () => {
 		}
 
 		const rec = await go(main).promErr
-		const exp = _Err("main", CANCEL_ALL_TIMEOUT)
-		lg(exp)
+		const exp = _Err("main", TIME_OUT)
 		expect(rec).toStrictEqual(exp)
 		expect(ctx.count).toBe(0)
 	})
@@ -337,7 +366,7 @@ describe("cancel(...jobs).maxWait(ms).err", () => {
 		expect(rec).toBe(undefined)
 	})
 
-	it.only("returns Timeout if all jobs don't finish their cancellation on time", async () => {
+	it("returns Timeout if all jobs don't finish their cancellation on time", async () => {
 
 		let ctx = { count: 0 }
 
@@ -368,8 +397,7 @@ describe("cancel(...jobs).maxWait(ms).err", () => {
 		}
 
 		const rec = await go(main).promErr
-		const exp = _Err("main", CANCEL_ALL_TIMEOUT)
-		lg(rec, exp)
+		const exp = _Err("main", TIME_OUT)
 		expect(rec).toStrictEqual(exp)
 		expect(ctx.count).toBe(0)
 	})
