@@ -35,6 +35,9 @@ export let iterRes = {
 export type Itrtor<V> = Iterator<unknown, V>
 export const iterator = {
 	next() {
+		if (iterRes.done === true) {
+			sys.runningJob._st &= ~PARKED
+		}
 		return iterRes
 	}
 }
@@ -96,7 +99,8 @@ export type VoidLink = typeof VOID_LINK
  * pA is previous object A Link
  * nB is next object B Link (towards the tail of LL)
  * pB is previous object B Link
- */ export interface Link<A = unknown, B = unknown> {
+ */
+export interface Link<A = unknown, B = unknown> {
 	a: A
 	b: B
 	nA: this | VoidLink

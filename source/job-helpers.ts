@@ -1,18 +1,67 @@
-import { DONE, ANY_ERR_OR_CANCOK, Job, Job, addErrorToJobVal, cancel, go, notifyObservers, subscribeToAllJobs as subscribeToJobs, type YielRet, ERR_IN_GENFN, execSettle, cancelJob, onEnd, CANCELLED } from "./job.js"
+import { DONE, ANY_ERR_OR_CANCOK, addErrorToJobVal, cancel, go, me, addObserver, resumeJob, onEnd, type Job } from "./job.js"
 import { userErrCtor, _Err, Err } from "./errors.js"
-import { Ob, Tg, unlinkObAndTg } from "./system.js"
+import { freshLink, iterator, iterRes, Itrtor, Link, sys } from "./system.js"
+import { Ch, Chan } from "./channel.js"
+import { sleep } from "./timers.js"
 
-/*
+// todo: consider passing a timeout parameter
 
-FAIL/CANCELLING INNER:
-	- Helpers never cancel jobs when finishing. But they implement:
-		- cancel() (cancels passed in jobs)
-		- unsub() (unsubs from passed in jobs so caller can move on)
-	- At const res = yield* helper(jobs...), and helper fails, it fails caller
-		(but it only unsub from jobs).
-		- If jobs are caller's children, they'll be cancelled via parent's
-			structured concurrency anyway.
-*/
+/**
+ *  When helper is done, it NEVER cancels the other passed-in jobs.
+ *   Are only "unlinked" from passed-in jobs when it returns.
+ *
+ *  Other jobs are cancelled only if yield* helper.cancel() is called.
+ *    This is the equivalent of yield* cancel(...passedInJobs)
+ *
+ *  Although, if plain yield* jobHelper(...jobs) is used, and jobHelper
+ *    fails (returns ::Err, for example), the caller will fail, so if
+ *    the passed-in jobs are chilren of caller, they'll be cancelled
+ *    via parent's automatic structured concurrency anyway.
+ */
+
+
+type NotErrs<T> = Exclude<T, Error>
+
+/** allOrErr()
+ *  Returns an array of the  _successful_ settled values of the passed-in jobs.
+ *  If one job fails (or is cancelled, even successfully), it fails.
+ *  Fails also if the passed-in array is empty.
+ */
+export function allOrErr<T>(...jobs: Job<T>[]) {
+	const job = go(_allOrErr, jobs)
+	return job
+}
+
+function* _allOrErr(jobs: Job[]) {
+	type T = NotErrs<(typeof jobs)[number]["val"]>
+
+	if (jobs.length === 0) {
+		// return userErrCtor("EmptyArguments", "allOrErr")
+		return "heyy"
+	}
+
+	onEnd(function* () {
+		yield* cancel(...jobs)
+	})
+
+	const result: string[] = []
+
+	const jobsDone = Ch<Job>()  // todo: use using instead
+
+	observeJobs(jobs, jobsDone)
+
+	while (jobs.length > result.length) {
+		const job = yield* sleep(0)
+		// if (job._st & ANY_ERR_OR_CANCOK) {
+		// 	return job.val
+		// }
+		// result.push(job.val)
+	}
+
+	return result
+}
+
+
 
 
 const EmptyArgsErr = userErrCtor("EmptyArgumentsErr")
@@ -20,98 +69,6 @@ export type EmptyArgsErr = typeof EmptyArgsErr
 
 
 
-function unLinkFromTargets(ob: Ob) {
-	while (ob._tg) {
-		const link = ob._tg
-		ob._tg = link.nA
-		unlinkObAndTg(link)
-	}
-}
-
-
-
-// helpers must set correct _st to that inherited [symbol.iterator] works ok
-
-/*
-=> thinking about helper._cancel() implementation, what logic from cancelJob()
-	think that helper is aleady subscribed to jobs so maybe
-	just trigget cancelJob(job) is sufficient
-	- but need to handle if job had cancel errors (?)
-
-=> See how would implement job/genFn based and see if helps class based.
- - if not, implement all job/genFn based helpers - DO THIS!!!!!
-
-
-*/
-
-/*
-- Returns an array of the settled _successful_ values of the passed-in jobs.
-- If one job fails (or is cancelled, even successfully), it settles with Error
-	and fails callerJob if not using .err
-- Settles with Error if the passed-in array is empty.
- */
-export function allOrErr<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
-	type YieldRet = YielRet<Jobs[number]["val"]>
-	return new AllOrErr<YieldRet>(jobs)
-}
-
-class AllOrErr<T> extends Job<T[], T[] | EmptyArgsErr | Err<string>> {
-	_nm = "allOrErr"
-	val: T[] = []
-
-	constructor(jobs: Job<unknown>[]) {
-		super()
-		if (jobs.length === 0) {
-			addErrorToJobVal(this, EmptyArgsErr, ERR_IN_GENFN)
-			this._settle()
-			return
-		}
-		subscribeToJobs(jobs, this)
-	}
-
-	_onTgDone(tgVal: unknown, tg: Tg) {
-		const { _st, _tg, val: thisVal } = this
-
-		if (_st & CANCELLED) {
-			if (!_tg) {
-				this._settle()
-				return
-			}
-			// else accumulate errors or what?
-		}
-
-		if (tg._st & ANY_ERR_OR_CANCOK) {
-			addErrorToJobVal(this, tgVal, ERR_IN_GENFN)
-			unLinkFromTargets(this)
-			this._settle()
-			return
-		}
-
-		thisVal.push(tgVal as T)
-
-		if (!this._tg) {
-			this._settle()
-			return
-		}
-	}
-
-	_cancel(): void {
-		while (this._tg) {
-			cancelJob(this._tg.b as Job)
-			this._tg = this._tg.nA
-		}
-	}
-
-	_fail(tgVal: unknown) {
-		// todo
-
-		// calls this._settle()
-	}
-
-	_settle() {
-		execSettle(this)
-	}
-}
 
 
 
@@ -134,7 +91,7 @@ export function all<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 		return []
 	}
 	const observer = new All<YielRet<Jobs[number]["val"]>>()
-	subscribeToJobs(jobs, observer)
+	observeJobs(jobs, observer)
 	return observer
 }
 
@@ -233,16 +190,24 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 }
 
 
-//* *************************  JobSelect *********************************** *//
 
+function onTgJobDone(_: unknown, tg: Job, ch: Chan<Job>) {
+	ch.enQ(tg)
+}
 
-
-
-
-
-
-
-
+function observeJobs(jobs: Job<unknown>[], ch: Chan<Job>) {
+	const len = jobs.length
+	for (let i = 0; i < len; i++) {
+		const tgJob = jobs[i]!
+		if (tgJob._st & DONE) {
+			ch.enQ(tgJob)
+		}
+		else {
+			const link = freshLink(onTgJobDone, ch)
+			addObserver(tgJob, link)
+		}
+	}
+}
 
 
 /* **********  newJob  ********** */

@@ -33,6 +33,9 @@ Job's observers:
 
 //* **********************  Job Class  ************************************* *//
 
+const DUMMY_GEN = (function* () {})()
+let self: Job
+
 export type RibuGen<Ret = unknown> =
 	Generator<unknown, Ret, unknown>
 
@@ -44,19 +47,16 @@ type JobChanLink = Link<Job, Chan>
 type WaitingChdLink = JobsLink
 type TgOrChdLink = JobChanLink | WaitingChdLink
 
-type OnJobDone = (val: unknown, tg: Job, ob: Job) => void
-type ObserverJob = Job
-type CallbackLink = Link<OnJobDone, ObserverJob>
-type ObserverLink = JobsLink | CallbackLink
+type OnJobDone<T = Job> = (val: unknown, tg: Job, bPosInLink: T) => void
+type CallbackLink<T = Job> = Link<OnJobDone<T>, T>
+type ObserverLink<T = Job> = JobsLink | CallbackLink<T>
 
 type SyncFn = () => unknown
 type AsyncFn = () => Promise<unknown>
 type OnEnd = SyncFn | AsyncFn | RibuGenFn
 type OnEndLink = Link<OnEnd, Job>
 
-const DUMMY_GEN = (function* () {})()
-
-// State Flags
+/* **** State Flags **** */
 const PARKED_CONTINUE = 1 << 0  // 1
 const PARKED_JOB = 1 << 1  // 2
 const PARKED_CANCEL = 1 << 2  // 4
@@ -82,8 +82,6 @@ const LINKING = 1 << 16  // 65536
 export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_CANCEL | PARKED_CANCEL_ERR| PARKED_SLEEP | PARKED_CH
 const HAD_ERR = ERR_IN_GENFN | ERR_IN_ONEND
 export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
-
-let self: Job
 
 /** Job Class
  *  val:
@@ -455,16 +453,20 @@ function settleJob(job: Job) {
 	settleJobish(job)
 }
 
+type NotVoidObj<T> = T extends VoidObj ? never : T
+
 function settleJobish(job: Job) {
 	job._st |= DONE
 	const { val } = job
 
+	// Notify observers.
 	let obLink = job._ob
 	while (obLink !== VOID_LINK) {
 		const nextLink = obLink.nA
 		const observer = obLink.a
 		if (typeof observer === "function") {
-			observer(val, job, obLink.b as Job)
+			type b = typeof obLink.b
+			observer(val, job, obLink.b as NotVoidObj<b>)
 		}
 		else {  // JobsLink
 			removeOb(job, obLink as JobsLink)
@@ -580,7 +582,7 @@ export function addErrorToJobVal(job: Job, err: Error, errFlag: Job["_st"]) {
 }
 
 
-//* ***********************  Job LLs Operations  ******************** *//
+/* *********************  Job LLs Operations  ******************** */
 
 /* Insert Link B:
 
@@ -593,12 +595,12 @@ export function addErrorToJobVal(job: Job, err: Error, errFlag: Job["_st"]) {
 		VL <- B <-> A -> VL
 */
 
-function addObserver(job: Job, link: ObserverLink) {
+export function addObserver<T = Job>(job: Job, link: ObserverLink<T>) {
 	let head = job._ob
-	link.nA = head
-	job._ob = link
+	link.nA = head as ObserverLink<T>
+	job._ob = link as ObserverLink
 	if (head !== VOID_LINK) {
-		head.pA = link
+		head.pA = link as ObserverLink
 	}
 }
 
