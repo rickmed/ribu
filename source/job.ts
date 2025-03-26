@@ -167,58 +167,12 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 	}
 
 	cancel() {
-		const callerJob = sys.runningJob
-		if (callerJob._st & PARKED) {
-			throwNotYielded(".cancel()")
-		}
-		if (this._st & DONE) {
-			iterRes.done = true
-			iterRes.value = undefined
-		}
-		else {
-			cancelJob(this)
-			const { _st, val } = this
-			if (_st & DONE) {  // job settled synchronously
-				if (_st & ERR_IN_ONEND) {
-					iterRes.done = false
-					genFnFailed(callerJob, _Err(callerJob._nm, val))
-				}
-				else {
-					iterRes.done = true
-					iterRes.value = undefined
-				}
-			}
-			else {
-				callerJob._st |= PARKED_CANCEL
-				linkJobs(callerJob, this)
-				iterRes.done = false
-			}
-		}
+		handleCancel(this, ".cancel()", PARKED_CANCEL)
 		return sysIterable as _Iterable<void>
 	}
 
 	cancelErr() {
-		const callerJob = sys.runningJob
-		if (callerJob._st & PARKED) {
-			throwNotYielded(".cancelErr()")
-		}
-		if (this._st & DONE) {
-			iterRes.done = true
-			iterRes.value = undefined
-		}
-		else {
-			cancelJob(this)
-			const { _st, val } = this
-			if (_st & DONE) {  // job settled synchronously
-				iterRes.done = true
-				iterRes.value = _st & ERR_IN_ONEND ? val : undefined
-			}
-			else {
-				callerJob._st |= PARKED_CANCEL_ERR
-				linkJobs(callerJob, this)
-				iterRes.done = false
-			}
-		}
+		handleCancel(this, ".cancelErr()", PARKED_CANCEL_ERR)
 		return sysIterable as _Iterable<void | Er>
 	}
 
@@ -266,6 +220,45 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 			resolveJobThenable(res, rej, thisJob)
 		}
 	}
+}
+
+function handleCancel(job: Job, opName: string, callerJobNextSt: Job["_st"]) {
+	let callerJob = sys.runningJob
+
+	if (callerJob._st & PARKED) {
+		throwNotYielded(opName)
+	}
+
+	if (job._st & DONE) {
+		iterRes.done = true
+		iterRes.value = undefined
+		return
+	}
+
+	cancelJob(job)
+
+	const { _st, val } = job
+
+	if (_st & DONE) {  // job settled synchronously
+		if (callerJobNextSt & PARKED_CANCEL_ERR) {
+			iterRes.done = true
+			iterRes.value = _st & ERR_IN_ONEND ? val : undefined
+			return
+		}
+		if (_st & ERR_IN_ONEND) {
+			iterRes.done = false
+			genFnFailed(callerJob, _Err(callerJob._nm, val))
+			return
+		}
+
+		iterRes.done = true
+		iterRes.value = undefined
+		return
+	}
+
+	callerJob._st |= callerJobNextSt
+	linkJobs(callerJob, job)
+	iterRes.done = false
 }
 
 function resolveJobThenable<OkRet, GetterErr>(res: (val: OkRet) => void, rej: (err: GetterErr) => void, thisJob: Job) {
