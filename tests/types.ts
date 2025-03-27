@@ -12,10 +12,21 @@ function* jobFn(x?: number) {
 		return 1
 	}
 	if (x < 10) {
-		return newErr("Error1")
+		return newErr("Error0")
+	}
+	return newErr("Error1")
+}
+
+function* jobFn2(x?: number) {
+	yield* sleep(1)
+	if (!x) {
+		return "hi"
 	}
 	return newErr("Error2")
 }
+
+type NotErr = false | 1 | "hi"
+type NotErrs = NotErr[]
 
 export const tests = {
 
@@ -80,24 +91,29 @@ export const tests = {
 	/* *************** allOrErr() ******************************************** */
 
 	*["yield* allOrErr()"]() {
-		type Exp = (false | 1)[]
-		const rec = yield* allOrErr(go(jobFn), go(jobFn))
+		type Exp = NotErrs
+		const rec = yield* allOrErr(go(jobFn), go(jobFn2))
 		check_Eq<Exp>()(rec)
 	},
 
 	*["yield* allOrErr().err"]() {
-		type Exp = (false | 1)[]
-		const rec = yield* allOrErr(go(jobFn), go(jobFn)).err
+		type Exp = NotErrs | Err<"JobHadErr"> | Err<"EmptyArguments"> | CancOK | Er
+		const rec = yield* allOrErr(go(jobFn), go(jobFn2)).err
 		check_Eq<Exp>()(rec)
 	},
 
 	*["yield* allOrErr().cancel()"]() {
-		type Exp = CancOK
-		const rec = yield* allOrErr(go(jobFn), go(jobFn)).cancel()
+		type Exp = void
+		const rec = yield* allOrErr(go(jobFn), go(jobFn2)).cancel()
+		check_Eq<Exp>()(rec)
+	},
+
+	*["yield* allOrErr().cancelErr()"]() {
+		type Exp = void | Er
+		const rec = yield* allOrErr(go(jobFn), go(jobFn2)).cancelErr()
 		check_Eq<Exp>()(rec)
 	},
 }
-
 
 
 type SuperType<S, T extends S> = [S] extends [T] ? T : never

@@ -220,7 +220,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 		return this._st & SETTLED
 	}
 
-	get halted() {
+	get hadErr() {
 		return this._st & ANY_ERR_OR_CANCOK
 	}
 
