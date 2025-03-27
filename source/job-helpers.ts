@@ -1,5 +1,5 @@
 import { DONE, ANY_ERR_OR_CANCOK, addErrorToJobVal, cancel, go, me, addObserver, onEnd, type Job } from "./job.js"
-import { userErrCtor, _Err, Err } from "./errors.js"
+import { Err } from "ribu"
 import { freshLink, SYS_ITERATOR, iterRes, SysIterator, Link, sys } from "./system.js"
 import { Ch, Chan } from "./channel.js"
 import { sleep } from "./timers.js"
@@ -28,39 +28,42 @@ type NotErrs<T> = Exclude<T, Error>
  *  Fails also if the passed-in array is empty.
  */
 export function allOrErr<T>(...jobs: Job<T>[]) {
-	const job = go(_allOrErr, jobs)
-	return job
+	return go(_allOrErr, jobs)
 }
 
-function* _allOrErr(jobs: Job[]) {
-	type T = NotErrs<(typeof jobs)[number]["val"]>
-
-	if (jobs.length === 0) {
-		// return userErrCtor("EmptyArguments", "allOrErr")
-		return "heyy"
+function* _allOrErr<T>(jobs: Job<T>[]) {
+	let jobsLen = jobs.length
+	if (jobsLen === 0) {
+		return Err("EmptyArguments", "allOrErr")
 	}
 
 	onEnd(function* () {
 		yield* cancel(...jobs)
 	})
 
-	const result: string[] = []
+	const jobDone = Ch<Job>()  // todo: use using instead
+	const result: T[] = []
+	onJobsDoneIntoChan(jobDone, jobs)
 
-	const jobsDone = Ch<Job>()  // todo: use using instead
-
-	observeJobs(jobs, jobsDone)
-
-	while (jobs.length > result.length) {
-		// const job = yield* sleep(0)
-		// if (job.failedOrCancelled) {
-		// 	return job.val
-		// }
-		// result.push(job.val)
+	while (jobsLen > 0) {
+		const job = yield* jobDone.rec
+		jobsLen--
+		if (job.halted) {
+			return Err("BadJob", "allOrErr")
+		}
+		result.push(job.val as T)
 	}
 
 	return result
 }
 
+
+// maybe provide an optional "internal" chanlike that let me know
+// when any job I'm subscribed to is done, so I can unsub from it.
+	// all jobs would be in my _tg (remember to unsub from all in cancelJob())
+
+
+// ok I need a iterator thing
 
 
 
@@ -91,7 +94,7 @@ export function all<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 		return []
 	}
 	const observer = new All<YielRet<Jobs[number]["val"]>>()
-	observeJobs(jobs, observer)
+	onJobsDoneIntoChan(jobs, observer)
 	return observer
 }
 
@@ -192,15 +195,19 @@ export function firstOK<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 
 
 function onTgJobDone(_: unknown, tg: Job, ch: Chan<Job>) {
-	ch.enQ(tg)
+	if (ch.notDone) {
+		ch.enQ(tg)
+	}
 }
 
-function observeJobs(jobs: Job<unknown>[], ch: Chan<Job>) {
+function onJobsDoneIntoChan(ch: Chan<Job>, jobs: Job<unknown>[]) {
 	const len = jobs.length
 	for (let i = 0; i < len; i++) {
 		const tgJob = jobs[i]!
 		if (tgJob._st & DONE) {
-			ch.enQ(tgJob)
+			if (ch.notDone) {
+				ch.enQ(tgJob)
+			}
 		}
 		else {
 			const link = freshLink(onTgJobDone, ch)
