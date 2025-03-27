@@ -1,7 +1,7 @@
 import { bench, run } from "mitata"
 import { sortedReport } from "./mitata-utils.js"
 import { Banca } from "./banca.js"
-import { lg } from "../tests/setup.js"
+import { lg } from "../test/setup.js"
 
 
 class Thenable {

@@ -1,6 +1,6 @@
 import { bench, run } from "mitata"
 import { Banca } from "./banca.js"
-import { lg } from "../tests/setup.js"
+import { lg } from "../test/setup.js"
 import { go } from "../source/job.js"
 import { sortedReport } from "./mitata-utils.js"
 import { nSequentialJobs0Deep } from "./dummy-jobs.js"

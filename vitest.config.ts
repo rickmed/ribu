@@ -8,7 +8,7 @@ export default defineConfig({
 				execArgv: ["--stack-trace-limit=30"]
 			}
 		},
-		setupFiles: ["./tests/setup.ts"]
+		setupFiles: ["./test/setup.ts"]
 	},
 	resolve: {
 		alias: [

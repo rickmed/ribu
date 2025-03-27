@@ -3,53 +3,63 @@ import eslint from "@eslint/js"
 import ts_eslint from "typescript-eslint"
 import functional from "eslint-plugin-functional"
 
-export default ts_eslint.config({
-	extends: [
-		eslint.configs.recommended,
-		...ts_eslint.configs.recommendedTypeChecked,
-	],
-	plugins: {
-		"@typescript-eslint": ts_eslint.plugin,
-		functional,
-	},
-	languageOptions: {
-		parserOptions: {
-			project: true,
-			tsconfigRootDir: import.meta.dirname,
+export default [
+	...ts_eslint.config({
+		extends: [
+			eslint.configs.recommended,
+			...ts_eslint.configs.recommendedTypeChecked,
+		],
+		plugins: {
+			"@typescript-eslint": ts_eslint.plugin,
+			functional,
 		},
-	},
-	rules: {
-		semi: ["error", "never"],
-		indent: ["error", "tab", { "flatTernaryExpressions": true }],
-		"no-trailing-spaces": "error",
-		"no-mixed-spaces-and-tabs": "error",
-		quotes: [
-			"error",
-			"double",
-			{
-				allowTemplateLiterals: true,
+		languageOptions: {
+			parserOptions: {
+				project: ["./tsconfig.json", "./test/tsconfig.test.json"],
+				tsconfigRootDir: import.meta.dirname,
 			},
-		],
-		"no-console": "error",
-		"prefer-const": "off",
-		curly: ["error", "multi-line"],
-		"@typescript-eslint/no-this-alias": "off",
-		"@typescript-eslint/await-thenable": "error",
-		"@typescript-eslint/ban-ts-comment": "off",
-		"@typescript-eslint/method-signature-style": ["error", "property"],
-		"functional/immutable-data": [
-			"error",
-			{
-				ignoreClasses: true,
-				ignoreAccessorPattern: "**.*_m*.**",
-				ignoreNonConstDeclarations: {
-					treatParametersAsConst: false,
+		},
+		rules: {
+			semi: ["error", "never"],
+			indent: ["error", "tab", { "flatTernaryExpressions": true }],
+			"no-trailing-spaces": "error",
+			"no-mixed-spaces-and-tabs": "error",
+			quotes: [
+				"error",
+				"double",
+				{
+					allowTemplateLiterals: true,
 				},
-			},
-		],
-		"@typescript-eslint/no-unused-vars": ["error", {
-			varsIgnorePattern: "^_",
-			argsIgnorePattern: "^_"
-		}]
+			],
+			"no-console": "error",
+			"prefer-const": "off",
+			curly: ["error", "multi-line"],
+			"@typescript-eslint/no-this-alias": "off",
+			"@typescript-eslint/await-thenable": "error",
+			"@typescript-eslint/ban-ts-comment": "off",
+			"@typescript-eslint/method-signature-style": ["error", "property"],
+			"functional/immutable-data": [
+				"error",
+				{
+					ignoreClasses: true,
+					ignoreAccessorPattern: "**.*_m*.**",
+					ignoreNonConstDeclarations: {
+						treatParametersAsConst: false,
+					},
+				},
+			],
+			"@typescript-eslint/no-unused-vars": ["error", {
+				varsIgnorePattern: "^_",
+				argsIgnorePattern: "^_"
+			}]
+		}
+	}),
+	{
+		files: ["eslint.config.js"],
+		languageOptions: {
+			parserOptions: {
+				project: null
+			}
+		}
 	}
-})
+]
