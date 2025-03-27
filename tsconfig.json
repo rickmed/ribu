@@ -21,3 +21,4 @@
 	"include": ["source/**/*", "benchmarks/**/*"],
 	"exclude": ["node_modules", "dist"]
 }
+
