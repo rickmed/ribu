@@ -1,4 +1,19 @@
-import { sys, type Link, VOID_OBJ, disposeLink, freshLink, SysIterator, iterRes, SYS_ITERATOR, VoidObj, VOID_LINK, VoidLink, ensurePreviousYieldAndSetCallerJobNextSt, SYS_ITERABLE } from "./system.js"
+import {
+	sys,
+	type Link,
+	VOID_LINK,
+	type VoidLink,
+	VOID_OBJ,
+	type VoidObj,
+	freshLink,
+	disposeLink,
+	iterRes,
+	SYS_ITERATOR,
+	type SysIterator,
+	SYS_ITERABLE,
+	type SysIterable,
+	ensurePreviousYieldAndSetCallerJobNextSt,
+} from "./system.js"
 import { CANC_OK, CancOK, Er, Err, _Err } from "./errors.js"
 import { Chan, PutterLink, ReceiverLink } from "./channel.js"
 
@@ -63,7 +78,7 @@ const WAITING_CHILDREN = 1 << 7  // 128
 const CHILDREN_CANCELLED = 1 << 8  // 256
 const WAITING_ONENDS = 1 << 9  // 512
 export const CANCELLED = 1 << 10  // 1024
-export const DONE = 1 << 11  // 2048
+export const SETTLED = 1 << 11  // 2048
 const CANCOK = 1 << 12  // 4096
 export const ERR_IN_GENFN = 1 << 13  // 8192
 const ERR_IN_ONEND = 1 << 14  // 16384
@@ -158,17 +173,17 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 	get err() {
 		self = this
 		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, "job.err")
-		return JOB_ITERABLE as SYS_ITERABLE<GetterErr>
+		return JOB_ITERABLE as SysIterable<GetterErr>
 	}
 
 	cancel() {
 		handleCancel(this, "job.cancel()", PARKED_CANCEL)
-		return SYS_ITERABLE as SYS_ITERABLE<void>
+		return SYS_ITERABLE as SysIterable<void>
 	}
 
 	cancelErr() {
 		handleCancel(this, "job.cancelErr()", PARKED_CANCEL_ERR)
-		return SYS_ITERABLE as SYS_ITERABLE<void | Er>
+		return SYS_ITERABLE as SysIterable<void | Er>
 	}
 
 	onEnd(onEndFn: OnEnd) {
@@ -179,27 +194,8 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 		this._st |= CANCEL_SIBLINGS_ON_ERR
 	}
 
-	// todo
-	unobserve() {
-		// const { runningJob } = sys
-		// const { _ob } = this
-		// if (_ob === VOID_LINK) {
-		// 	return
-		// }
-		// removeOb(this, _ob)
-		// this._ob = VOID_LINK
-	}
-
-	get promErr() {
-		const self = this
-		return new Promise<GetterErr>((res) => {
-			const link = freshLink(res as OnJobDone, self)
-			addObserver(self, link)
-		})
-	}
-
 	then(res: (val: OkRet) => void, rej: (err: GetterErr) => void) {
-		if (this._st & DONE) {
+		if (this._st & SETTLED) {
 			resolveJobThenable(res, rej, this)
 		}
 		else {
@@ -212,19 +208,102 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 		}
 	}
 
-	get isDone() {
-		return this._st & DONE
+	get promErr() {
+		const self = this
+		return new Promise<GetterErr>((res) => {
+			const link = freshLink(res as OnJobDone, self)
+			addObserver(self, link)
+		})
 	}
 
-	get failedOrCancelled() {
+	get done() {
+		return this._st & SETTLED
+	}
+
+	get halted() {
 		return this._st & ANY_ERR_OR_CANCOK
+	}
+
+	// observe() works in tandem with get rec().
+	// The idea is that when genFn calls yield* me().rec, .rec resumes genFn
+	// with any already settled jobs. So settled jobs are inserted at the back
+	// of the _tg LL to be processed immediately by get rec().
+	observe(jobs: Job[]) {
+		const jobsLen = jobs.length
+		if (jobsLen === 0) {
+			throw Error("job.observe(): Empty jobs array.")
+		}
+
+		// First link is always added as head (is tail also).
+		const firstTgJob = jobs[0]!
+		let firstLink = freshLink(this, firstTgJob)
+		let tail = firstLink
+		addTgLink(this, firstLink)
+		if (!(firstTgJob._st & SETTLED)) {
+			addObserver(firstTgJob, firstLink)
+		}
+		// else, tgJob is settled, so no need to add observer to tgJob (.rec will process it).
+
+		// i = 1 since first tgJob was already processed.
+		for (let i = 1; i < jobsLen; i++) {
+			const tgJob = jobs[i]!
+			const link = freshLink(this, tgJob)
+			if (tgJob._st & SETTLED) {
+				tail.nB = link
+				tail = link
+			}
+			else {  // Job is not settled yet.
+				addTgLink(this, link)
+				addObserver(tgJob, link)
+			}
+		}
+
+		if (tail !== firstLink) {  // At least one settled job was added to LL.
+			this._tg.pB = tail
+		}
+
+		return this as Pick<typeof this, "rec" | "unObserveAll">
+	}
+
+	get rec() {
+		// No need to check if head is VOID_LINK since observe() should have
+		// added at least one link to LL.
+		// And .rec caller should check jobs count first.
+
+		const head = this._tg
+		const headTgJob = head.b as Job
+
+		if (headTgJob._st & SETTLED) {  // No more settled or unsettled jobs in LL.
+			iterRes.done = true
+			iterRes.value = headTgJob
+			this._tg = VOID_LINK
+			disposeLink(head)
+		}
+		else {  // headTgJob is unsettled, so look up for settled jobs at tail.
+			const tail = head.pB
+			if (tail === VOID_LINK) {
+				iterRes.done = false
+			}
+			else {
+				iterRes.done = true
+				iterRes.value = tail.b as Job
+				head.pB = tail.nB
+				disposeLink(tail)
+			}
+		}
+
+		return SYS_ITERABLE as SysIterable<Job>
+	}
+
+	unObserveAll() {
+		unlinkFromAllJobs(this)
 	}
 }
 
 function handleCancel(job: Job, opName: string, callerJobNextSt: Job["_st"]) {
 	const callerJob = ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt, opName)
 
-	if (job._st & DONE) {
+	if (job._st & SETTLED) {
 		iterRes.done = true
 		iterRes.value = undefined
 		return
@@ -234,7 +313,7 @@ function handleCancel(job: Job, opName: string, callerJobNextSt: Job["_st"]) {
 
 	const { _st, val } = job
 
-	if (_st & DONE) {  // job settled synchronously
+	if (_st & SETTLED) {  // job settled synchronously
 		if (callerJobNextSt & PARKED_CANCEL_ERR) {
 			iterRes.done = true
 			iterRes.value = _st & ERR_IN_ONEND ? val : undefined
@@ -271,7 +350,7 @@ function jobIterator<T>(job: Job) {
 	const callerSt = callerJob._st
 	const { _st } = job
 
-	if (_st & DONE) {
+	if (_st & SETTLED) {
 
 		const shouldCallerFail =
 			(callerSt & PARKED_JOB) && (_st & ANY_ERR_OR_CANCOK)
@@ -436,7 +515,7 @@ function settleJob(job: Job) {
 	// Release parent-child link.
 	const { _pr, _st } = job
 	if (_pr !== VOID_LINK) {
-		removeTgLink(_pr.a as Job, _pr as JobsLink)
+		removeTgLink(_pr.a as Job, _pr)
 		job._pr = VOID_LINK
 		disposeLink(_pr)
 	}
@@ -452,7 +531,7 @@ function settleJob(job: Job) {
 type NotVoidObj<T> = T extends VoidObj ? never : T
 
 function settleJobish(job: Job) {
-	job._st |= DONE
+	job._st |= SETTLED
 	const { val } = job
 
 	// Notify observers.
@@ -465,8 +544,8 @@ function settleJobish(job: Job) {
 			observer(val, job, obLink.b as NotVoidObj<b>)
 		}
 		else {  // JobsLink
-			removeOb(job, obLink as JobsLink)
-			removeTgLink(observer as Job, obLink as JobsLink)
+			removeOb(job, obLink)
+			removeTgLink(observer as Job, obLink)
 			disposeLink(obLink)
 			;(observer as Job)._onTgJobDone(job)
 		}
@@ -491,7 +570,7 @@ function onChildDone(job: Job, child: Job) {
 
 // Is cancelJob() caller responsibility to not subscribe if job is done,
 // otherwise, observer job will be blocked forever.
-const CANCEL_NOOP = DONE | WAITING_ONENDS
+const CANCEL_NOOP = SETTLED | WAITING_ONENDS
 export function cancelJob(job: Job) {
 	const { _st } = job
 	if (_st & CANCEL_NOOP) {
@@ -593,14 +672,14 @@ export function addErrorToJobVal(job: Job, err: Error, errFlag: Job["_st"]) {
 
 export function addObserver<T = Job>(job: Job, link: ObserverLink<T>) {
 	let head = job._ob
-	link.nA = head as ObserverLink<T>
 	job._ob = link as ObserverLink
 	if (head !== VOID_LINK) {
+		link.nA = head as ObserverLink<T>
 		head.pA = link as ObserverLink
 	}
 }
 
-function removeOb(job: Job, link: ObserverLink) {
+function removeOb(job: Job, link: Link) {
 	let { pA, nA } = link
 	if (nA !== VOID_LINK) {
 		nA.pA = pA
@@ -608,8 +687,9 @@ function removeOb(job: Job, link: ObserverLink) {
 	if (pA !== VOID_LINK) {
 		pA.nA = nA
 	}
-	if (nA === VOID_LINK) {  // link is head
-		job._ob = VOID_LINK
+	const head = job._ob
+	if (head === link) {
+		job._ob = nA as ObserverLink
 	}
 }
 
@@ -620,14 +700,14 @@ function removeOb(job: Job, link: ObserverLink) {
 // be called in between block/unblock.
 export function addTgLink(job: Job, link: TgLink) {
 	let head = job._tg
-	link.nB = head
 	job._tg = link
 	if (head !== VOID_LINK) {
+		link.nB = head
 		head.pB = link
 	}
 }
 
-export function removeTgLink(job: Job, link: TgLink) {
+export function removeTgLink(job: Job, link: Link) {
 	let { pB, nB } = link
 	if (nB !== VOID_LINK) {
 		nB.pB = pB
@@ -635,8 +715,9 @@ export function removeTgLink(job: Job, link: TgLink) {
 	if (pB !== VOID_LINK) {
 		pB.nB = nB
 	}
-	if (pB === VOID_LINK) {  // link is head
-		job._tg = nB
+	const head = job._tg
+	if (head === link) {
+		job._tg = nB as TgLink
 	}
 	// No need to set link.nA/pA to void since caller should
 	// dispose the link immediately.
@@ -740,11 +821,12 @@ function unlinkFromAllJobs(obJob: Job) {
 	let tgLink = obJob._tg
 	while (tgLink !== VOID_LINK) {
 		const nextLink = tgLink.nB
-		removeOb(tgLink.b as Job, tgLink as JobsLink)
-		removeTgLink(obJob, tgLink as JobsLink)
+		removeTgLink(obJob, tgLink)
+		removeOb(tgLink.b as Job, tgLink)
 		disposeLink(tgLink)
 		tgLink = nextLink
 	}
+	obJob._tg = VOID_LINK
 }
 
 export function linkWithAllJobs(jobs: Job[], obJob: Job, cancel = false) {
@@ -760,7 +842,7 @@ export function linkWithAllJobs(jobs: Job[], obJob: Job, cancel = false) {
 	const lastIdx = len - 1
 	for (let i = 0; i < len; i++) {
 		const job = jobs[i]!
-		if (job._st & DONE) {
+		if (job._st & SETTLED) {
 			continue
 		}
 		// If this is the last job, we can turn off LINKING so obJob can settle.
@@ -777,6 +859,6 @@ export function linkWithAllJobs(jobs: Job[], obJob: Job, cancel = false) {
 	// settled. So we need to force obJob to settle immediately or it will
 	// never settle via _onTgJobDone().
 	if (obJob._st & LINKING) {
-		obJob._st |= DONE  // Make jobIterator resume caller immediately.
+		obJob._st |= SETTLED  // Make jobIterator resume caller immediately.
 	}
 }

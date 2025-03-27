@@ -1,10 +1,14 @@
-import { DONE, ANY_ERR_OR_CANCOK, addErrorToJobVal, cancel, go, me, addObserver, onEnd, type Job } from "./job.js"
+import { SETTLED, ANY_ERR_OR_CANCOK, addErrorToJobVal, cancel, go, me, addObserver, onEnd, type Job } from "./job.js"
 import { Err } from "ribu"
 import { freshLink, SYS_ITERATOR, iterRes, SysIterator, Link, sys } from "./system.js"
 import { Ch, Chan } from "./channel.js"
 import { sleep } from "./timers.js"
 
 // todo: consider passing a timeout parameter
+
+// todo:
+// make a (slower)wait-group like that implements interator so that
+// for (const job of waitGroup) works.
 
 /**
  *  When helper is done, it NEVER cancels the other passed-in jobs.
@@ -41,14 +45,15 @@ function* _allOrErr<T>(jobs: Job<T>[]) {
 		yield* cancel(...jobs)
 	})
 
-	const jobDone = Ch<Job>()  // todo: use using instead
 	const result: T[] = []
-	onJobsDoneIntoChan(jobDone, jobs)
+
+	const _me = me().observe(jobs)
 
 	while (jobsLen > 0) {
-		const job = yield* jobDone.rec
+		const job = yield* _me.rec
 		jobsLen--
 		if (job.halted) {
+			_me.unObserveAll()
 			return Err("BadJob", "allOrErr")
 		}
 		result.push(job.val as T)
@@ -111,7 +116,7 @@ class All<OkVals> extends Job<OkVals[]> {
 			for (let link = _tg; link !== EMPTY_LINK; link = link.nA) {
 				unlinkObAndTg(link)
 			}
-			this._st |= DONE
+			this._st |= SETTLED
 			notifyObservers(this, this.val)
 			return
 		}
@@ -119,7 +124,7 @@ class All<OkVals> extends Job<OkVals[]> {
 		val.push(tgVal as OkVals)
 
 		if (_tg === EMPTY_LINK) {
-			this._st |= DONE
+			this._st |= SETTLED
 			notifyObservers(this, val)
 			return
 		}
@@ -204,7 +209,7 @@ function onJobsDoneIntoChan(ch: Chan<Job>, jobs: Job<unknown>[]) {
 	const len = jobs.length
 	for (let i = 0; i < len; i++) {
 		const tgJob = jobs[i]!
-		if (tgJob._st & DONE) {
+		if (tgJob._st & SETTLED) {
 			if (ch.notDone) {
 				ch.enQ(tgJob)
 			}

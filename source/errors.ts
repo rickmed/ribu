@@ -89,7 +89,7 @@ export function _Err(fnName: string, errs?: Err["_errs"], onEndErrs?: Err["_oe"]
 	return new Err(RIBU_ERR_NAME, fnName, errs, onEndErrs, msg)
 }
 
-export function userErrCtor<Name extends string>(name: Name, fnName = "", msg = "", ribuErr?: Err): Err<Name> {
+export function UserErrCtor<Name extends string>(name: Name, fnName = "", msg = "", ribuErr?: Err): Err<Name> {
 	return new Err<Name>(name, fnName, ribuErr, undefined, msg)
 }
 

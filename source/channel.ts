@@ -1,5 +1,5 @@
 import { addTgLink, Job, PARKED, PARKED_CH_PUT, PARKED_CH_REC, removeTgLink, resumeJob } from "./job.js"
-import { SYS_ITERABLE, freshLink, iterRes, type Link, type VoidLink, VOID_LINK, disposeLink, sys, throwNotYielded } from "./system.js"
+import { SysIterable, freshLink, iterRes, type Link, type VoidLink, VOID_LINK, disposeLink, sys, throwNotYielded } from "./system.js"
 
 
 /*
@@ -11,13 +11,11 @@ import { SYS_ITERABLE, freshLink, iterRes, type Link, type VoidLink, VOID_LINK, 
 	yield* ch.put(3)
 */
 
-type PutterJob = Job
-type PutterJobLink = Link<PutterJob, 0>
+type PutterJobLink = Link<Job, 0>
 type enQLink = Link<unknown, 1>
 export type PutterLink = PutterJobLink | enQLink
 
-type ReceiverJob = Job
-export type ReceiverLink = Link<ReceiverJob, ReceiverJob>
+export type ReceiverLink = Link<Job, Job>
 
 
 /** Chan Class
@@ -32,7 +30,6 @@ export type ReceiverLink = Link<ReceiverJob, ReceiverJob>
  */
 export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 
-	_st = 0  // todo: necessary?
 	_size = 0
 	_done = false
 	_pt: PutterLink | VoidLink = VOID_LINK
@@ -104,7 +101,7 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 			iterRes.done = true
 		}
 
-		return CHAN_ITERABLE as SYS_ITERABLE<V>
+		return CHAN_ITERABLE as SysIterable<V>
 	}
 
 	put(msg: PutVal<V>) {
@@ -136,7 +133,7 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 			iterRes.done = true
 		}
 
-		return CHAN_ITERABLE as SYS_ITERABLE<undefined>
+		return CHAN_ITERABLE as SysIterable<undefined>
 	}
 
 	enQ(msg: PutVal<V>): void {
@@ -153,6 +150,14 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 
 	size() {
 		return this._size
+	}
+
+	get notDone() {
+		return this._done
+	}
+
+	[Symbol.dispose]() {
+		this._done = true
 	}
 
 	// todo
@@ -214,11 +219,11 @@ export function enQueue<V>(ch: Chan<V>, msg: PutVal<V>): void {
 	ch.enQ(msg)
 }
 
-function throwIfDone<V>(ch: Chan<V>) {
-	if (ch._done) {
-		throw Error(`can't put() on a closed channel`)
-	}
-}
+// function throwIfDone<V>(ch: Chan<V>) {
+// 	if (ch._done) {
+// 		throw Error(`can't put() on a closed channel`)
+// 	}
+// }
 
 
 
@@ -235,12 +240,12 @@ export function isCh(x: unknown): x is Chan {
 }
 
 export type OutCh<in V> = {
-	put: (msg: PutVal<V>) => SYS_ITERABLE<undefined>
+	put: (msg: PutVal<V>) => SysIterable<undefined>
 	enQ: (msg: PutVal<V>) => void
 }
 
 export type InCh<out V> = {
-	rec: SYS_ITERABLE<V>
+	rec: SysIterable<V>
 }
 
 // todo, type for unclosable channel

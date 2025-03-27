@@ -1,4 +1,3 @@
-import { Err } from "./errors.js"
 import { PARKED, type Job } from "./job.js"
 
 
@@ -42,7 +41,7 @@ export const SYS_ITERATOR = {
 	}
 }
 
-export type SYS_ITERABLE<V> = {
+export type SysIterable<V> = {
 	[Symbol.iterator]: () => SysIterator<V>
 }
 export const SYS_ITERABLE = {
@@ -68,8 +67,7 @@ export function throwNotYielded(currentOp: string) {
 		Current yieldable operation: ${currentOp}.
 		Job: ${sys.runningJob._nm}.
 	`
-	// eslint-disable-next-line @typescript-eslint/only-throw-error
-	throw new Err("RibuErr", "", undefined, undefined, errMsg)
+	throw Error(errMsg)
 }
 
 

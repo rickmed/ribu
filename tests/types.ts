@@ -1,8 +1,7 @@
 import { Err as newErr, go, sleep } from "ribu"
 import { Er, Err, type CancOK } from "../source/errors.js"
 import { cancel, Timeout } from "../source/job.js"
-import { allOrErr, EmptyArgsErr } from "../source/job-helpers.js"
-import { allOrErrOld } from "../source/job-helpers.js"
+import { allOrErr } from "../source/job-helpers.js"
 
 function* jobFn(x?: number) {
 	yield* sleep(1)
