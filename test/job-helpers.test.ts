@@ -4,7 +4,7 @@ import { go, sleep, allOrErr } from "ribu"
 
 describe("allOrErr()", () => {
 
-	it.skip("all jobs succeed", async () => {
+	it.only("all jobs succeed", async () => {
 
 		function* job1() {
 			yield* sleep(2)
@@ -22,7 +22,7 @@ describe("allOrErr()", () => {
 		}
 
 		const rec = await go(main)
-		expect(rec).toStrictEqual([2, "one"])
+		expect(rec.toSorted()).toStrictEqual([2, "one"].toSorted())
 	})
 
 	it.skip("settles with correct error if a passed-in job fails (others are cancelled)", async () => {

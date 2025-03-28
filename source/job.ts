@@ -13,6 +13,7 @@ import {
 	SYS_ITERABLE,
 	type SysIterable,
 	ensurePreviousYieldAndSetCallerJobNextSt,
+	throwNotYielded,
 } from "./system.js"
 import { CANC_OK, CancOK, Er, Err, _Err } from "./errors.js"
 import { Chan, PutterLink, ReceiverLink } from "./channel.js"
@@ -24,6 +25,8 @@ import { Chan, PutterLink, ReceiverLink } from "./channel.js"
 // 	check when a function is called and obj is in pool, throw (with flags)
 // 	evaluate for channels as well
 
+// todo: evaluate passing me().cancel to cancel() (maybe use same internal function
+// 	as pool's cancel)
 
 // todo: remove Job stack from sys, put it here and use LL
 // todo: clean-up documentation
@@ -72,26 +75,28 @@ const PARKED_JOB = 1 << 1  // 2
 const PARKED_CANCEL = 1 << 2  // 4
 const PARKED_CANCEL_ERR = 1 << 3  // 8
 export const PARKED_SLEEP = 1 << 4  // 16
-export const PARKED_CH_PUT = 1 << 5  // 32
-export const PARKED_CH_REC = 1 << 6  // 64
-const WAITING_CHILDREN = 1 << 7  // 128
-const CHILDREN_CANCELLED = 1 << 8  // 256
-const WAITING_ONENDS = 1 << 9  // 512
-export const CANCELLED = 1 << 10  // 1024
-export const SETTLED = 1 << 11  // 2048
-const CANCOK = 1 << 12  // 4096
-export const ERR_IN_GENFN = 1 << 13  // 8192
-const ERR_IN_ONEND = 1 << 14  // 16384
-const CANCEL_SIBLINGS_ON_ERR = 1 << 15  // 32768
-const TIME_LIMIT_FIRED = 1 << 16  // 65536
+export const PARKED_OBSERVE_REC = 1 << 5  // 32
+export const PARKED_CH_PUT = 1 << 6  // 64
+export const PARKED_CH_REC = 1 << 7  // 128
+const WAITING_CHILDREN = 1 << 8  // 256
+const CHILDREN_CANCELLED = 1 << 9  // 512
+const WAITING_ONENDS = 1 << 10  // 1024
+export const CANCELLED = 1 << 11  // 2048
+export const SETTLED = 1 << 12  // 4096
+const CANCOK = 1 << 13  // 8192
+export const ERR_IN_GENFN = 1 << 14  // 16384
+const ERR_IN_ONEND = 1 << 15  // 32768
+const CANCEL_SIBLINGS_ON_ERR = 1 << 16  // 65536
+const TIME_LIMIT_FIRED = 1 << 17  // 131072
 // Used in situations where job is linking to other jobs, but target job
 // notifies (and removes link) observer job immediately/synchronously.
-const LINKING = 1 << 17  // 131072
+const LINKING = 1 << 18  // 262144
 // todo: implement this when [Symbol.dispose] is implemented
-// const JOB_IN_POOL = 1 << 18  // 262144
+// const JOB_IN_POOL = 1 << 19  // 524288
 
 const PARKED_CH = PARKED_CH_PUT | PARKED_CH_REC
-export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_CANCEL | PARKED_CANCEL_ERR| PARKED_SLEEP | PARKED_CH
+const PARKED_NOT_OBSERVE_REC = PARKED_CONTINUE | PARKED_JOB | PARKED_CANCEL | PARKED_CANCEL_ERR| PARKED_SLEEP | PARKED_CH
+export const PARKED = PARKED_NOT_OBSERVE_REC | PARKED_OBSERVE_REC
 const HAD_ERR = ERR_IN_GENFN | ERR_IN_ONEND
 export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
 
@@ -111,7 +116,7 @@ export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
  * 	A combined LL of the target the job is blocked by at yield* (tg) and its
  *  	children (chd), as "targets".
  * 	Since a job can only be blocked at yield* by one object at a time, we
- * 	store it as the head of the LL and store its respective PARKED_... flag.
+ * 	store it as the head of the LL and store its respective PARKED_XYZ flag.
  * 	The next links are to child jobs.
  *  _pr:
  * 	Link to parent job.
@@ -228,6 +233,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 	// The idea is that when genFn calls yield* me().rec, .rec resumes genFn
 	// with any already settled jobs. So settled jobs are inserted at the back
 	// of the _tg LL to be processed immediately by get rec().
+	// This is all in favor of "performance", but probably too hacky.
 	observe(jobs: Job[]) {
 		const jobsLen = jobs.length
 		if (jobsLen === 0) {
@@ -266,9 +272,17 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 	}
 
 	get rec() {
+		const callerJob = sys.runningJob
+		if (callerJob._st & PARKED_NOT_OBSERVE_REC) {
+			throwNotYielded("observe.rec")
+		}
+
 		// No need to check if head is VOID_LINK since observe() should have
 		// added at least one link to LL.
 		// And .rec caller should check jobs count first.
+
+		// PARKED_JOB_OBSERVE_REC would mean that caller still has unsettled jobs
+		// to process.
 
 		const head = this._tg
 		const headTgJob = head.b as Job
@@ -282,6 +296,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 		else {  // headTgJob is unsettled, so look up for settled jobs at tail.
 			const tail = head.pB
 			if (tail === VOID_LINK) {
+				this._st |= PARKED_OBSERVE_REC
 				iterRes.done = false
 			}
 			else {

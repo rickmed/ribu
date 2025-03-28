@@ -50,6 +50,16 @@ function* _allOrErr<T>(jobs: Job[]) {
 
 	const _me = me().observe(jobs)
 
+	// bug is that target needs an observer function link.
+
+	// ISSUE:
+	// if you don't count jobs correctly, eg at sleep(), a tgJob will resume
+	// with a job -> BAD.
+	// solution is to set PARK_JOB_REC but maybe too hard.
+
+	// todo: unsub from all in cancelJob()
+
+
 	while (jobsLen > 0) {
 		const job = yield* _me.rec
 		jobsLen--
@@ -62,6 +72,20 @@ function* _allOrErr<T>(jobs: Job[]) {
 
 	return result
 }
+
+
+/* Ch based
+CON: not counting jobs correctly (same problem as job.rec).
+MAIN CON: can't unObserve rest of jobs.
+
+SOLUTION: Maybe a pool thing job like?
+PRO: implement .inFlight (no manual counting)
+PRO: can also implement efficient .cancel()
+	since it alredy has internal LL of non-settled jobs to cancel.
+PRO: much simpler.
+CON: more garbage (1 more obj) (maybe reuse a Chan obj from pool)
+
+*/
 
 
 
