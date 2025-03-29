@@ -1,4 +1,4 @@
-import { ERR_IN_GENFN, Job, markSettledAndNotifyObs, observeJobs, PARKED_CH_REC, SETTLED } from "./job.js"
+import { ERR_IN_GENFN, go, Job, markSettledAndNotifyObs, observeJobs, PARKED_CH_REC, SETTLED } from "./job.js"
 import { Err } from "./errors.js"
 import { VOID_LINK } from "./system.js"
 
@@ -33,7 +33,7 @@ export type NotErrs<Ret> = Exclude<Ret, Error>
 const HALT = PARKED_CH_REC
 const FAIL = HALT | ERR_IN_GENFN
 
-class JobPlus<OkRet = unknown, AllRet = unknown> extends Job<OkRet, AllRet | Err<"EmptyArguments">> {
+abstract class JobPlus<OkRet = unknown, AllRet = unknown> extends Job<OkRet, AllRet | Err<"EmptyArguments">> {
 	constructor() {
 		super("")
 	}
@@ -66,14 +66,32 @@ class JobPlus<OkRet = unknown, AllRet = unknown> extends Job<OkRet, AllRet | Err
 		}
 	}
 
-	// Implemented in subclass
-	_init() {}
-
-	// Implemented in subclass
+	// To be implemented by subclasses
+	_init(): void {}
 	_onTgJobDone(_: Job) {}
 }
 
-type OnTgDoneRet<T extends Job[]> = ReturnType<typeof allOrErrOnTgDone<T>>
+type OnTgJobDone = <Jobs extends Job[]>(this: Job, tgJob: Jobs[number]) => unknown;
+
+export function newJobPlusClass(name: string, _onTgJobDone: OnTgJobDone, _init?: () => void) {
+
+	class newJobPlusClass extends JobPlus {
+		_nm = name
+	}
+	newJobPlusClass.prototype._onTgJobDone = _onTgJobDone
+	if (_init) {
+		newJobPlusClass.prototype._init = _init
+	}
+
+	return function JobPlusSubClassFactory<Jobs extends Job[]>(...jobs: Jobs) {
+		type Ret = ReturnType<typeof allOrErrOnTgJobDone<Jobs>>
+		const instance = new newJobPlusClass()
+		return instance._go(jobs) as Job<NotErrs<Ret>, Ret | Err<"EmptyArguments">>
+	}
+}
+
+type OkRet<J> = J extends Job<infer A, infer B> ? [A, B] : never
+type AllOkRet<Jobs extends Job[]> = OkRet<Jobs[number]>[0]
 
 
 /** allOrErr()
@@ -81,43 +99,23 @@ type OnTgDoneRet<T extends Job[]> = ReturnType<typeof allOrErrOnTgDone<T>>
  *  If one job fails (or is cancelled, even successfully), it fails.
  *  Fails also if the passed-in array is empty.
  */
+export const allOrErr = newJobPlusClass("allOrErr", allOrErrOnTgJobDone, allOrErrInit)
 
-// todo: abstract this into class factory.
-export function allOrErr<Jobs extends Job[]>(...jobs: Jobs) {
-	type Ret = OnTgDoneRet<Jobs>
-	return new _allOrErr()._go(jobs) as JobPlus<NotErrs<Ret>, Ret>
-}
-
-class _allOrErr extends JobPlus {
-	_nm = "allOrErr"
-}
-
-_allOrErr.prototype._onTgJobDone = allOrErrOnTgDone
-_allOrErr.prototype._init = allOrErrOnInit
-
-function allOrErrOnTgDone<Jobs extends Job[]>(this: Job, tg: Job) {
-	if (tg.hadErr) {
-		// eslint-disable-next-line functional/immutable-data
-		this._st |= FAIL
-		return new Err("JobHadErr", this._nm, tg.val)
-	}
-	let jobsResults = this.val as AllOkRet<Jobs>[]
-	jobsResults.push(tg.val)
-	return jobsResults
-}
-
-function allOrErrOnInit(this: Job) {
+function allOrErrInit(this: Job) {
 	// eslint-disable-next-line functional/immutable-data
 	this.val = []
 }
 
-
-
-
-
-type OkRet<J> = J extends Job<infer A, infer B> ? [A, B] : never
-
-type AllOkRet<Jobs extends Job[]> = OkRet<Jobs[number]>[0]
+function allOrErrOnTgJobDone<Jobs extends Job[]>(this: Job, tgJob: Job) {
+	if (tgJob.hadErr) {
+		// eslint-disable-next-line functional/immutable-data
+		this._st |= FAIL
+		return new Err("JobHadErr", this._nm, tgJob.val)
+	}
+	let jobsResults = this.val as AllOkRet<Jobs>[]
+	jobsResults.push(tgJob.val)
+	return jobsResults
+}
 
 
 // /*

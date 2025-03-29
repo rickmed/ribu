@@ -3,7 +3,7 @@ import { Er, Err, type CancOK } from "../source/errors.js"
 import { cancel, Timeout } from "../source/job.js"
 import { allOrErr } from "../source/job-helpers.js"
 
-function* jobFn(x?: number) {
+export function* jobFn(x?: number) {
 	yield* sleep(1)
 	if (!x) {
 		return false
@@ -17,7 +17,7 @@ function* jobFn(x?: number) {
 	return newErr("Error1")
 }
 
-function* jobFn2(x?: number) {
+export function* jobFn2(x?: number) {
 	yield* sleep(1)
 	if (!x) {
 		return "hi"
