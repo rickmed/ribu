@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest"
-import { go, sleep, allOrErr } from "ribu"
+import { go, sleep, allOrErr, Err } from "ribu"
+import { child } from "./utils.js"
+import { _Err } from "../source/errors.js"
+import { EMPTY_ARGS } from "../source/job-helpers.js"
 
 
 describe("allOrErr()", () => {
 
-	it.skip("all jobs succeed", async () => {
+	it("all jobs succeed", async () => {
 
 		function* job1() {
 			yield* sleep(2)
@@ -25,52 +28,45 @@ describe("allOrErr()", () => {
 		expect(rec.toSorted()).toStrictEqual([2, "one"].toSorted())
 	})
 
-	it.skip("settles with correct error if a passed-in job fails (others are cancelled)", async () => {
+	it("settles with correct error if a passed-in job fails (others are cancelled)", async () => {
 
-		const exp = {
-			name: "ProgramFailed",
-			_op: "main",
-			cause: {
-				name: "AJobFailed",
-				_op: "allOrFail",
-				cause: {
-					_op: "job2",
-					cause: {
-						name: "Error",
-						message: "pow",
-					}
-				}
-			},
-		}
-
-		let job1WasCancelled = true
-
-		function* job1() {
-			yield* sleep(4)
-			job1WasCancelled = false
-			return "job1"
-		}
+		let ctx = { count: 0 }
 
 		function* job2() {
-			yield* sleep(2)
-			throw Error("pow")
+			yield* sleep(3)
+			throw Error("Bad")
 		}
 
 		function* main() {
-			const res = yield* allOrFail(go(job1), go(job2)).err
-			yield* sleep(1)
-			if (isErr(res)) {
-				return res.E("ProgramFailed")
-			}
-			return res
+			return yield* allOrErr(go(child, ctx), go(job2)).err
 		}
 
-		const rec = await go(main).promfyCont
+		const rec = await go(main).promErr
 
-		assertRibuErr(rec)
-		expect(rec).toMatchObject(exp)
-		expect(rec.cause).toBeInstanceOf(Err)
-		expect(job1WasCancelled).toBe(true)
+		const exp =
+			_Err("main",
+				Err("JobHadErr", "allOrErr", undefined,
+					_Err("job2", Error("Bad"))
+				))
+
+		expect(rec).toStrictEqual(exp)
+		expect(ctx.count).toBe(0)
+	})
+
+	it(`fails with ${EMPTY_ARGS} if arguments empty`, async () => {
+
+		function* main() {
+			yield* allOrErr()
+		}
+
+		const rec = await go(main).promErr
+
+		const exp =
+			_Err("main",
+				Err(EMPTY_ARGS, "allOrErr")
+			)
+
+		expect(rec).toStrictEqual(exp)
 	})
 })
 

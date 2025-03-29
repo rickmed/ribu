@@ -1,5 +1,6 @@
-import { cancel, ERR_IN_GENFN, go, Job, me, onEnd, PARKED_CH_PUT, PARKED_CH_REC, RibuGen, SETTLED, unlinkFromAllJobs } from "./job.js"
+import { ERR_IN_GENFN, Job, markSettledAndNotifyObs, observeJobs, PARKED_CH_REC, SETTLED } from "./job.js"
 import { Err } from "./errors.js"
+import { VOID_LINK } from "./system.js"
 
 // todo: consider passing a timeout parameter
 
@@ -21,9 +22,58 @@ import { Err } from "./errors.js"
  *    fails (returns ::Err, for example), the caller will fail, so if
  *    the passed-in jobs are chilren of caller, they'll be cancelled
  *    via parent's automatic structured concurrency anyway.
+ *
+ *  All fail with Err("EmptyArguments") if passed-in array is empty.
  */
 
+export const EMPTY_ARGS = "EmptyArguments"
 export type NotErrs<Ret> = Exclude<Ret, Error>
+
+// Reuse Job flags since they won't be used in JobPlus instances.
+const HALT = PARKED_CH_REC
+const FAIL = HALT | ERR_IN_GENFN
+
+class JobPlus<OkRet = unknown, AllRet = unknown> extends Job<OkRet, AllRet | Err<"EmptyArguments">> {
+	constructor() {
+		super("")
+	}
+
+	_go(jobs: Job[], cancel = false) {
+		if (jobs.length === 0) {
+			this._st |= (SETTLED | ERR_IN_GENFN)
+			this.val = new Err(EMPTY_ARGS, this._nm) as AllRet
+		}
+		else {
+			this._init()
+			observeJobs(this, jobs, cancel)
+		}
+		return this
+	}
+
+	_onTgDone(tgJob: Job): void {
+		const val = this._onTgJobDone(tgJob) as AllRet
+		const { _st, _tg } = this
+		if (_tg === VOID_LINK) {
+			this.val = val
+			markSettledAndNotifyObs(this)
+			return
+		}
+		if (_st & HALT) {
+			this._st &= ~HALT
+			this.val = val
+			markSettledAndNotifyObs(this)
+			return
+		}
+	}
+
+	// Implemented in subclass
+	_init() {}
+
+	// Implemented in subclass
+	_onTgJobDone(_: Job) {}
+}
+
+type OnTgDoneRet<T extends Job[]> = ReturnType<typeof allOrErrOnTgDone<T>>
 
 
 /** allOrErr()
@@ -31,101 +81,35 @@ export type NotErrs<Ret> = Exclude<Ret, Error>
  *  If one job fails (or is cancelled, even successfully), it fails.
  *  Fails also if the passed-in array is empty.
  */
+
+// todo: abstract this into class factory.
 export function allOrErr<Jobs extends Job[]>(...jobs: Jobs) {
-	type Ret = NotErrs<Jobs[number]["val"]>
-	return go(_allOrErr<Ret>, jobs)
+	type Ret = OnTgDoneRet<Jobs>
+	return new _allOrErr()._go(jobs) as JobPlus<NotErrs<Ret>, Ret>
 }
 
-function* _allOrErr<T>(jobs: Job[]) {
-	let jobsLen = jobs.length
-	if (jobsLen === 0) {
-		return new Err("EmptyArguments", "allOrErr")
-	}
-
-	onEnd(function* () {
-		yield* cancel(...jobs)
-	})
-
-	let result: T[] = []
-
-	const _me = me().observe(jobs)
-
-	// bug is that target needs an observer function link.
-
-	// ISSUE:
-	// if you don't count jobs correctly, eg at sleep(), a tgJob will resume
-	// with a job -> BAD.
-	// solution is to set PARK_JOB_REC but maybe too hard.
-
-	// todo: unsub from all in cancelJob()
-
-
-	while (jobsLen > 0) {
-		const job = yield* _me.rec
-		jobsLen--
-		if (job.hadErr) {
-			_me.unObserveAll()
-			return new Err("JobHadErr", "allOrErr", job.val)
-		}
-		result.push(job.val as T)
-	}
-
-	return result
+class _allOrErr extends JobPlus {
+	_nm = "allOrErr"
 }
 
+_allOrErr.prototype._onTgJobDone = allOrErrOnTgDone
+_allOrErr.prototype._init = allOrErrOnInit
 
-// both cancel and the other need to observer passed-in jobs.
-
-
-// We reuse some Job flags since they won't be used in JobPlus.
-const HALT = PARKED_CH_REC
-const FAIL = HALT | ERR_IN_GENFN
-
-abstract class JobPlus<OkRet = unknown, AllRet = unknown> extends Job<OkRet, AllRet | Err<"EmptyArguments">> {
-	constructor(name: string) {
-		super(name)
+function allOrErrOnTgDone<Jobs extends Job[]>(this: Job, tg: Job) {
+	if (tg.hadErr) {
+		// eslint-disable-next-line functional/immutable-data
+		this._st |= FAIL
+		return new Err("JobHadErr", this._nm, tg.val)
 	}
-
-	_go(jobs: Job[]) {
-		if (jobs.length === 0) {
-			this._st |= (SETTLED | ERR_IN_GENFN)
-			this.val = new Err("EmptyArguments", this._nm) as AllRet
-		}
-		else {
-			this._init()
-		}
-		return this
-		// observeJobs(jobs, this)
-	}
-
-	abstract _init(): void
-	abstract _onTgDone(tg: Job, isInit: boolean, jobs: Job[]): unknown
+	let jobsResults = this.val as AllOkRet<Jobs>[]
+	jobsResults.push(tg.val)
+	return jobsResults
 }
 
-export function allOrErr2<Jobs extends Job[]>(...jobs: Jobs) {
-	return new _allOrErr2<Jobs>()._go(jobs)
+function allOrErrOnInit(this: Job) {
+	// eslint-disable-next-line functional/immutable-data
+	this.val = []
 }
-
-
-class _allOrErr2<Jobs extends Job[]> extends JobPlus<AllOkRet<Jobs>[], AllOkRet<Jobs>[] | Err<"JobHadErr">> {
-	constructor() {
-		super("allOrErr(...jobs)")
-	}
-	_init() {
-		this.val = []
-	}
-	_onTgDone(tg: Job) {
-		if (tg.hadErr) {
-			this._st |= FAIL
-			return new Err("JobHadErr", this._nm, tg.val)
-		}
-		const jobsResults = this.val as AllOkRet<Jobs>[]
-		jobsResults.push(tg.val)
-		return jobsResults
-	}
-}
-
-
 
 
 

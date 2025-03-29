@@ -44,7 +44,6 @@ Job's targets:
 */
 
 
-
 //* **********************  Job Class  ************************************* *//
 
 const DUMMY_GEN = (function* () {})()
@@ -76,28 +75,22 @@ const PARKED_JOB = 1 << 1  // 2
 const PARKED_CANCEL = 1 << 2  // 4
 const PARKED_CANCEL_ERR = 1 << 3  // 8
 export const PARKED_SLEEP = 1 << 4  // 16
-export const PARKED_OBSERVE_REC = 1 << 5  // 32
-export const PARKED_CH_PUT = 1 << 6  // 64
-export const PARKED_CH_REC = 1 << 7  // 128
-const WAITING_CHILDREN = 1 << 8  // 256
-const CHILDREN_CANCELLED = 1 << 9  // 512
-const WAITING_ONENDS = 1 << 10  // 1024
-export const CANCELLED = 1 << 11  // 2048
-export const SETTLED = 1 << 12  // 4096
-const CANCOK = 1 << 13  // 8192
-export const ERR_IN_GENFN = 1 << 14  // 16384
-const ERR_IN_ONEND = 1 << 15  // 32768
-const CANCEL_SIBLINGS_ON_ERR = 1 << 16  // 65536
-const TIME_LIMIT_FIRED = 1 << 17  // 131072
-// Used in situations where job is linking to other jobs, but target job
-// notifies (and removes link) observer job immediately/synchronously.
-const LINKING = 1 << 18  // 262144
+export const PARKED_CH_PUT = 1 << 5  // 64
+export const PARKED_CH_REC = 1 << 6  // 128
+const WAITING_CHILDREN = 1 << 7  // 256
+const CHILDREN_CANCELLED = 1 << 8  // 512
+const WAITING_ONENDS = 1 << 9  // 1024
+export const CANCELLED = 1 << 10  // 2048
+export const SETTLED = 1 << 11  // 4096
+const CANCOK = 1 << 12  // 8192
+export const ERR_IN_GENFN = 1 << 13  // 8192
+const ERR_IN_ONEND = 1 << 14  // 16384
+const CANCEL_SIBLINGS_ON_ERR = 1 << 15  // 32768
 // todo: implement this when [Symbol.dispose] is implemented
-// const JOB_IN_POOL = 1 << 19  // 524288
+// const JOB_IN_POOL = 1 << 16  // 65536
 
 const PARKED_CH = PARKED_CH_PUT | PARKED_CH_REC
-const PARKED_NOT_OBSERVE_REC = PARKED_CONTINUE | PARKED_JOB | PARKED_CANCEL | PARKED_CANCEL_ERR| PARKED_SLEEP | PARKED_CH
-export const PARKED = PARKED_NOT_OBSERVE_REC | PARKED_OBSERVE_REC
+const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_CANCEL | PARKED_CANCEL_ERR| PARKED_SLEEP | PARKED_CH
 const HAD_ERR = ERR_IN_GENFN | ERR_IN_ONEND
 export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
 
@@ -148,7 +141,7 @@ export class Job<OkRet = unknown, AllRet = unknown> {
 		}
 	}
 
-	_onTgJobDone(tgJob: Job) {
+	_onTgDone(tgJob: Job) {
 		const { _st } = this
 
 		if (_st & WAITING_CHILDREN) {
@@ -217,8 +210,13 @@ export class Job<OkRet = unknown, AllRet = unknown> {
 	get promErr() {
 		const self = this
 		return new Promise<AllRet>((res) => {
-			const link = freshLink(res as OnJobDone, self)
-			addObserver(self, link)
+			if (self._st & SETTLED) {
+				res(self.val as AllRet)
+			}
+			else {
+				const link = freshLink(res as OnJobDone, self)
+				addObserver(self, link)
+			}
 		})
 	}
 
@@ -461,12 +459,12 @@ function settleJob(job: Job) {
 		job._st = CANCOK
 	}
 
-	settle(job)
+	markSettledAndNotifyObs(job)
 }
 
 type NotVoidObj<T> = T extends VoidObj ? never : T
 
-function settle(job: Job) {
+export function markSettledAndNotifyObs(job: Job) {
 	job._st |= SETTLED
 	const { val } = job
 
@@ -483,7 +481,7 @@ function settle(job: Job) {
 			removeOb(job, obLink)
 			removeTgLink(observer as Job, obLink)
 			disposeLink(obLink)
-			;(observer as Job)._onTgJobDone(job)
+			;(observer as Job)._onTgDone(job)
 		}
 		obLink = nextLink
 	}
@@ -721,7 +719,7 @@ export type Timeout = typeof TIME_OUT
 
 export function cancel(...jobs: Job[]) {
 	const cancelJobs = new CancelAll()
-	linkWithAllJobs(jobs, cancelJobs, true)
+	observeJobs(cancelJobs, jobs, true)
 	return cancelJobs as Pick<CancelAll, "err" | typeof Symbol.iterator | "maxWait">
 }
 
@@ -738,29 +736,17 @@ class CancelAll extends Job<void, void | Er | Timeout> {
 		return jobIterator<void>(this)
 	}
 
-	_onTgJobDone(tgJob: Job) {
+	_onTgDone(tgJob: Job) {
 		const { _st, _tg } = this
-		if (_st & TIME_LIMIT_FIRED) {  // timeout fired
-			this._tm = VOID_OBJ
-			// reset ._st and .val in case some jobs already settled with Err.
-			this._st = 0
-			// settle with some sigil
-			this.val = TIME_OUT
-			// Make caller fail if it didn't call .err to handle the unhappy paths.
-			this._st |= ERR_IN_GENFN
-			unlinkFromAllJobs(this)
-			settle(this)
-			return
-		}
-		if (tgJob._st & HAD_ERR) {
+		if (_st & HAD_ERR) {
 			addErrorToJobVal(this, tgJob.val as Err, ERR_IN_GENFN)
 		}
-		if (!(_st & LINKING) && _tg === VOID_LINK) {
+		if (_tg === VOID_LINK) {
 			if (this._tm !== VOID_OBJ) {
 				clearTimeout(this._tm as NodeJS.Timeout)
 				this._tm = VOID_OBJ
 			}
-			settle(this)
+			markSettledAndNotifyObs(this)
 		}
 	}
 
@@ -770,9 +756,15 @@ class CancelAll extends Job<void, void | Er | Timeout> {
 	}
 }
 
-function maxWaitFired(cancelAll: CancelAll) {
-	cancelAll._st |= TIME_LIMIT_FIRED
-	cancelAll._onTgJobDone(cancelAll)
+function maxWaitFired(self: CancelAll) {
+	self._tm = VOID_OBJ
+	// Reset ._st and .val in case some passed-in jobs already settled with Err.
+	self._st = 0
+	self.val = TIME_OUT
+	// Make caller fail if it didn't call .err.
+	self._st |= ERR_IN_GENFN
+	unlinkFromAllJobs(self)
+	markSettledAndNotifyObs(self)
 }
 
 export function unlinkFromAllJobs(obJob: Job) {
@@ -787,38 +779,27 @@ export function unlinkFromAllJobs(obJob: Job) {
 	obJob._tg = VOID_LINK
 }
 
-export function linkWithAllJobs(jobs: Job[], obJob: Job, cancel = false) {
+export function observeJobs(obJob: Job, jobs: Job[], cancel = false) {
 
-	// Since jobs can settle synchronously, it could remove itself from obJob's
-	// _tg, so obJob may think it has no more jobs to handle (via _tg check) and
-	// it could erroneously settle immediately.
-	// So, we need to tell obJob that it shouldn't settle until LINKING is off.
-	// This is the most common scenario.
-	obJob._st |= LINKING
-
+	let unsettledTargets = false
 	const len = jobs.length
-	const lastIdx = len - 1
 	for (let i = 0; i < len; i++) {
 		const job = jobs[i]!
 		if (job._st & SETTLED) {
+			obJob._onTgDone(job)
 			continue
 		}
-		// If this is the last job, we can turn off LINKING so obJob can settle.
-		if (i === lastIdx) {
-			obJob._st &= ~LINKING
-		}
-		linkJobs(obJob, job)
 		if (cancel) {
 			cancelJob(job)
+			if (job._st & SETTLED) {  // Job may have settled synchronously.
+				obJob._onTgDone(job)
+				continue
+			}
 		}
-
-		// here I can detect if obJob is settled sync
+		unsettledTargets = true
+		linkJobs(obJob, job)
 	}
-
-	// If LINKING is on, it means, last job was skipped because it is already
-	// settled. So we need to force obJob to settle immediately or it will
-	// never settle via _onTgJobDone().
-	if (obJob._st & LINKING) {
-		obJob._st |= SETTLED  // Make jobIterator resume caller immediately.
+	if (!unsettledTargets) {
+		markSettledAndNotifyObs(obJob)
 	}
 }

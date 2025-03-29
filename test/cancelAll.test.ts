@@ -96,7 +96,7 @@ describe("yield* cancel(...jobs).err", () => {
 		expect(rec).toBe(undefined)
 	})
 
-	it("user can recover from cancelling errors", async () => {
+	it.only("user can recover from cancelling errors", async () => {
 
 		let ctx = { count: 0 }
 
@@ -113,13 +113,13 @@ describe("yield* cancel(...jobs).err", () => {
 			const res = yield* cancel(job1, job2).err
 			// Recovering: if res !== undefined, cancelling failed.
 			if (res) {
-				return "saved"
+				return "recovered"
 			}
 			return "never reached"
 		}
 
 		const rec = await go(main).promErr
-		expect(rec).toBe("saved")
+		expect(rec).toBe("recovered")
 		expect(ctx.count).toBe(0)
 	})
 
