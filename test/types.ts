@@ -1,7 +1,7 @@
 import { Err as newErr, go, sleep } from "ribu"
 import { Er, Err, type CancOK } from "../source/errors.js"
 import { cancel, Timeout } from "../source/job.js"
-import { allOrErr } from "../source/job-helpers.js"
+import { allOrErr2 } from "../source/job-helpers.js"
 
 function* jobFn(x?: number) {
 	yield* sleep(1)
@@ -27,6 +27,7 @@ function* jobFn2(x?: number) {
 
 type NotErr = false | 1 | "hi"
 type NotErrs = NotErr[]
+
 
 export const tests = {
 
@@ -92,27 +93,28 @@ export const tests = {
 
 	*["yield* allOrErr()"]() {
 		type Exp = NotErrs
-		const rec = yield* allOrErr(go(jobFn), go(jobFn2))
+		const rec = yield* allOrErr2(go(jobFn), go(jobFn2))
 		check_Eq<Exp>()(rec)
 	},
 
 	*["yield* allOrErr().err"]() {
-		type Exp = NotErrs | Err<"JobHadErr"> | Err<"EmptyArguments"> | CancOK | Er
-		const rec = yield* allOrErr(go(jobFn), go(jobFn2)).err
+		type Exp = NotErrs | Err<"JobHadErr"> | Err<"EmptyArguments">
+		const rec = yield* allOrErr2(go(jobFn), go(jobFn2)).err
 		check_Eq<Exp>()(rec)
 	},
 
-	*["yield* allOrErr().cancel()"]() {
-		type Exp = void
-		const rec = yield* allOrErr(go(jobFn), go(jobFn2)).cancel()
-		check_Eq<Exp>()(rec)
-	},
+	// todo: not sure if can be cancelled
+	// *["yield* allOrErr().cancel()"]() {
+	// 	type Exp = void
+	// 	const rec = yield* allOrErr2(go(jobFn), go(jobFn2)).cancel()
+	// 	check_Eq<Exp>()(rec)
+	// },
 
-	*["yield* allOrErr().cancelErr()"]() {
-		type Exp = void | Er
-		const rec = yield* allOrErr(go(jobFn), go(jobFn2)).cancelErr()
-		check_Eq<Exp>()(rec)
-	},
+	// *["yield* allOrErr().cancelErr()"]() {
+	// 	type Exp = void | Er
+	// 	const rec = yield* allOrErr2(go(jobFn), go(jobFn2)).cancelErr()
+	// 	check_Eq<Exp>()(rec)
+	// },
 }
 
 

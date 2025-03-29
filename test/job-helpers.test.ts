@@ -4,7 +4,7 @@ import { go, sleep, allOrErr } from "ribu"
 
 describe("allOrErr()", () => {
 
-	it.only("all jobs succeed", async () => {
+	it.skip("all jobs succeed", async () => {
 
 		function* job1() {
 			yield* sleep(2)

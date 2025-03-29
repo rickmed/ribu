@@ -1,4 +1,4 @@
-import { cancel, go, me, onEnd, type Job } from "./job.js"
+import { cancel, ERR_IN_GENFN, go, Job, me, onEnd, PARKED_CH_PUT, PARKED_CH_REC, RibuGen, SETTLED, unlinkFromAllJobs } from "./job.js"
 import { Err } from "./errors.js"
 
 // todo: consider passing a timeout parameter
@@ -74,20 +74,56 @@ function* _allOrErr<T>(jobs: Job[]) {
 }
 
 
-/* Ch based
-CON: not counting jobs correctly (same problem as job.rec).
-MAIN CON: can't unObserve rest of jobs.
-
-SOLUTION: Maybe a pool thing job like?
-PRO: implement .inFlight (no manual counting)
-PRO: can also implement efficient .cancel()
-	since it alredy has internal LL of non-settled jobs to cancel.
-PRO: much simpler.
-CON: more garbage (1 more obj) (maybe reuse a Chan obj from pool)
-
-*/
+// both cancel and the other need to observer passed-in jobs.
 
 
+// We reuse some Job flags since they won't be used in JobPlus.
+const HALT = PARKED_CH_REC
+const FAIL = HALT | ERR_IN_GENFN
+
+abstract class JobPlus<OkRet = unknown, AllRet = unknown> extends Job<OkRet, AllRet | Err<"EmptyArguments">> {
+	constructor(name: string) {
+		super(name)
+	}
+
+	_go(jobs: Job[]) {
+		if (jobs.length === 0) {
+			this._st |= (SETTLED | ERR_IN_GENFN)
+			this.val = new Err("EmptyArguments", this._nm) as AllRet
+		}
+		else {
+			this._init()
+		}
+		return this
+		// observeJobs(jobs, this)
+	}
+
+	abstract _init(): void
+	abstract _onTgDone(tg: Job, isInit: boolean, jobs: Job[]): unknown
+}
+
+export function allOrErr2<Jobs extends Job[]>(...jobs: Jobs) {
+	return new _allOrErr2<Jobs>()._go(jobs)
+}
+
+
+class _allOrErr2<Jobs extends Job[]> extends JobPlus<AllOkRet<Jobs>[], AllOkRet<Jobs>[] | Err<"JobHadErr">> {
+	constructor() {
+		super("allOrErr(...jobs)")
+	}
+	_init() {
+		this.val = []
+	}
+	_onTgDone(tg: Job) {
+		if (tg.hadErr) {
+			this._st |= FAIL
+			return new Err("JobHadErr", this._nm, tg.val)
+		}
+		const jobsResults = this.val as AllOkRet<Jobs>[]
+		jobsResults.push(tg.val)
+		return jobsResults
+	}
+}
 
 
 
@@ -95,12 +131,15 @@ CON: more garbage (1 more obj) (maybe reuse a Chan obj from pool)
 
 
 
+type OkRet<J> = J extends Job<infer A, infer B> ? [A, B] : never
+
+type AllOkRet<Jobs extends Job[]> = OkRet<Jobs[number]>[0]
 
 
 // /*
 // - Returns an array of the settled values of the passed-in jobs,
 // 	ie, it waits for all to settle.
-// - Returns an empty array if the passed-in array in empty.
+// - Returns error if empty array is passed-in.
 //  */
 // export function all<Jobs extends Job<unknown>[]>(...jobs: Jobs) {
 // 	if (jobs.length === 0) {

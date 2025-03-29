@@ -13,7 +13,6 @@ import {
 	SYS_ITERABLE,
 	type SysIterable,
 	ensurePreviousYieldAndSetCallerJobNextSt,
-	throwNotYielded,
 } from "./system.js"
 import { CANC_OK, CancOK, Er, Err, _Err } from "./errors.js"
 import { Chan, PutterLink, ReceiverLink } from "./channel.js"
@@ -30,6 +29,8 @@ import { Chan, PutterLink, ReceiverLink } from "./channel.js"
 
 // todo: remove Job stack from sys, put it here and use LL
 // todo: clean-up documentation
+// "whenever there's a iterRes.done = false, it means block the job"
+// maybe forever if, eg, job failed.
 
 
 
@@ -125,9 +126,9 @@ export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
  *  _tm:
  * 	Timeout when yield* sleep() or some other inner timeout.
  */
-export class Job<OkRet = unknown, GetterErr = unknown> {
+export class Job<OkRet = unknown, AllRet = unknown> {
 
-	val = null as OkRet | GetterErr
+	val = null as OkRet | AllRet
 	_nm: string
 	_st = 0
 	_gn: RibuGen
@@ -171,14 +172,14 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 	}
 
 	[Symbol.iterator]() {
-		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, "yield* job")
+		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, `yield* ${this._nm}`)
 		return jobIterator<OkRet>(this)
 	}
 
 	get err() {
 		self = this
 		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, "job.err")
-		return JOB_ITERABLE as SysIterable<GetterErr>
+		return JOB_ITERABLE as SysIterable<AllRet>
 	}
 
 	cancel() {
@@ -199,7 +200,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 		this._st |= CANCEL_SIBLINGS_ON_ERR
 	}
 
-	then(res: (val: OkRet) => void, rej: (err: GetterErr) => void) {
+	then(res: (val: OkRet) => void, rej: (err: AllRet) => void) {
 		if (this._st & SETTLED) {
 			resolveJobThenable(res, rej, this)
 		}
@@ -215,7 +216,7 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 
 	get promErr() {
 		const self = this
-		return new Promise<GetterErr>((res) => {
+		return new Promise<AllRet>((res) => {
 			const link = freshLink(res as OnJobDone, self)
 			addObserver(self, link)
 		})
@@ -229,106 +230,25 @@ export class Job<OkRet = unknown, GetterErr = unknown> {
 		return this._st & ANY_ERR_OR_CANCOK
 	}
 
-	// observe() works in tandem with get rec().
-	// The idea is that when genFn calls yield* me().rec, .rec resumes genFn
-	// with any already settled jobs. So settled jobs are inserted at the back
-	// of the _tg LL to be processed immediately by get rec().
-	// This is all in favor of "performance", but probably too hacky.
-	observe(jobs: Job[]) {
-		const jobsLen = jobs.length
-		if (jobsLen === 0) {
-			throw Error("job.observe(): Empty jobs array.")
-		}
-
-		// First link is always added as head (is tail also).
-		const firstTgJob = jobs[0]!
-		let firstLink = freshLink(this, firstTgJob)
-		let tail = firstLink
-		addTgLink(this, firstLink)
-		if (!(firstTgJob._st & SETTLED)) {
-			addObserver(firstTgJob, firstLink)
-		}
-		// else, tgJob is settled, so no need to add observer to tgJob (.rec will process it).
-
-		// i = 1 since first tgJob was already processed.
-		for (let i = 1; i < jobsLen; i++) {
-			const tgJob = jobs[i]!
-			const link = freshLink(this, tgJob)
-			if (tgJob._st & SETTLED) {
-				tail.nB = link
-				tail = link
-			}
-			else {  // Job is not settled yet.
-				addTgLink(this, link)
-				addObserver(tgJob, link)
-			}
-		}
-
-		if (tail !== firstLink) {  // At least one settled job was added to LL.
-			this._tg.pB = tail
-		}
-
-		return this as Pick<typeof this, "rec" | "unObserveAll">
-	}
-
-	get rec() {
-		const callerJob = sys.runningJob
-		if (callerJob._st & PARKED_NOT_OBSERVE_REC) {
-			throwNotYielded("observe.rec")
-		}
-
-		// No need to check if head is VOID_LINK since observe() should have
-		// added at least one link to LL.
-		// And .rec caller should check jobs count first.
-
-		// PARKED_JOB_OBSERVE_REC would mean that caller still has unsettled jobs
-		// to process.
-
-		const head = this._tg
-		const headTgJob = head.b as Job
-
-		if (headTgJob._st & SETTLED) {  // No more settled or unsettled jobs in LL.
-			iterRes.done = true
-			iterRes.value = headTgJob
-			this._tg = VOID_LINK
-			disposeLink(head)
-		}
-		else {  // headTgJob is unsettled, so look up for settled jobs at tail.
-			const tail = head.pB
-			if (tail === VOID_LINK) {
-				this._st |= PARKED_OBSERVE_REC
-				iterRes.done = false
-			}
-			else {
-				iterRes.done = true
-				iterRes.value = tail.b as Job
-				head.pB = tail.nB
-				disposeLink(tail)
-			}
-		}
-
-		return SYS_ITERABLE as SysIterable<Job>
-	}
-
 	unObserveAll() {
 		unlinkFromAllJobs(this)
 	}
 }
 
 function handleCancel(job: Job, opName: string, callerJobNextSt: Job["_st"]) {
-	const callerJob = ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt, opName)
-
 	if (job._st & SETTLED) {
 		iterRes.done = true
 		iterRes.value = undefined
 		return
 	}
 
+	const callerJob = ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt, opName)
+
 	cancelJob(job)
 
 	const { _st, val } = job
 
-	if (_st & SETTLED) {  // job settled synchronously
+	if (_st & SETTLED) {  // job settled synchronously just after canceJob() call above
 		if (callerJobNextSt & PARKED_CANCEL_ERR) {
 			iterRes.done = true
 			iterRes.value = _st & ERR_IN_ONEND ? val : undefined
@@ -363,12 +283,13 @@ function resolveJobThenable<OkRet, GetterErr>(res: (val: OkRet) => void, rej: (e
 function jobIterator<T>(job: Job) {
 	let callerJob = sys.runningJob
 	const callerSt = callerJob._st
-	const { _st } = job
+	const thisSt = job._st
 
-	if (_st & SETTLED) {
+	if (thisSt & SETTLED) {
 
+		// maybe unify this logic shared with Job._onTgJobDone()
 		const shouldCallerFail =
-			(callerSt & PARKED_JOB) && (_st & ANY_ERR_OR_CANCOK)
+			(callerSt & PARKED_JOB) && (thisSt & ANY_ERR_OR_CANCOK)
 
 		if (shouldCallerFail) {
 			genFnFailed(callerJob, _Err(callerJob._nm, job.val as Err))
@@ -540,12 +461,12 @@ function settleJob(job: Job) {
 		job._st = CANCOK
 	}
 
-	settleJobish(job)
+	settle(job)
 }
 
 type NotVoidObj<T> = T extends VoidObj ? never : T
 
-function settleJobish(job: Job) {
+function settle(job: Job) {
 	job._st |= SETTLED
 	const { val } = job
 
@@ -671,7 +592,6 @@ export function addErrorToJobVal(job: Job, err: Error, errFlag: Job["_st"]) {
 	job._st |= errFlag
 }
 
-
 /* *********************  Job LLs Operations  ******************** */
 
 /* Insert Link B:
@@ -694,7 +614,7 @@ export function addObserver<T = Job>(job: Job, link: ObserverLink<T>) {
 	}
 }
 
-function removeOb(job: Job, link: Link) {
+export function removeOb(job: Job, link: Link) {
 	let { pA, nA } = link
 	if (nA !== VOID_LINK) {
 		nA.pA = pA
@@ -742,6 +662,29 @@ export function linkJobs(ob: Job, tg: Job) {
 	const link = freshLink(ob, tg)
 	addTgLink(ob, link)
 	addObserver(tg, link)
+}
+
+
+/* Simple Job LL Iteration Protocol */
+
+let currLink: Link | VoidLink = VOID_LINK
+
+export function iter(head: Link | VoidLink): Job | false {
+	if (head === VOID_LINK) {
+		return false
+	}
+	head = head as Link<Job>
+	currLink = head.nA
+	return head.a as Job
+}
+
+export function next(): Job | false {
+	if (currLink === VOID_LINK) {
+		return false
+	}
+	const value = currLink.a
+	currLink = currLink.nA
+	return value as Job
 }
 
 
@@ -806,7 +749,7 @@ class CancelAll extends Job<void, void | Er | Timeout> {
 			// Make caller fail if it didn't call .err to handle the unhappy paths.
 			this._st |= ERR_IN_GENFN
 			unlinkFromAllJobs(this)
-			settleJobish(this)
+			settle(this)
 			return
 		}
 		if (tgJob._st & HAD_ERR) {
@@ -817,7 +760,7 @@ class CancelAll extends Job<void, void | Er | Timeout> {
 				clearTimeout(this._tm as NodeJS.Timeout)
 				this._tm = VOID_OBJ
 			}
-			settleJobish(this)
+			settle(this)
 		}
 	}
 
@@ -832,7 +775,7 @@ function maxWaitFired(cancelAll: CancelAll) {
 	cancelAll._onTgJobDone(cancelAll)
 }
 
-function unlinkFromAllJobs(obJob: Job) {
+export function unlinkFromAllJobs(obJob: Job) {
 	let tgLink = obJob._tg
 	while (tgLink !== VOID_LINK) {
 		const nextLink = tgLink.nB
@@ -868,6 +811,8 @@ export function linkWithAllJobs(jobs: Job[], obJob: Job, cancel = false) {
 		if (cancel) {
 			cancelJob(job)
 		}
+
+		// here I can detect if obJob is settled sync
 	}
 
 	// If LINKING is on, it means, last job was skipped because it is already
