@@ -95,7 +95,7 @@ const HAD_ERR = ERR_IN_GENFN | ERR_IN_ONEND
 export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
 
 /** Job Class
- *  val:
+ *  _v:
  * 	Temporary slot for values; ch.put/rec, errors accumulation...
  * 	When job is settled, where its final value is stored.
  *  _nm:
@@ -123,7 +123,7 @@ export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
  */
 export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 
-	val = undefined as OkRet | AllRet
+	_v = undefined as OkRet | AllRet
 	_nm: string
 	_st = 0
 	_gn: RibuGen
@@ -143,16 +143,6 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 			addTgLink(parent, link)
 		}
 	}
-
-	Ctx(ctx: Ctx) {
-		this._ctx = ctx
-		return this as Job<OkRet, AllRet, Ctx>
-	}
-
-	get ctx() {
-		return this._ctx
-	}
-
 	_onTgDone(tgJob: Job) {
 		const { _st } = this
 
@@ -169,11 +159,11 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 			(_st & PARKED_CANCEL) && (tgSt & ERR_IN_ONEND)
 
 		if (shouldThisJobFail) {
-			genFnFailed(this, _Err(this._nm, tgJob.val as Err))
+			genFnFailed(this, _Err(this._nm, tgJob._v as Err))
 			return
 		}
 
-		resumeJob(this, tgJob.val)
+		resumeJob(this, tgJob._v)
 	}
 
 	[Symbol.iterator]() {
@@ -195,6 +185,31 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 	cancelErr() {
 		handleCancel(this, "job.cancelErr()", PARKED_CANCEL_ERR)
 		return SYS_ITERABLE as SysIterable<void | Er>
+	}
+
+	get val() {
+		return this._v as OkRet
+	}
+
+	get done() {
+		return this._st & SETTLED
+	}
+
+	get notOk() {
+		return this._st & ANY_ERR_OR_CANCOK
+	}
+
+	get ok() {
+		return !(this._st & ANY_ERR_OR_CANCOK)
+	}
+
+	Ctx(ctx: Ctx) {
+		this._ctx = ctx
+		return this as Job<OkRet, AllRet, Ctx>
+	}
+
+	get ctx() {
+		return this._ctx
 	}
 
 	onEnd(onEndFn: OnEnd) {
@@ -223,7 +238,7 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 		const self = this
 		return new Promise<AllRet>((res) => {
 			if (self._st & SETTLED) {
-				res(self.val as AllRet)
+				res(self._v as AllRet)
 			}
 			else {
 				const link = freshLink(res as OnJobDone, self)
@@ -231,19 +246,6 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 			}
 		})
 	}
-
-	get done() {
-		return this._st & SETTLED
-	}
-
-	get notOk() {
-		return this._st & ANY_ERR_OR_CANCOK
-	}
-
-	get ok() {
-		return !(this._st & ANY_ERR_OR_CANCOK)
-	}
-
 	unObserveAll() {
 		unlinkFromAllJobs(this)
 	}
@@ -260,7 +262,7 @@ function handleCancel(job: Job, opName: string, callerJobNextSt: Job["_st"]) {
 
 	cancelJob(job)
 
-	const { _st, val } = job
+	const { _st, _v: val } = job
 
 	if (_st & SETTLED) {  // job settled synchronously just after canceJob() call above
 		if (callerJobNextSt & PARKED_CANCEL_ERR) {
@@ -284,7 +286,7 @@ function handleCancel(job: Job, opName: string, callerJobNextSt: Job["_st"]) {
 }
 
 function resolveJobThenable<OkRet, GetterErr>(res: (val: OkRet) => void, rej: (err: GetterErr) => void, thisJob: Job) {
-	const { _st, val } = thisJob
+	const { _st, _v: val } = thisJob
 	if (_st & ANY_ERR_OR_CANCOK) {
 		rej(val as GetterErr)
 	}
@@ -306,13 +308,13 @@ function jobIterator<T>(job: Job) {
 			(callerSt & PARKED_JOB) && (thisSt & ANY_ERR_OR_CANCOK)
 
 		if (shouldCallerFail) {
-			genFnFailed(callerJob, _Err(callerJob._nm, job.val as Err))
+			genFnFailed(callerJob, _Err(callerJob._nm, job._v as Err))
 			iterRes.done = false
 		}
 		else {
 			callerJob._st &= ~PARKED
 			iterRes.done = true
-			iterRes.value = job.val
+			iterRes.value = job._v
 		}
 	}
 	else {
@@ -370,7 +372,7 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 		return
 	}
 
-	thisJob.val = value
+	thisJob._v = value
 	onGenFnDone(thisJob)
 }
 
@@ -385,7 +387,7 @@ function onGenFnDone(thisJob: Job, cancelChildren = false) {
 }
 
 function genFnFailed(thisJob: Job, jobVal: Err) {
-	thisJob.val = jobVal
+	thisJob._v = jobVal
 	thisJob._st |= ERR_IN_GENFN
 	thisJob._st |= CANCEL_SIBLINGS_ON_ERR
 	onGenFnDone(thisJob, true)
@@ -457,7 +459,7 @@ function addOnEndErr(thisJob: Job, err: Error) {
 	addErrorToJobVal(thisJob, err, ERR_IN_ONEND)
 	if (thisJob._st & CANCELLED) {
 		// @ts-ignore job.val is Err now and mutation of .message readonly property
-		thisJob.val.message = CANCELLED_STR
+		thisJob._v.message = CANCELLED_STR
 	}
 }
 
@@ -471,7 +473,7 @@ function settleJob(thisJob: Job) {
 	}
 
 	if (_st & CANCELLED && !(_st & ERR_IN_ONEND)) {
-		thisJob.val = CANC_OK
+		thisJob._v = CANC_OK
 		thisJob._st = CANCOK
 	}
 
@@ -482,7 +484,7 @@ type NotVoidObj<T> = T extends VoidObj ? never : T
 
 export function markSettledAndNotifyObs(thisJob: Job) {
 	thisJob._st |= SETTLED
-	const { val } = thisJob
+	const { _v: val } = thisJob
 
 	// Notify observers.
 	let obLink = thisJob._ob
@@ -505,7 +507,7 @@ export function markSettledAndNotifyObs(thisJob: Job) {
 
 function onChildDone(job: Job, child: Job) {
 	if (child._st & HAD_ERR) {
-		addErrorToJobVal(job, child.val as Err, ERR_IN_GENFN)
+		addErrorToJobVal(job, child._v as Err, ERR_IN_GENFN)
 		const { _st } = job
 		if ((_st & CANCEL_SIBLINGS_ON_ERR) && !(_st & CHILDREN_CANCELLED)) {
 			loopChildren(job, false, true)
@@ -594,9 +596,9 @@ function loopChildren(thisJob: Job, observe: boolean, cancel: boolean) {
 
 export function addErrorToJobVal(thisJob: Job, err: Error, errFlag: Job["_st"]) {
 	if (!(thisJob._st & HAD_ERR)) {
-		thisJob.val = _Err(thisJob._nm)
+		thisJob._v = _Err(thisJob._nm)
 	}
-	const errVal = thisJob.val as Err
+	const errVal = thisJob._v as Err
 	if (errFlag & ERR_IN_GENFN) {
 		errVal._addErr(err)
 	}

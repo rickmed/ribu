@@ -132,7 +132,7 @@ describe("job.cancel()", () => {
 
 		const rec = await go(main).promErr
 		expect(rec).toStrictEqual(undefined)
-		expect(chldJob.val).toStrictEqual(_Err("child1", Err("Bad")))
+		expect(chldJob._v).toStrictEqual(_Err("child1", Err("Bad")))
 	})
 })
 
@@ -237,6 +237,6 @@ describe("yield* job.cancelErr()", () => {
 
 		const rec = await go(main).promErr
 		expect(rec).toEqual(undefined)
-		expect(chldJob.val).toStrictEqual(_Err("child1", Err("Bad")))
+		expect(chldJob._v).toStrictEqual(_Err("child1", Err("Bad")))
 	})
 })

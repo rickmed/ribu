@@ -88,7 +88,7 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 
 			if (putType === 0) {  // putter is a job
 				const putJob = putVal as Job
-				const msg = putJob.val
+				const msg = putJob._v
 				removeTgLink(putJob, _pt)
 				resumeJob(putJob)
 				iterRes.value = msg
@@ -120,7 +120,7 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 			// Add link to putter Job so it can unlink if cancelled.
 			addTgLink(putJob, link)
 			putJob._st |= PARKED_CH_PUT
-			putJob.val = msg
+			putJob._v = msg
 			iterRes.done = false
 		}
 		// There's a receiver waiting, so resume receiver (first) and putter.

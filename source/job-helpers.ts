@@ -111,7 +111,7 @@ abstract class JobPlus<OkRet = unknown, AllRet = unknown> extends Job<OkRet, All
 	_go(jobs: Job[], cancel = false) {
 		if (jobs.length === 0) {
 			this._st |= (SETTLED | ERR_IN_GENFN)
-			this.val = new Err(EMPTY_ARGS, this._nm) as AllRet
+			this._v = new Err(EMPTY_ARGS, this._nm) as AllRet
 		}
 		else {
 			this._init()
@@ -151,7 +151,7 @@ function maxWaitFired(thisJob: JobPlus) {
 	thisJob._tm = VOID_OBJ
 	// Reset ._st and .val in case some passed-in jobs already settled with Err.
 	thisJob._st = 0
-	thisJob.val = new Err(TIME_OUT, thisJob._nm)
+	thisJob._v = new Err(TIME_OUT, thisJob._nm)
 	// Make caller fail if it didn't call .err.
 	thisJob._st |= ERR_IN_GENFN
 	unlinkFromAllJobs(thisJob)
@@ -163,7 +163,7 @@ export function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
 	const len = jobs.length
 	for (let i = 0; i < len; i++) {
 		const job = jobs[i]!
-		const res = checkTgSettledSync(obJob, job, unsettledTargets)
+		const res = checkIfTgSettledSync(obJob, job, unsettledTargets)
 		if (res === 3) {
 			return
 		}
@@ -172,7 +172,7 @@ export function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
 		}
 		if (cancel) {
 			cancelJob(job)
-			const res = checkTgSettledSync(obJob, job, unsettledTargets)
+			const res = checkIfTgSettledSync(obJob, job, unsettledTargets)
 			if (res === 3) {
 				return
 			}
@@ -191,7 +191,7 @@ export function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
 // 1: tgJob didn't settle
 // 2: tgJob settled but thisJob didn't halt
 // 3: thisJob halted
-function checkTgSettledSync(thisJob: JobPlus, tgJob: Job, unsettledTargets: boolean): number {
+function checkIfTgSettledSync(thisJob: JobPlus, tgJob: Job, unsettledTargets: boolean): number {
 	if (tgJob._st & SETTLED) {
 		thisJob._onTgJobDone(tgJob)
 		if (thisJob._st & HALT) {
@@ -249,15 +249,15 @@ export type JobHadErr = Err<typeof JOB_HAD_ERR>
 function allOrErrOnTgJobDone<Jobs extends Job[]>(this: Job, tgJob: Jobs[number]) {
 	if (tgJob.notOk) {
 		this._st |= FAIL
-		return this.val = new Err(JOB_HAD_ERR, this._nm, tgJob.val)
+		return this._v = new Err(JOB_HAD_ERR, this._nm, tgJob._v)
 	}
-	let results = this.val as AllOkRet<Jobs>[]
-	results.push(tgJob.val as AllOkRet<Jobs>)
+	let results = this._v as AllOkRet<Jobs>[]
+	results.push(tgJob._v as AllOkRet<Jobs>)
 	return results
 }
 
 function allOrErrInit(this: Job) {
-	this.val = []
+	this._v = []
 }
 
 

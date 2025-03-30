@@ -28,8 +28,6 @@ export function* jobFn2(x?: number) {
 type NotErr = false | 1 | "hi"
 type NotErrs = NotErr[]
 
-const job = go(jobFn).val
-
 
 export const tests = {
 

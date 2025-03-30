@@ -9,6 +9,6 @@ export const cancel = ExtendJobPlus(CANCEL_ALL_OP_NAME, onTgJobDone, undefined, 
 
 function onTgJobDone<Jobs extends Job[]>(this: Job, tgJob: Jobs[number]): void | Er {
 	if (tgJob._st & ERR_IN_ONEND) {
-		return addErrorToJobVal(this, tgJob.val as Err, ERR_IN_GENFN) as Er
+		return addErrorToJobVal(this, tgJob._v as Err, ERR_IN_GENFN) as Er
 	}
 }

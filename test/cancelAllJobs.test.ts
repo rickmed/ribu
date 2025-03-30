@@ -71,7 +71,7 @@ describe("yield* cancel(...jobs)", () => {
 		const rec = await go(main).promErr
 		expect(rec).toEqual(undefined)
 		const exp = _Err("child1", Err("Bad"))
-		expect(chldJob.val).toStrictEqual(exp)
+		expect(chldJob._v).toStrictEqual(exp)
 	})
 })
 
@@ -275,7 +275,7 @@ describe("yield* cancel(...jobs).err", () => {
 		const rec = await go(main).promErr
 		expect(rec).toEqual("ok")
 		const exp = _Err("child1", Err("Bad"))
-		expect(chldJob.val).toStrictEqual(exp)
+		expect(chldJob._v).toStrictEqual(exp)
 	})
 })
 
