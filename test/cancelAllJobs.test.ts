@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest"
 import { go, cancel, sleep, Err, Job, onEnd } from "ribu"
 import { child, child2, sleepProm } from "./utils.js"
 import { _Err } from "../source/errors.js"
-import { CANCEL_ALL_OP_NAME, TIME_OUT } from "../source/job.js"
+import { CANCEL_ALL_OP_NAME } from "../source/cancelAllJobs.js"
+import { TIME_OUT } from "../source/job-helpers.js"
+// import { CANCEL_ALL_OP_NAME, TIME_OUT } from "../source/job.js"
 
 
 describe("yield* cancel(...jobs)", () => {
@@ -62,12 +64,12 @@ describe("yield* cancel(...jobs)", () => {
 		function* main() {
 			chldJob = go(child1)
 			yield* sleep(2)
-			yield* cancel(chldJob)
-			return "ok"
+			const res = yield* cancel(chldJob)
+			return res
 		}
 
 		const rec = await go(main).promErr
-		expect(rec).toEqual("ok")
+		expect(rec).toEqual(undefined)
 		const exp = _Err("child1", Err("Bad"))
 		expect(chldJob.val).toStrictEqual(exp)
 	})
@@ -96,7 +98,7 @@ describe("yield* cancel(...jobs).err", () => {
 		expect(rec).toBe(undefined)
 	})
 
-	it.only("user can recover from cancelling errors", async () => {
+	it("user can recover from cancelling errors", async () => {
 
 		let ctx = { count: 0 }
 
@@ -156,7 +158,7 @@ describe("yield* cancel(...jobs).err", () => {
 
 		function* jobBad1() {
 			onEnd(function* jobBad1OE() {
-				yield* sleep(1)
+				yield* sleep(2)
 				return Err("JobBad1")
 			})
 
@@ -166,7 +168,7 @@ describe("yield* cancel(...jobs).err", () => {
 
 		function* jobBad2() {
 			onEnd(function* jobBad2OE() {
-				yield* sleep(1)
+				yield* sleep(4)
 				throw Error("JobBad2")
 			})
 
@@ -176,7 +178,7 @@ describe("yield* cancel(...jobs).err", () => {
 
 		function* jobOk() {
 			onEnd(function* () {
-				yield* sleep(1)
+				yield* sleep(6)
 				return "ok"
 			})
 
@@ -186,7 +188,7 @@ describe("yield* cancel(...jobs).err", () => {
 
 		function* AsyncBad() {
 			onEnd(async () => {
-				await sleepProm(1)
+				await sleepProm(8)
 				throw new Error("AsyncBad")
 			})
 
@@ -196,7 +198,7 @@ describe("yield* cancel(...jobs).err", () => {
 
 		function* AsyncOk() {
 			onEnd(async () => {
-				await sleepProm(1)
+				await sleepProm(10)
 				return "ok"
 			})
 
@@ -265,7 +267,8 @@ describe("yield* cancel(...jobs).err", () => {
 		function* main() {
 			chldJob = go(child1)
 			yield* sleep(2)
-			yield* cancel(chldJob).err
+			const cancelThing = cancel(chldJob).err
+			yield* cancelThing
 			return "ok"
 		}
 
@@ -331,7 +334,10 @@ describe("cancel(...jobs).maxWait(ms)", () => {
 		}
 
 		const rec = await go(main).promErr
-		const exp = _Err("main", TIME_OUT)
+		const exp =
+			_Err("main",
+				Err(TIME_OUT, CANCEL_ALL_OP_NAME)
+			)
 		expect(rec).toStrictEqual(exp)
 		expect(ctx.count).toBe(0)
 	})
@@ -397,7 +403,7 @@ describe("cancel(...jobs).maxWait(ms).err", () => {
 		}
 
 		const rec = await go(main).promErr
-		const exp = _Err("main", TIME_OUT)
+		const exp = _Err("main", Err(TIME_OUT, CANCEL_ALL_OP_NAME))
 		expect(rec).toStrictEqual(exp)
 		expect(ctx.count).toBe(0)
 	})

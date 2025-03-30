@@ -1,6 +1,6 @@
-import { ERR_IN_GENFN, go, Job, markSettledAndNotifyObs, observeJobs, PARKED_CH_REC, SETTLED } from "./job.js"
+import { cancelJob, ERR_IN_GENFN, Job, linkJobs, markSettledAndNotifyObs, PARKED_CH_REC, SETTLED, unlinkFromAllJobs } from "./job.js"
 import { Err } from "./errors.js"
-import { VOID_LINK } from "./system.js"
+import { VOID_LINK, VOID_OBJ } from "./system.js"
 
 // todo: consider passing a timeout parameter
 
@@ -8,8 +8,66 @@ import { VOID_LINK } from "./system.js"
 // make a (slower) wait-group like that implements interator so that
 // for (const job of waitGroup) works.
 
+/*
+Optional Add-ons Later
+You could extend Pool to support:
 
-//* *******************  Job Combinators  ********************************** *//
+cancelRemaining() — for early exits
+
+timeout(ms) — to fail the pool after a deadline
+
+progress tracking (settled / total ratio)
+
+onEach(fn) — observe every job as it completes
+
+
+
+| Category        | Method / Property           | Description                                                                 |
+|----------------|-----------------------------|-----------------------------------------------------------------------------|
+| 🧠 Tracking     | `pool.settledCount`         | Number of jobs that have finished                                           |
+|                | `pool.failedCount`          | Number of jobs that failed                                                  |
+|                | `pool.okCount`              | Number of jobs that succeeded                                               |
+|                | `pool.remainingJobs()`      | Returns array of jobs that haven't settled yet                              |
+|                | `pool.progress()`           | Returns object: `{ total, settled, failed, ok }`                            |
+|                | `pool.status()`             | Returns summary string: "5/10 settled (3 ok, 2 failed)"                     |
+|----------------|-----------------------------|-----------------------------------------------------------------------------|
+| 🔁 Control      | `pool.cancelRemaining()`    | Cancels all in-flight jobs                                                  |
+|                | `pool.timeout(ms)`          | Fails the pool if not complete within given time                            |
+|                | `pool.awaitAtLeast(n)`      | Yields once *n* jobs have settled                                           |
+|                | `pool.awaitNOk(n)`          | Yields once *n* jobs have succeeded                                         |
+|----------------|-----------------------------|-----------------------------------------------------------------------------|
+| 👁️ Observability | `pool.onEach(fn)`           | Calls `fn(job)` every time a job settles                                    |
+|                | `pool.onEnd(fn)`            | Calls `fn()` when all jobs are finished                                     |
+|----------------|-----------------------------|-----------------------------------------------------------------------------|
+| 🧩 Grouping     | `pool.groupBy(fn)`          | Groups jobs by key derived from `fn(job)`                                   |
+|                | `pool.partition()`          | Returns `[okJobs, failedJobs]` (original jobs, just filtered)               |
+|----------------|-----------------------------|-----------------------------------------------------------------------------|
+| 🧪 Utilities    | `pool.retryFailed(n)`       | Retries failed jobs up to `n` times                                         |
+|                | `pool.cleanFailed()`        | Removes failed jobs from the pool                                           |
+|                | `pool.shuffle()`            | Randomizes job order (for stress testing)                                   |
+|                | `pool.testMode()`           | Makes job behavior predictable for testing                                  |
+
+Method / Property	Description
+pool.getFirstOk()	Returns the first job that succeeded (or null)
+pool.getFirstFailure()	Returns the first job that failed
+pool.failedJobs()	Shortcut for jobs.filter(j => j.failed)
+pool.okJobs()	Shortcut for jobs.filter(j => j.ok)
+pool.avgDuration()	Average duration of completed jobs (if jobs track .startTime / .endTime)
+pool.longestJob()	Returns the job with the highest duration
+pool.lastSettled()	Returns the most recently completed job (live or after awaitAll)
+
+Method	Description
+pool.pause() / resume()	Temporarily stop the pool from starting or reacting to jobs
+pool.throttle(n)	Run only n jobs concurrently (like a batch limiter)
+pool.awaitFirstOkThenCancel()	Resolves on first success, cancels rest
+pool.awaitMajority()	Resolves once >50% jobs are settled
+pool.until(conditionFn)	Continues yielding until custom condition returns true
+pool.awaitOkRatio(ratio)	Resolves when okCount / total >= ratio
+
+pool.isIdle()	Returns true if all jobs are settled (i.e. inFlight === 0)
+*/
+
+
 
 /**
  *  When helper is done, it NEVER cancels the other passed-in jobs.
@@ -26,16 +84,28 @@ import { VOID_LINK } from "./system.js"
  *  All fail with Err("EmptyArguments") if passed-in array is empty.
  */
 
+
+/** *****************  Base JobPlus Class  ********************************** */
+
 export const EMPTY_ARGS = "EmptyArguments"
+export type EmptyArgsErr = Err<typeof EMPTY_ARGS>
 export type NotErrs<Ret> = Exclude<Ret, Error>
 
 // Reuse Job flags since they won't be used in JobPlus instances.
 const HALT = PARKED_CH_REC
-const FAIL = HALT | ERR_IN_GENFN
+export const FAIL = HALT | ERR_IN_GENFN
 
-abstract class JobPlus<OkRet = unknown, AllRet = unknown> extends Job<OkRet, AllRet | Err<"EmptyArguments">> {
+export const TIME_OUT = "Timeout"
+export type TimeoutErr = Err<typeof TIME_OUT>
+
+abstract class JobPlus<OkRet = unknown, AllRet = unknown> extends Job<OkRet, AllRet> {
 	constructor() {
 		super("")
+	}
+
+	maxWait(ms: number) {
+		this._tm = setTimeout(maxWaitFired, ms, this)
+		return this as Job<OkRet, AllRet | TimeoutErr>
 	}
 
 	_go(jobs: Job[], cancel = false) {
@@ -51,72 +121,148 @@ abstract class JobPlus<OkRet = unknown, AllRet = unknown> extends Job<OkRet, All
 	}
 
 	_onTgDone(tgJob: Job): void {
-		const val = this._onTgJobDone(tgJob) as AllRet
-		const { _st, _tg } = this
-		if (_tg === VOID_LINK) {
-			this.val = val
-			markSettledAndNotifyObs(this)
+		this._onTgJobDone(tgJob)
+		if (this._tg === VOID_LINK) {
+			settleJob(this)
 			return
 		}
-		if (_st & HALT) {
-			this._st &= ~HALT
-			this.val = val
-			markSettledAndNotifyObs(this)
+		if (this._st & HALT) {
+			unlinkFromAllJobs(this)
+			settleJob(this)
 			return
 		}
 	}
 
-	// To be implemented by subclasses
+	// To be overridden by subclasses
 	_init(): void {}
 	_onTgJobDone(_: Job) {}
 }
 
-type OnTgJobDone = <Jobs extends Job[]>(this: Job, tgJob: Jobs[number]) => unknown;
-
-export function newJobPlusClass(name: string, _onTgJobDone: OnTgJobDone, _init?: () => void) {
-
-	class newJobPlusClass extends JobPlus {
-		_nm = name
+function settleJob(thisJob: JobPlus) {
+	thisJob._st &= ~HALT
+	if (thisJob._tm !== VOID_OBJ) {
+		clearTimeout(thisJob._tm as NodeJS.Timeout)
+		thisJob._tm = VOID_OBJ
 	}
-	newJobPlusClass.prototype._onTgJobDone = _onTgJobDone
-	if (_init) {
-		newJobPlusClass.prototype._init = _init
-	}
+	markSettledAndNotifyObs(thisJob)
+}
 
-	return function JobPlusSubClassFactory<Jobs extends Job[]>(...jobs: Jobs) {
-		type Ret = ReturnType<typeof allOrErrOnTgJobDone<Jobs>>
-		const instance = new newJobPlusClass()
-		return instance._go(jobs) as Job<NotErrs<Ret>, Ret | Err<"EmptyArguments">>
+function maxWaitFired(thisJob: JobPlus) {
+	thisJob._tm = VOID_OBJ
+	// Reset ._st and .val in case some passed-in jobs already settled with Err.
+	thisJob._st = 0
+	thisJob.val = new Err(TIME_OUT, thisJob._nm)
+	// Make caller fail if it didn't call .err.
+	thisJob._st |= ERR_IN_GENFN
+	unlinkFromAllJobs(thisJob)
+	markSettledAndNotifyObs(thisJob)
+}
+
+export function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
+	let unsettledTargets = false
+	const len = jobs.length
+	for (let i = 0; i < len; i++) {
+		const job = jobs[i]!
+		const res = checkTgSettledSync(obJob, job, unsettledTargets)
+		if (res === 3) {
+			return
+		}
+		if (res === 2) {
+			continue
+		}
+		if (cancel) {
+			cancelJob(job)
+			const res = checkTgSettledSync(obJob, job, unsettledTargets)
+			if (res === 3) {
+				return
+			}
+			if (res === 2) {
+				continue
+			}
+		}
+		unsettledTargets = true
+		linkJobs(obJob, job)
+	}
+	if (!unsettledTargets) {
+		markSettledAndNotifyObs(obJob)
 	}
 }
 
-type OkRet<J> = J extends Job<infer A, infer B> ? [A, B] : never
-type AllOkRet<Jobs extends Job[]> = OkRet<Jobs[number]>[0]
+// 1: tgJob didn't settle
+// 2: tgJob settled but thisJob didn't halt
+// 3: thisJob halted
+function checkTgSettledSync(thisJob: JobPlus, tgJob: Job, unsettledTargets: boolean): number {
+	if (tgJob._st & SETTLED) {
+		thisJob._onTgJobDone(tgJob)
+		if (thisJob._st & HALT) {
+			if (unsettledTargets) {
+				unlinkFromAllJobs(thisJob)
+			}
+			settleJob(thisJob)
+			return 3
+		}
+		return 2
+	}
+	return 1
+}
 
+export function ExtendJobPlus<Jobs extends Job[], Ret>(
+	name: string,
+	_onTgJobDone: (this: Job, tgJob: Jobs[number]) => Ret,
+	_init?: (this: Job) => void,
+	cancel = false
+) {
+
+	class JobP extends JobPlus<NotErrs<Ret>, Ret | Err<typeof EMPTY_ARGS>> {
+		_nm = name
+	}
+
+	JobP.prototype._onTgJobDone = _onTgJobDone
+	if (_init) {
+		JobP.prototype._init = _init
+	}
+
+	return factory
+
+	function factory(...jobs: Jobs) {
+		const instance = new JobP()
+		return instance._go(jobs, cancel)
+	}
+}
+
+type AllOkRet<Jobs extends Job[]> = Jobs[number] extends Job<infer A, unknown> ? A : never
+
+
+
+/** *****************  allOrErr  ******************************************** */
 
 /** allOrErr()
  *  Returns an array of the  _successful_ settled values of the passed-in jobs.
  *  If one job fails (or is cancelled, even successfully), it fails.
  *  Fails also if the passed-in array is empty.
  */
-export const allOrErr = newJobPlusClass("allOrErr", allOrErrOnTgJobDone, allOrErrInit)
+export const allOrErr = ExtendJobPlus("allOrErr", allOrErrOnTgJobDone, allOrErrInit)
+
+const JOB_HAD_ERR = "JobHadErr"
+export type JobHadErr = Err<typeof JOB_HAD_ERR>
+
+function allOrErrOnTgJobDone<Jobs extends Job[]>(this: Job, tgJob: Jobs[number]) {
+	if (tgJob.notOk) {
+		this._st |= FAIL
+		return this.val = new Err(JOB_HAD_ERR, this._nm, tgJob.val)
+	}
+	let results = this.val as AllOkRet<Jobs>[]
+	results.push(tgJob.val as AllOkRet<Jobs>)
+	return results
+}
 
 function allOrErrInit(this: Job) {
-	// eslint-disable-next-line functional/immutable-data
 	this.val = []
 }
 
-function allOrErrOnTgJobDone<Jobs extends Job[]>(this: Job, tgJob: Job) {
-	if (tgJob.hadErr) {
-		// eslint-disable-next-line functional/immutable-data
-		this._st |= FAIL
-		return new Err("JobHadErr", this._nm, tgJob.val)
-	}
-	let jobsResults = this.val as AllOkRet<Jobs>[]
-	jobsResults.push(tgJob.val)
-	return jobsResults
-}
 
+
+/** *****************  all  ************************************************* */
 
 // /*
 // - Returns an array of the settled values of the passed-in jobs,
@@ -161,6 +307,9 @@ function allOrErrOnTgJobDone<Jobs extends Job[]>(this: Job, tgJob: Job) {
 // }
 
 
+/** *****************  first  *********************************************** */
+
+
 // /*
 // - Returns the settled value of the first job that settles.
 // - The rest are cancelled.
@@ -191,6 +340,8 @@ function allOrErrOnTgJobDone<Jobs extends Job[]>(this: Job, tgJob: Job) {
 // 	})
 // }
 
+
+/** *****************  firstOk  ********************************************* */
 
 // /*
 // - Returns the settled value of the first job that settles successfully.

@@ -15,7 +15,7 @@ export default [
 		},
 		languageOptions: {
 			parserOptions: {
-				project: ["./tsconfig.json", "./test/tsconfig.test.json"],
+				project: ["./tsconfig.json", "./test/tsconfig.json"],
 				tsconfigRootDir: import.meta.dirname,
 			},
 		},
@@ -43,6 +43,7 @@ export default [
 				{
 					ignoreClasses: true,
 					ignoreAccessorPattern: "**.*_m*.**",
+					ignoreIdentifierPattern: ["this"],
 					ignoreNonConstDeclarations: {
 						treatParametersAsConst: false,
 					},

@@ -1,7 +1,7 @@
 import { Err as newErr, go, sleep } from "ribu"
 import { Er, Err, type CancOK } from "../source/errors.js"
-import { cancel, Timeout } from "../source/job.js"
-import { allOrErr } from "../source/job-helpers.js"
+import { cancel } from "../source/cancelAllJobs.js"
+import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr } from "../source/job-helpers.js"
 
 export function* jobFn(x?: number) {
 	yield* sleep(1)
@@ -27,6 +27,8 @@ export function* jobFn2(x?: number) {
 
 type NotErr = false | 1 | "hi"
 type NotErrs = NotErr[]
+
+const job = go(jobFn).val
 
 
 export const tests = {
@@ -77,13 +79,13 @@ export const tests = {
 	},
 
 	*["yield* cancel(...jobs).err"]() {
-		type Exp = void | Er | Timeout
+		type Exp = void | EmptyArgsErr | Er
 		const rec = yield* cancel(go(jobFn), go(jobFn)).err
 		check_Eq<Exp>()(rec)
 	},
 
 	*["yield* cancel(...jobs).maxWait(ms).err"]() {
-		type Exp = void | Er | Timeout
+		type Exp = void | EmptyArgsErr | Er | TimeoutErr
 		const rec = yield* cancel(go(jobFn), go(jobFn)).maxWait(1).err
 		check_Eq<Exp>()(rec)
 	},
@@ -97,9 +99,21 @@ export const tests = {
 		check_Eq<Exp>()(rec)
 	},
 
+	*["yield* allOrErr().maxWait(ms)"]() {
+		type Exp = NotErrs
+		const rec = yield* allOrErr(go(jobFn), go(jobFn2)).maxWait(1)
+		check_Eq<Exp>()(rec)
+	},
+
 	*["yield* allOrErr().err"]() {
-		type Exp = NotErrs | Err<"JobHadErr"> | Err<"EmptyArguments">
+		type Exp = NotErrs | JobHadErr | EmptyArgsErr
 		const rec = yield* allOrErr(go(jobFn), go(jobFn2)).err
+		check_Eq<Exp>()(rec)
+	},
+
+	*["yield* allOrErr().maxWait(ms).err"]() {
+		type Exp = NotErrs | JobHadErr | EmptyArgsErr | TimeoutErr
+		const rec = yield* allOrErr(go(jobFn), go(jobFn2)).maxWait(1).err
 		check_Eq<Exp>()(rec)
 	},
 
