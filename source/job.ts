@@ -14,7 +14,7 @@ import {
 	type SysIterable,
 	ensurePreviousYieldAndSetCallerJobNextSt,
 } from "./system.js"
-import { CANC_OK, CancOK, Er, Err, _Err } from "./errors.js"
+import { type Er, RibuErr, _Err, CANC_OK, CancOK } from "./errors.js"
 import { Chan, PutterLink, ReceiverLink } from "./channel.js"
 
 // todo: implement "unsub() to have something like trio's moveOnAfter()
@@ -159,7 +159,7 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 			(_st & PARKED_CANCEL) && (tgSt & ERR_IN_ONEND)
 
 		if (shouldThisJobFail) {
-			genFnFailed(this, _Err(this._nm, tgJob._v as Err))
+			genFnFailed(this, _Err(this._nm, tgJob._v as Er))
 			return
 		}
 
@@ -308,7 +308,7 @@ function jobIterator<T>(job: Job) {
 			(callerSt & PARKED_JOB) && (thisSt & ANY_ERR_OR_CANCOK)
 
 		if (shouldCallerFail) {
-			genFnFailed(callerJob, _Err(callerJob._nm, job._v as Err))
+			genFnFailed(callerJob, _Err(callerJob._nm, job._v as Er))
 			iterRes.done = false
 		}
 		else {
@@ -367,7 +367,7 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 		return
 	}
 
-	if (genFnThrew || value instanceof Err) {
+	if (genFnThrew || value instanceof RibuErr) {
 		genFnFailed(thisJob, _Err(thisJob._nm, value))
 		return
 	}
@@ -386,7 +386,7 @@ function onGenFnDone(thisJob: Job, cancelChildren = false) {
 	loopChildren(thisJob, true, cancelChildren)
 }
 
-function genFnFailed(thisJob: Job, jobVal: Err) {
+function genFnFailed(thisJob: Job, jobVal: Er) {
 	thisJob._v = jobVal
 	thisJob._st |= ERR_IN_GENFN
 	thisJob._st |= CANCEL_SIBLINGS_ON_ERR
@@ -440,7 +440,7 @@ function execOnEnds(thisJob: Job) {
 }
 
 function handleOneOnEndResult(thisJob: Job, onEndResult: unknown, onEnd: OnEnd, threw = false) {
-	if (threw || onEndResult instanceof Err) {
+	if (threw || onEndResult instanceof RibuErr) {
 		addOnEndErr(thisJob, _Err(onEnd.name, onEndResult))
 	}
 	execOnEnds(thisJob)
@@ -448,7 +448,7 @@ function handleOneOnEndResult(thisJob: Job, onEndResult: unknown, onEnd: OnEnd, 
 
 function onOnEndJobDone(val: unknown, tg: Job, ob: Job) {
 	if (tg._st & HAD_ERR) {
-		addOnEndErr(ob, val as Err)
+		addOnEndErr(ob, val as Er)
 	}
 	execOnEnds(ob)
 }
@@ -507,7 +507,7 @@ export function markSettledAndNotifyObs(thisJob: Job) {
 
 function onChildDone(job: Job, child: Job) {
 	if (child._st & HAD_ERR) {
-		addErrorToJobVal(job, child._v as Err, ERR_IN_GENFN)
+		addErrorToJobVal(job, child._v as Er, ERR_IN_GENFN)
 		const { _st } = job
 		if ((_st & CANCEL_SIBLINGS_ON_ERR) && !(_st & CHILDREN_CANCELLED)) {
 			loopChildren(job, false, true)
@@ -598,7 +598,7 @@ export function addErrorToJobVal(thisJob: Job, err: Error, errFlag: Job["_st"]) 
 	if (!(thisJob._st & HAD_ERR)) {
 		thisJob._v = _Err(thisJob._nm)
 	}
-	const errVal = thisJob._v as Err
+	const errVal = thisJob._v as Er
 	if (errFlag & ERR_IN_GENFN) {
 		errVal._addErr(err)
 	}

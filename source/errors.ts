@@ -1,4 +1,5 @@
 const RIBU_ERR_NAME = "Err"
+export type Err<T extends string> = RibuErr<T>
 export type Er = Err<typeof RIBU_ERR_NAME>
 
 /**
@@ -12,17 +13,17 @@ export type Er = Err<typeof RIBU_ERR_NAME>
  * _oe:
  * 	Errors that occurred in onEnd() functions.
  */
-export class Err<Name extends string = string> implements Error {
+export class RibuErr<Name extends string = string> implements Error {
 
 	readonly name: Name
 	readonly message: string
 	readonly fn: string
-	// Errors from yield* job and/or from waiting children (both always ::Err)
+	// Errors from yield* job and/or from waiting chil	dren (both always ::Err)
 	private _errs?: unknown  // unknown | unknown[]
 	// Errors from onEnd() functions
 	private _oe?: Error | Error[]
 
-	constructor(name: Name, fnName: string, errs?: Err["_errs"], onEndErrs?: Err["_oe"], msg = "") {
+	constructor(name: Name, fnName: string, errs?: RibuErr["_errs"], onEndErrs?: RibuErr["_oe"], msg = "") {
 		this.name = name
 		this.message = msg
 		this.fn = fnName
@@ -83,34 +84,36 @@ export class Err<Name extends string = string> implements Error {
 }
 
 // Make (errInstance instanceof Error) === true
-Object.setPrototypeOf(Err.prototype, Error.prototype)
+Object.setPrototypeOf(RibuErr.prototype, Error.prototype)
 
-export function _Err(fnName: string, errs?: Err["_errs"], onEndErrs?: Err["_oe"], msg = "") {
-	return new Err(RIBU_ERR_NAME, fnName, errs, onEndErrs, msg)
+
+export function _Err<Name extends string>(fnName: string, errs?: RibuErr["_errs"], onEndErrs?: RibuErr["_oe"], msg = "") {
+	return new RibuErr(RIBU_ERR_NAME, fnName, errs, onEndErrs, msg) as Err<Name>
 }
 
-export function UserErrCtor<Name extends string>(name: Name, fnName = "", msg = "", ribuErr?: Err): Err<Name> {
-	return new Err<Name>(name, fnName, ribuErr, undefined, msg)
+export function Err<Name extends string>(name: Name, fnName = "", msg = "", ribuErr?: RibuErr) {
+	return new RibuErr<Name>(name, fnName, ribuErr, undefined, msg) as Err<Name>
 }
 
-export class CancOK extends Err {
+const CANC_OK_NAME = "CancOK"
+export class CancOK extends RibuErr {
 	constructor() {
-		super("CancOK", "")
+		super(CANC_OK_NAME, "")
 	}
 }
-export const CANC_OK = new CancOK()
+export const CANC_OK = new CancOK() as Err<typeof CANC_OK_NAME>
 
 
-export function isErr(x: unknown): x is Err<string> {
-	return x instanceof Err
+export function isErr(x: unknown): x is RibuErr<string> {
+	return x instanceof RibuErr
 }
 
-type EE = Err<string>
+type EE = RibuErr<string>
 
-export function errIsNot<X, T extends Extract<X, EE>["name"]>(x: X, name: T): x is Extract<X, EE> & Exclude<X, Err<T>> {
-	return x instanceof Error && x.name !== name
+export function errIsNot<X, T extends Extract<X, EE>["name"]>(x: X, name: T): x is Extract<X, EE> & Exclude<X, RibuErr<T>> {
+	return x instanceof RibuErr && x.name !== name
 }
 
-export function errIs<X, T extends Extract<X, EE>["name"]>(x: X, name: T): x is Extract<X, Err<T>> {
-	return x instanceof Error && x.name === name
+export function errIs<X, T extends Extract<X, EE>["name"]>(x: X, name: T): x is Extract<X, RibuErr<T>> {
+	return x instanceof RibuErr && x.name === name
 }

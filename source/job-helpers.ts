@@ -1,5 +1,5 @@
 import { cancelJob, ERR_IN_GENFN, Job, linkJobs, markSettledAndNotifyObs, PARKED_CH_REC, SETTLED, unlinkFromAllJobs } from "./job.js"
-import { Err } from "./errors.js"
+import { Er, Err } from "./errors.js"
 import { VOID_LINK, VOID_OBJ } from "./system.js"
 
 // todo: consider passing a timeout parameter
@@ -111,7 +111,7 @@ abstract class JobPlus<OkRet = unknown, AllRet = unknown> extends Job<OkRet, All
 	_go(jobs: Job[], cancel = false) {
 		if (jobs.length === 0) {
 			this._st |= (SETTLED | ERR_IN_GENFN)
-			this._v = new Err(EMPTY_ARGS, this._nm) as AllRet
+			this._v = Err(EMPTY_ARGS, this._nm) as AllRet
 		}
 		else {
 			this._init()
@@ -151,7 +151,7 @@ function maxWaitFired(thisJob: JobPlus) {
 	thisJob._tm = VOID_OBJ
 	// Reset ._st and .val in case some passed-in jobs already settled with Err.
 	thisJob._st = 0
-	thisJob._v = new Err(TIME_OUT, thisJob._nm)
+	thisJob._v = Err(TIME_OUT, thisJob._nm)
 	// Make caller fail if it didn't call .err.
 	thisJob._st |= ERR_IN_GENFN
 	unlinkFromAllJobs(thisJob)
@@ -250,7 +250,7 @@ export type JobHadErr = Err<typeof JOB_HAD_ERR>
 function allOrErrOnTgJobDone<Jobs extends Job[]>(this: Job, tgJob: Jobs[number]) {
 	if (tgJob.err) {
 		this._st |= FAIL
-		return this._v = new Err(JOB_HAD_ERR, this._nm, tgJob._v)
+		return this._v = Err(JOB_HAD_ERR, this._nm, "", tgJob._v as Er)
 	}
 	let results = this._v as AllOkRet<Jobs>[]
 	results.push(tgJob._v as AllOkRet<Jobs>)
@@ -259,16 +259,6 @@ function allOrErrOnTgJobDone<Jobs extends Job[]>(this: Job, tgJob: Jobs[number])
 
 function allOrErrInit(this: Job) {
 	this._v = []
-}
-
-
-
-function allOrErrOnTgJobJobs<Jobs extends Job[]>(this: Job, tgJob: Jobs[number], args: unknown) {
-	if (tgJob.err) {
-		this._st |= FAIL
-		return this._v = new Err(JOB_HAD_ERR, this._nm, tgJob._v)
-	}
-	return args as AllOkRet<Jobs>[]
 }
 
 
@@ -304,6 +294,13 @@ I think I have access to current OkRet, AllRet. So:
 const res = yield* allOrErr(jobs).mapOut
 no .handle means all jobs succeeded.
 
+yield* in job, return object with just [Symbol.iterator]<something> (.handle: AllRet)
+
+allOrErr() should create -> JobPlus<
+
+yield* should settle -> Array<Jobs<OkRet>>
+	so it needs some info to return iterator<X>(this)
+	let's say is JobPlus<Jobs = Array<Jobs<AllRet>>>, ???>
 
 .handle:
 
@@ -311,7 +308,7 @@ if .mapOut is not called, OkRet is: Array<Jobs<JobsOkRet>>
 	Need to return: Array<Jobs<AllRet>> (input array) -> remove inner Job (if existing)
 
 if .mapOut is called, OkRet is: Array<JobsOkRet>
-	Need to return: Array<JobsOkRet>
+	Need to return: Err | Array<JobsOkRet>
 
 
 .mapOut:

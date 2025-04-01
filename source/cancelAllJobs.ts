@@ -1,6 +1,6 @@
 import { ExtendJobPlus } from "./job-helpers.js"
 import { addErrorToJobVal, ERR_IN_ONEND, ERR_IN_GENFN, type Job } from "./job.js"
-import { Er, type Err } from "./errors.js"
+import { type Er } from "./errors.js"
 
 // 	return cancelJobs as Pick<CancelAll, "err" | typeof Symbol.iterator | "maxWait">
 
@@ -9,6 +9,6 @@ export const cancel = ExtendJobPlus(CANCEL_ALL_OP_NAME, onTgJobDone, undefined, 
 
 function onTgJobDone<Jobs extends Job[]>(this: Job, tgJob: Jobs[number]): void | Er {
 	if (tgJob._st & ERR_IN_ONEND) {
-		return addErrorToJobVal(this, tgJob._v as Err, ERR_IN_GENFN) as Er
+		return addErrorToJobVal(this, tgJob._v as Er, ERR_IN_GENFN) as Er
 	}
 }

@@ -106,7 +106,7 @@ describe("yield* job.err", () => {
 		}
 
 		function* main() {
-			const res = yield* go(child).err
+			const res = yield* go(child).handle
 			return res
 		}
 

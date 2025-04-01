@@ -4,7 +4,7 @@
 		"rootDir": "..",
 		"types": ["vitest/globals", "node"],
 		"noEmit": true,
-	  "target": "ES2023",
+	  "target": "ES2024",
 	},
 	"include": [".", "../source"]
  }
