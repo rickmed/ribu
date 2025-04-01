@@ -38,7 +38,7 @@ describe("allOrErr()", () => {
 		}
 
 		function* main() {
-			return yield* allOrErr(go(child, ctx), go(job2)).err
+			return yield* allOrErr(go(child, ctx), go(job2)).handle
 		}
 
 		const rec = await go(main).promErr

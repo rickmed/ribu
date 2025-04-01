@@ -89,7 +89,7 @@ describe("yield* cancel(...jobs).err", () => {
 			const job1 = go(child, ctx)
 			const job2 = go(child2, ctx)
 			yield* sleep(1)
-			const res = yield* cancel(job1, job2).err
+			const res = yield* cancel(job1, job2).handle
 			return res
 		}
 
@@ -112,7 +112,7 @@ describe("yield* cancel(...jobs).err", () => {
 			const job1 = go(child, ctx)
 			const job2 = go(badChild, ctx)
 			yield* sleep(1)
-			const res = yield* cancel(job1, job2).err
+			const res = yield* cancel(job1, job2).handle
 			// Recovering: if res !== undefined, cancelling failed.
 			if (res) {
 				return "recovered"
@@ -214,7 +214,7 @@ describe("yield* cancel(...jobs).err", () => {
 			]
 			const jobs = children.map(go)
 			yield* sleep(1)
-			const res = yield* cancel(...jobs).err
+			const res = yield* cancel(...jobs).handle
 			return res
 		}
 
@@ -267,7 +267,7 @@ describe("yield* cancel(...jobs).err", () => {
 		function* main() {
 			chldJob = go(child1)
 			yield* sleep(2)
-			const cancelThing = cancel(chldJob).err
+			const cancelThing = cancel(chldJob).handle
 			yield* cancelThing
 			return "ok"
 		}
@@ -363,7 +363,7 @@ describe("cancel(...jobs).maxWait(ms).err", () => {
 			const job1 = go(child, ctx)
 			const job2 = go(child2, ctx)
 			yield* sleep(1)
-			const res = yield* cancel(job1, job2).maxWait(10).err
+			const res = yield* cancel(job1, job2).maxWait(10).handle
 			return res
 		}
 
@@ -398,7 +398,7 @@ describe("cancel(...jobs).maxWait(ms).err", () => {
 			const job1 = go(child1)
 			const job2 = go(child2)
 			yield* sleep(1)
-			const res = yield* cancel(job1, job2).maxWait(2).err
+			const res = yield* cancel(job1, job2).maxWait(2).handle
 			return res
 		}
 

@@ -171,9 +171,9 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 		return jobIterator<OkRet>(this)
 	}
 
-	get err() {
+	get handle() {
 		self = this
-		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, "job.err")
+		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, "job.handle")
 		return JOB_ITERABLE as SysIterable<AllRet>
 	}
 
@@ -187,23 +187,23 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 		return SYS_ITERABLE as SysIterable<void | Er>
 	}
 
-	get val() {
-		return this._v as OkRet
-	}
-
 	get done() {
 		return this._st & SETTLED
-	}
-
-	get notOk() {
-		return this._st & ANY_ERR_OR_CANCOK
 	}
 
 	get ok() {
 		return !(this._st & ANY_ERR_OR_CANCOK)
 	}
 
-	Ctx(ctx: Ctx) {
+	get OkVal() {
+		return this._v as OkRet
+	}
+
+	get err() {
+		return this._st & ANY_ERR_OR_CANCOK
+	}
+
+	setCtx(ctx: Ctx) {
 		this._ctx = ctx
 		return this as Job<OkRet, AllRet, Ctx>
 	}

@@ -1,5 +1,5 @@
-import { Err as newErr, go, sleep } from "ribu"
-import { Er, Err, type CancOK } from "../source/errors.js"
+import { go, sleep } from "ribu"
+import { Er, Err, UserErrCtor as newErr, type CancOK } from "../source/errors.js"
 import { cancel } from "../source/cancelAllJobs.js"
 import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr } from "../source/job-helpers.js"
 
@@ -34,18 +34,18 @@ export const tests = {
 	/* ********** Basic Job Tests ********** */
 
 	*["yield* job: the returned type exclude all Error types"]() {
-		type Exp1 = false | 1
+		type Exp = false | 1
 		const rec = yield* go(jobFn)
-		check_Eq<Exp1>()(rec)
+		check_Eq<Exp>()(rec)
 	},
 
-	/* When using .err, the returned type is the type returned from the
+	/* When using .handle, the returned type is the type returned from the
 		generator function, plus ECancOK (in case the job was cancelled) and the
 		generic Ribu Err from thrown values.
 	*/
-	*["yield* job.err"]() {
-		type Exp = false | 1 | Err<"Error1"> | Err<"Error2"> | Er | CancOK
-		const rec = yield* go(jobFn).err
+	*["yield* job.handle"]() {
+		type Exp = false | 1 | Err<"Error0"> | Err<"Error5"> | Er | CancOK
+		const rec = yield* go(jobFn).handle
 		check_Eq<Exp>()(rec)
 	},
 
@@ -76,15 +76,15 @@ export const tests = {
 		check_Eq<Exp>()(rec)
 	},
 
-	*["yield* cancel(...jobs).err"]() {
+	*["yield* cancel(...jobs).handle"]() {
 		type Exp = void | EmptyArgsErr | Er
-		const rec = yield* cancel(go(jobFn), go(jobFn)).err
+		const rec = yield* cancel(go(jobFn), go(jobFn)).handle
 		check_Eq<Exp>()(rec)
 	},
 
-	*["yield* cancel(...jobs).maxWait(ms).err"]() {
+	*["yield* cancel(...jobs).maxWait(ms).handle"]() {
 		type Exp = void | EmptyArgsErr | Er | TimeoutErr
-		const rec = yield* cancel(go(jobFn), go(jobFn)).maxWait(1).err
+		const rec = yield* cancel(go(jobFn), go(jobFn)).maxWait(1).handle
 		check_Eq<Exp>()(rec)
 	},
 
@@ -103,15 +103,15 @@ export const tests = {
 		check_Eq<Exp>()(rec)
 	},
 
-	*["yield* allOrErr().err"]() {
+	*["yield* allOrErr().handle"]() {
 		type Exp = NotErrs | JobHadErr | EmptyArgsErr
-		const rec = yield* allOrErr(go(jobFn), go(jobFn2)).err
+		const rec = yield* allOrErr(go(jobFn), go(jobFn2)).handle
 		check_Eq<Exp>()(rec)
 	},
 
-	*["yield* allOrErr().maxWait(ms).err"]() {
+	*["yield* allOrErr().maxWait(ms).handle"]() {
 		type Exp = NotErrs | JobHadErr | EmptyArgsErr | TimeoutErr
-		const rec = yield* allOrErr(go(jobFn), go(jobFn2)).maxWait(1).err
+		const rec = yield* allOrErr(go(jobFn), go(jobFn2)).maxWait(1).handle
 		check_Eq<Exp>()(rec)
 	},
 
@@ -130,9 +130,17 @@ export const tests = {
 }
 
 
-type SuperType<S, T extends S> = [S] extends [T] ? T : never
+type IsNever<T> = [T] extends [never] ? true : false
 
-function check_Eq<Exp>() {
-	return function <T extends Exp>(_rec: SuperType<Exp, T>) {
-	}
+type Without<T, U> = T extends U ? never : T
+
+type SymDiff<T, U> = Without<T, U> | Without<U, T>
+
+type Exact<T, U> =
+	IsNever<SymDiff<T, U>> extends true
+		? ([T] extends [U] ? ([U] extends [T] ? T : never) : never)
+		: never
+
+function check_Eq<T>() {
+	return <U>(_v: Exact<T, U>) => {}
 }

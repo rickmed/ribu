@@ -230,11 +230,12 @@ export function ExtendJobPlus<Jobs extends Job[], Ret>(
 	}
 }
 
+
 type AllOkRet<Jobs extends Job[]> = Jobs[number] extends Job<infer A, unknown> ? A : never
 
 
 
-/** *****************  allOrErr  ******************************************** */
+/** *****************  allOrErr()  ****************************************** */
 
 /** allOrErr()
  *  Returns an array of the  _successful_ settled values of the passed-in jobs.
@@ -247,7 +248,7 @@ const JOB_HAD_ERR = "JobHadErr"
 export type JobHadErr = Err<typeof JOB_HAD_ERR>
 
 function allOrErrOnTgJobDone<Jobs extends Job[]>(this: Job, tgJob: Jobs[number]) {
-	if (tgJob.notOk) {
+	if (tgJob.err) {
 		this._st |= FAIL
 		return this._v = new Err(JOB_HAD_ERR, this._nm, tgJob._v)
 	}
@@ -262,7 +263,115 @@ function allOrErrInit(this: Job) {
 
 
 
-/** *****************  all  ************************************************* */
+function allOrErrOnTgJobJobs<Jobs extends Job[]>(this: Job, tgJob: Jobs[number], args: unknown) {
+	if (tgJob.err) {
+		this._st |= FAIL
+		return this._v = new Err(JOB_HAD_ERR, this._nm, tgJob._v)
+	}
+	return args as AllOkRet<Jobs>[]
+}
+
+
+/*
+allOrErr():
+Both versions (return Jobs or values), need to return also JobHadErr.
+Let's try to work an API/Impl
+
+in, theory, resVals is just jobs.map(j => j.val)
+	I bit less performant than current impl, since current impl doesn't iterate all jobs.
+	it just processed the ones that returned ok values.
+	Most likely is that needs to accumulate results in an array.
+
+API:
+	const res = yield* allOrErr(jobs).mapOut.handle
+
+IMPLEMENTATION:
+Option 1)
+	if .mapOut is called, mutate: this.prototype._onTgJobDone = this.constructor.mapOutFn
+Option 2)
+	JobPlus to override [Symbol.iterator] to return this.v instead of this._v
+		so each JopPlus could override get val()
+
+ok, types: ==>>
+	ISSUE is that .mapOut and .handle need to return a different type depending
+	whether the other was called or not.
+
+.mapOut:
+	Array<JobsOkRet>
+
+I think I have access to current OkRet, AllRet. So:
+
+const res = yield* allOrErr(jobs).mapOut
+no .handle means all jobs succeeded.
+
+
+.handle:
+
+if .mapOut is not called, OkRet is: Array<Jobs<JobsOkRet>>
+	Need to return: Array<Jobs<AllRet>> (input array) -> remove inner Job (if existing)
+
+if .mapOut is called, OkRet is: Array<JobsOkRet>
+	Need to return: Array<JobsOkRet>
+
+
+.mapOut:
+
+if .handle is not called, OkRet is: Array<Jobs<JobsOkRet>>
+	Need to return: Array<JobsOkRet>
+
+if .handle is called, OkRet is: Array<JobsAllRet>
+	Need to return: Array<JobsAllRet>  (same array)
+
+
+
+
+
+
+	Promise.allSettled() / all() -> waits for all jobs to settle.
+		ok -> Job<JobAllRet>
+		err -> never
+	Promise.race() / first() -> settles when a job settled.
+		ok -> Job<JobAllRet>
+		err -> never
+	Promise.any() / firstOk() -> settles when first successful job.
+		ok -> Job<JobOkRet>
+		err -> Err<"AllJobsFailed">
+
+
+
+
+
+
+WHAT GENERAL CLASS TO USE
+need a PoolBase that I give an array of jobs and let me know when
+  a job settled.
+	- cancel? cancelErr? unSub? maxWait?
+
+Job Class is used currently, but these props are not being used:
+	_gn: generator
+	_pr: parent
+	_oe: onEnds
+
+Pool Props Needed:
+	fnArrJobIsDone:
+		(this: Job, tgJob: Job) => void
+	_ob:
+		Needed if caller is cancelled, can remove itself from Pool._ob
+	_tg: so that observing jobs can remove themselves from ob._tg when done
+
+
+
+
+all:
+	- Need to count jobs?
+
+*/
+
+
+
+
+
+/** *****************  all()  *********************************************** */
 
 // /*
 // - Returns an array of the settled values of the passed-in jobs,
@@ -307,7 +416,7 @@ function allOrErrInit(this: Job) {
 // }
 
 
-/** *****************  first  *********************************************** */
+/** *****************  first()  ********************************************* */
 
 
 // /*
@@ -341,7 +450,7 @@ function allOrErrInit(this: Job) {
 // }
 
 
-/** *****************  firstOk  ********************************************* */
+/** *****************  firstOk()  ******************************************* */
 
 // /*
 // - Returns the settled value of the first job that settles successfully.
@@ -377,6 +486,20 @@ function allOrErrInit(this: Job) {
 // 	})
 // }
 
+
+
+/** *****************  Utils  *********************************************** */
+
+
+
+type OkJob<A> = Job<A> & {
+	val: A
+	ok: true
+}
+
+export function isOk<A>(j: Job<A>): j is OkJob<A> {
+	return j.ok
+}
 
 
 // /* **********  newJob  ********** */
