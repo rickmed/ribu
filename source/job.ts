@@ -121,9 +121,9 @@ export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
  *  _ctx:
  * 	Datalot potentially used by user or internally.
  */
-export class _Job<Ret = unknown, Ctx = unknown> implements JobBase<Ret, Ctx> {
+export class _Job<Ok = unknown, _E = unknown, Ctx = unknown> implements JobBase<Ok, _E, Ctx> {
 
-	_v = undefined as Ret
+	_v = undefined as Ok | _E
 	_nm: string
 	_st = 0
 	_gn: RibuGen
@@ -168,13 +168,13 @@ export class _Job<Ret = unknown, Ctx = unknown> implements JobBase<Ret, Ctx> {
 
 	[Symbol.iterator]() {
 		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, `yield* ${this._nm}`)
-		return jobIterator<NotErrs<Ret>>(this)
+		return jobIterator<Ok>(this)
 	}
 
 	get handle() {
 		self = this
 		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, "job.handle")
-		return JOB_ITERABLE as SysIterable<Ret>
+		return JOB_ITERABLE as SysIterable<Ok | _E>
 	}
 
 	cancel() {
@@ -219,27 +219,27 @@ export class _Job<Ret = unknown, Ctx = unknown> implements JobBase<Ret, Ctx> {
 
 	byState() {
 		return this as unknown as (
-			| LiveJob<Ret, Ctx>
-			| OkJob<NotErrs<Ret>, Ctx>
-			| ErrJob<Errs<Ret>, Ctx>
+			| LiveJob<Ok | _E, Ctx>
+			| OkJob<Ok, Ctx>
+			| ErrJob<_E, Ctx>
 		)
 	}
 
-	live(): this is LiveJob<Ret, Ctx> {
+	live(): this is LiveJob<Ok | _E, Ctx> {
 		return !this.done
 	}
 
-	ok(): this is OkJob<NotErrs<Ret>, Ctx> {
+	ok(): this is OkJob<Ok, Ctx> {
 		return this._doneOk
 	}
 
-	err(): this is ErrJob<Errs<Ret>, Ctx> {
+	err(): this is ErrJob<_E, Ctx> {
 		return this._doneErr
 	}
 
 	setCtx<NewCtx>(ctx: NewCtx) {
 		this._ctx = ctx as unknown as Ctx
-		return this as unknown as Job<Ret, NewCtx>
+		return this as unknown as Job<Ok, _E, NewCtx>
 	}
 
 	get ctx() {
@@ -254,7 +254,7 @@ export class _Job<Ret = unknown, Ctx = unknown> implements JobBase<Ret, Ctx> {
 		this._st |= CANCEL_SIBLINGS_ON_ERR
 	}
 
-	then(res: (val: NotErrs<Ret>) => void, rej: (err: Errs<Ret>) => void) {
+	then(res: (val: Ok) => void, rej: (err: _E) => void) {
 		if (this._st & SETTLED) {
 			resolveJobThenable(res, rej, this)
 		}
@@ -270,7 +270,7 @@ export class _Job<Ret = unknown, Ctx = unknown> implements JobBase<Ret, Ctx> {
 
 	get promErr() {
 		const self = this
-		return new Promise<Ret>((res) => {
+		return new Promise<Ok | _E>((res) => {
 			if (self._st & SETTLED) {
 				res(self._v)
 			}
@@ -751,40 +751,40 @@ export function next(): _Job | false {
 
 //* ****************   User API   ****************************************** *//
 
-export interface JobBase<Ret, Ctx> {
+export interface JobBase<Ok = unknown, _E = unknown, Ctx = unknown> {
 
-	[Symbol.iterator]: () => SysIterator<NotErrs<Ret>>
-	readonly handle: SysIterable<Ret>
-	setCtx: <NewCtx>(ctx: NewCtx) => Job<Ret, NewCtx>
+	[Symbol.iterator]: () => SysIterator<Ok>
+	readonly handle: SysIterable<Ok | _E>
+	setCtx: <NewCtx>(ctx: NewCtx) => Job<Ok, _E, NewCtx>
 	readonly ctx: Ctx
 	cancel: () => SysIterable<void>
 	cancelHandle: () => SysIterable<void | Er>
 	onEnd: (fn: OnEnd) => void
-	then: (res: (val: NotErrs<Ret>) => void, rej: (err: Errs<Ret>) => void) => void
-	readonly promErr: Promise<Ret>
+	then: (res: (val: Ok) => void, rej: (err: _E) => void) => void
+	readonly promErr: Promise<Ok | _E>
 
 	readonly done: boolean
 	readonly cancelled: boolean
 
-	live: () => this is LiveJob<Ret, Ctx>
-	ok: () => this is OkJob<NotErrs<Ret>, Ctx>
-	err: () => this is ErrJob<Errs<Ret>, Ctx>
+	live: () => this is LiveJob<Ok | _E, Ctx>
+	ok: () => this is OkJob<Ok, Ctx>
+	err: () => this is ErrJob<_E, Ctx>
 
 	readonly st: "live" | "ok" | "err"
 	byState: () =>
-		| LiveJob<Ret, Ctx>
-		| OkJob<NotErrs<Ret>, Ctx>
-		| ErrJob<Errs<Ret>, Ctx>
+		| LiveJob<Ok | _E, Ctx>
+		| OkJob<Ok, Ctx>
+		| ErrJob<_E, Ctx>
 }
 
 export function go<Args extends unknown[], GenFnRet>(
 	genFn: RibuGenFn<GenFnRet, Args>,
 	...args: Args
-): Job<GenFnRet | ECancOk | Er> {
+): Job<NotErrs<GenFnRet>, Errs<GenFnRet> | ECancOk | Er> {
 	const gen = genFn(...args)
 	const job = new _Job(genFn.name, gen, sys.runningJob)
 	resumeJob(job)
-	return job as Job<GenFnRet | ECancOk | Er>
+	return job as Job<NotErrs<GenFnRet>, Errs<GenFnRet> | ECancOk | Er>
 }
 
 export function me(): _Job {
@@ -804,8 +804,8 @@ export function onEnd(onEnd: OnEnd, thisJob = sys.runningJob) {
 
 //* ****************   Types   ******************************************** *//
 
-export type Job<Ret = unknown, Ctx = unknown> =
-	JobBase<Ret, Ctx>
+export type Job<Ok = unknown, _E = unknown, Ctx = unknown> =
+	JobBase<Ok, _E, Ctx>
 
 export type ByStateJobBase = {
 	ok: never
@@ -813,16 +813,18 @@ export type ByStateJobBase = {
 	live: never
 }
 
-export type LiveJob<Ret, Ctx = unknown> = Job<Ret, Ctx> & {
+export type LiveJob<Ok, _E, Ctx = unknown> = Job<Ok, _E, Ctx> & {
 	readonly st: "live"
 	readonly done: false
 } & ByStateJobBase
 
-export type OkJob<OkRet, Ctx = unknown> = Job<OkRet, Ctx> & {
+export type OkJob<Ok, Ctx = unknown> = Job<Ok, _e, Ctx> & {
 	readonly st: "ok"
 	readonly done: true
-	readonly val: OkRet
+	readonly val: Ok
 } & ByStateJobBase
+
+
 
 export type ErrJob<ErrsRet, Ctx = unknown> = Job<ErrsRet, Ctx> & {
 	readonly st: "err"
