@@ -182,7 +182,7 @@ export class _Job<Ret = unknown, Ctx = unknown> implements JobBase<Ret, Ctx> {
 		return SYS_ITERABLE as SysIterable<void>
 	}
 
-	cancelErr() {
+	cancelHandle() {
 		handleCancel(this, "job.cancelErr()", PARKED_CANCEL_ERR)
 		return SYS_ITERABLE as SysIterable<void | Er>
 	}
@@ -758,7 +758,7 @@ export interface JobBase<Ret, Ctx> {
 	setCtx: <NewCtx>(ctx: NewCtx) => Job<Ret, NewCtx>
 	readonly ctx: Ctx
 	cancel: () => SysIterable<void>
-	cancelErr: () => SysIterable<void | Er>
+	cancelHandle: () => SysIterable<void | Er>
 	onEnd: (fn: OnEnd) => void
 	then: (res: (val: NotErrs<Ret>) => void, rej: (err: Errs<Ret>) => void) => void
 	readonly promErr: Promise<Ret>
@@ -807,31 +807,30 @@ export function onEnd(onEnd: OnEnd, thisJob = sys.runningJob) {
 export type Job<Ret = unknown, Ctx = unknown> =
 	JobBase<Ret, Ctx>
 
-export type LiveJob<Ret, Ctx = unknown> = Job<Ret, Ctx> & ByStateJobBase & {
-	readonly st: "live"
-	readonly done: false
-}
-
-export type OkJob<OkRet, Ctx = unknown> =
-	Job<OkRet, Ctx> &
-	ByStateJobBase &
-	{
-	readonly st: "ok"
-	readonly done: true
-	readonly val: OkRet
-	}
-
-export type ErrJob<ErrsRet, Ctx = unknown> = Job<ErrsRet, Ctx> & ByStateJobBase & {
-	readonly st: "err"
-	readonly done: true
-	readonly reason: ErrsRet
-}
-
 export type ByStateJobBase = {
 	ok: never
 	err: never
 	live: never
 }
+
+export type LiveJob<Ret, Ctx = unknown> = Job<Ret, Ctx> & {
+	readonly st: "live"
+	readonly done: false
+} & ByStateJobBase
+
+export type OkJob<OkRet, Ctx = unknown> = Job<OkRet, Ctx> & {
+	readonly st: "ok"
+	readonly done: true
+	readonly val: OkRet
+} & ByStateJobBase
+
+export type ErrJob<ErrsRet, Ctx = unknown> = Job<ErrsRet, Ctx> & {
+	readonly st: "err"
+	readonly done: true
+	readonly reason: ErrsRet
+} & ByStateJobBase
+
+
 
 export type Errs<T> = Extract<T, Error>
 export type NotErrs<T> = Exclude<T, Error>

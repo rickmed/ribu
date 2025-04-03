@@ -152,7 +152,7 @@ describe("yield* job.cancelErr()", () => {
 		function* main() {
 			const chld = go(child1)
 			yield* sleep(1)
-			const res = yield* chld.cancelErr()
+			const res = yield* chld.cancelHandle()
 			// Recovering: if res !== undefined, cancelling failed.
 			if (res) {
 				return "saved"
@@ -171,7 +171,7 @@ describe("yield* job.cancelErr()", () => {
 		function* main() {
 			const chld = go(child, ctx)
 			yield* sleep(1)
-			return yield* chld.cancelErr()
+			return yield* chld.cancelHandle()
 		}
 
 		const rec = await go(main).promErr
@@ -194,7 +194,7 @@ describe("yield* job.cancelErr()", () => {
 		function* main() {
 			const chld = go(child1)
 			yield* sleep(2)
-			const rec = yield* chld.cancelErr()
+			const rec = yield* chld.cancelHandle()
 			return { rec }
 		}
 

@@ -1,8 +1,8 @@
 import { go, sleep } from "ribu"
 import { Er, Err, type ECancOk } from "../source/errors.js"
 import { cancel } from "../source/cancelAllJobs.js"
-import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr, ok, groupByState, err, live, PrettyOkJob } from "../source/job-helpers.js"
-import {type OkJob, type ErrJob, LiveJob, Job, type ByStateJobBase } from "../source/job.js"
+import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr, ok, groupByState, err, live } from "../source/job-helpers.js"
+import {type OkJob, type ErrJob, LiveJob, type ByStateJobBase } from "../source/job.js"
 
 export function* jobFn1(x?: number) {
 	yield* sleep(1)
@@ -44,7 +44,6 @@ type AllErrsJob2 = ErrsJob2 | RibuErrs
 type OksJob2 = "hi" | SomeObj
 type AllJob2 = OksJob2 | AllErrsJob2
 
-
 type NotErr = false | 1 | "hi"
 type NotErrs = NotErr[]
 
@@ -76,7 +75,7 @@ export const tests = {
 
 	*["yield* job.cancelErr()"]() {
 		type Exp = void | Er
-		const _rec = yield* go(jobFn1).cancelErr()
+		const _rec = yield* go(jobFn1).cancelHandle()
 		true satisfies Equal<typeof _rec, Exp>
 	},
 

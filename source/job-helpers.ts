@@ -112,14 +112,14 @@ export const FAIL = HALT | ERR_IN_GENFN
 export const TIME_OUT = "Timeout"
 export type TimeoutErr = Err<typeof TIME_OUT>
 
-abstract class JobPlus<OkRet = unknown, AllRet = unknown> extends Job<OkRet, AllRet> {
+abstract class JobPlus<Ret = unknown, Ctx = unknown> extends Job<Ret, Ctx> {
 	constructor() {
 		super("")
 	}
 
 	maxWait(ms: number) {
 		this._tm = setTimeout(maxWaitFired, ms, this)
-		return this as Job<OkRet, AllRet | TimeoutErr>
+		return this as Job<Ret | TimeoutErr, Ctx>
 	}
 
 	_go(jobs: Job[], cancel = false) {
