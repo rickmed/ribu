@@ -14,7 +14,7 @@ import {
 	type SysIterable,
 	ensurePreviousYieldAndSetCallerJobNextSt,
 } from "./system.js"
-import { type Er, RibuErr, _Err, CANC_OK, CancOK } from "./errors.js"
+import { type Er, RibuErr, _Err, E_CANC_OK, ECancOk } from "./errors.js"
 import { Chan, PutterLink, ReceiverLink } from "./channel.js"
 
 // todo: implement "unsub() to have something like trio's moveOnAfter()
@@ -121,9 +121,9 @@ export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
  *  _ctx:
  * 	Datalot potentially used by user or internally.
  */
-export class _Job<Ok = unknown, All = unknown, Ctx = unknown> implements Job<Ok, All, Ctx> {
+export class _Job<Ret = unknown, Ctx = unknown> implements Job<Ret, Ctx> {
 
-	_v = undefined as Ok | All
+	_v = undefined as Ret
 	_nm: string
 	_st = 0
 	_gn: RibuGen
@@ -168,13 +168,13 @@ export class _Job<Ok = unknown, All = unknown, Ctx = unknown> implements Job<Ok,
 
 	[Symbol.iterator]() {
 		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, `yield* ${this._nm}`)
-		return jobIterator<Ok>(this)
+		return jobIterator<NotErrs<Ret>>(this)
 	}
 
 	get handle() {
 		self = this
 		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, "job.handle")
-		return JOB_ITERABLE as SysIterable<All>
+		return JOB_ITERABLE as SysIterable<Ret>
 	}
 
 	cancel() {
@@ -211,9 +211,9 @@ export class _Job<Ok = unknown, All = unknown, Ctx = unknown> implements Job<Ok,
 		return !!(this._st & CANCELLED)
 	}
 
-	is(tag: "ok"): this is OkJob<Ok, All, Ctx>;
-	is(tag: "err"): this is ErrJob<Ok, All, Ctx>;
-	is(tag: "notDone"): this is Job<Ok, All, Ctx>;
+	is(tag: "ok"): this is OkJob<NotErrs<Ret>, Ctx>;
+	is(tag: "err"): this is ErrJob<Errs<Ret>, Ctx>;
+	is(tag: "notDone"): this is Job<Ret, Ctx>;
 	is(tag: "ok" | "err" | "notDone"): boolean {
 		if (tag === "ok") return this._doneOK
 		if (tag === "err") return this._doneErr
@@ -222,7 +222,7 @@ export class _Job<Ok = unknown, All = unknown, Ctx = unknown> implements Job<Ok,
 
 	setCtx<NewCtx>(ctx: NewCtx) {
 		this._ctx = ctx as unknown as Ctx
-		return this as unknown as Job<Ok, All, NewCtx>
+		return this as unknown as Job<Ret, NewCtx>
 	}
 
 	get ctx() {
@@ -237,7 +237,7 @@ export class _Job<Ok = unknown, All = unknown, Ctx = unknown> implements Job<Ok,
 		this._st |= CANCEL_SIBLINGS_ON_ERR
 	}
 
-	then(res: (val: Ok) => void, rej: (err: All) => void) {
+	then(res: (val: NotErrs<Ret>) => void, rej: (err: Errs<Ret>) => void) {
 		if (this._st & SETTLED) {
 			resolveJobThenable(res, rej, this)
 		}
@@ -253,9 +253,9 @@ export class _Job<Ok = unknown, All = unknown, Ctx = unknown> implements Job<Ok,
 
 	get promErr() {
 		const self = this
-		return new Promise<All>((res) => {
+		return new Promise<Ret>((res) => {
 			if (self._st & SETTLED) {
-				res(self._v as All)
+				res(self._v)
 			}
 			else {
 				const link = freshLink(res as OnJobDone, self)
@@ -487,7 +487,7 @@ function settleJob(thisJob: _Job) {
 	}
 
 	if (_st & CANCELLED && !(_st & ERR_IN_ONEND)) {
-		thisJob._v = CANC_OK
+		thisJob._v = E_CANC_OK
 		thisJob._st = CANCOK
 	}
 
@@ -734,26 +734,26 @@ export function next(): _Job | false {
 
 //* ****************   User API   ****************************************** *//
 
-export interface Job<Ok = unknown, All = unknown, Ctx = unknown> {
+export interface Job<Ret = unknown, Ctx = unknown> {
 
-	[Symbol.iterator]: () => SysIterator<Ok>
-	readonly handle: SysIterable<All>
-	setCtx: <NewCtx>(ctx: NewCtx) => Job<Ok, All, NewCtx>
+	[Symbol.iterator]: () => SysIterator<NotErrs<Ret>>
+	readonly handle: SysIterable<Ret>
+	setCtx: <NewCtx>(ctx: NewCtx) => Job<Ret, NewCtx>
 	readonly ctx: Ctx
 	cancel: () => SysIterable<void>
 	cancelErr: () => SysIterable<void | Er>
 	onEnd: (fn: OnEnd) => void
-	then: (res: (val: Ok) => void, rej: (err: All) => void) => void
-	readonly promErr: Promise<All>
+	then: (res: (val: NotErrs<Ret>) => void, rej: (err: Errs<Ret>) => void) => void
+	readonly promErr: Promise<Ret>
 
 	readonly done: boolean
 	readonly cancelled: boolean
 	// eslint-disable-next-line @typescript-eslint/method-signature-style
-	is(tag: "ok"): this is OkJob<Ok, All, Ctx>
+	is(tag: "ok"): this is OkJob<NotErrs<Ret>, Ctx>
 	// eslint-disable-next-line @typescript-eslint/method-signature-style
-	is(tag: "err"): this is ErrJob<Ok, All, Ctx>
+	is(tag: "err"): this is ErrJob<Errs<Ret>, Ctx>
 	// eslint-disable-next-line @typescript-eslint/method-signature-style
-	is(tag: "notDone"): this is Job<Ok, All, Ctx>
+	is(tag: "notDone"): this is Job<Ret, Ctx>
 }
 
 export function go<Args extends unknown[], Ret>(
@@ -761,9 +761,9 @@ export function go<Args extends unknown[], Ret>(
 	...args: Args
 ) {
 	const gen = genFn(...args)
-	const job = new _Job<Exclude<Ret, Error>, Ret | Er | CancOK>(genFn.name, gen, sys.runningJob)
+	const job = new _Job(genFn.name, gen, sys.runningJob)
 	resumeJob(job)
-	return job as unknown as Job<Exclude<Ret, Error>, Ret | Er | CancOK>
+	return job as unknown as Job<Ret | ECancOk | Er>
 }
 
 export function me(): _Job {
@@ -784,23 +784,21 @@ export function onEnd(onEnd: OnEnd, thisJob = sys.runningJob) {
 //* ****************   Types   ******************************************** *//
 
 export type GetTypes<J> =
-	J extends Job<infer Ok, infer All, infer Ctx> ? [Ok, All, Ctx] : never
+	J extends Job<infer Ret, infer Ctx> ? [Ret, Ctx] : never
 
-export type OkJob<Ok, All, Ctx = unknown> =
-	Job<Ok, All, Ctx> &
+export type OkJob<OkRet, Ctx = unknown> =
+	Job<OkRet, Ctx> &
 	{
-		readonly val: Ok
+		readonly val: OkRet
 		readonly done: true
 	}
 
-export type ErrJob<Ok, All, Ctx = unknown> =
-	Job<Ok, All, Ctx> &
+export type ErrJob<ErrsRet, Ctx = unknown> =
+	Job<ErrsRet, Ctx> &
 	{
-		readonly reason: Extract<All, Error>
+		readonly reason: ErrsRet
 		readonly done: true
 	}
 
-
-// export type ErrJobFrom<J> = J extends Job<infer Ok, infer All, infer Ctx>
-// 	? J & ErrJob<Ok, All, Ctx>
-// 	: never
+export type Errs<T> = Extract<T, Error>
+export type NotErrs<T> = Exclude<T, Error>

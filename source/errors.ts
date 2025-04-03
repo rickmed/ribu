@@ -74,7 +74,7 @@ export class RibuErr<Name extends string = string> implements Error {
 	}
 
 	isCancOK() {
-		return this instanceof CancOK
+		return this instanceof ECancOk
 	}
 
 	// todo: implement this
@@ -95,13 +95,13 @@ export function Err<Name extends string>(name: Name, fnName = "", msg = "", ribu
 	return new RibuErr<Name>(name, fnName, ribuErr, undefined, msg) as Err<Name>
 }
 
-const CANC_OK_NAME = "CancOK"
-export class CancOK extends RibuErr {
+const E_CANC_OK_NAME = "ECancOk"
+export class ECancOk extends RibuErr {
 	constructor() {
-		super(CANC_OK_NAME, "")
+		super(E_CANC_OK_NAME, "")
 	}
 }
-export const CANC_OK = new CancOK() as Err<typeof CANC_OK_NAME>
+export const E_CANC_OK = new ECancOk() as Err<typeof E_CANC_OK_NAME>
 
 
 export function isErr(x: unknown): x is RibuErr<string> {

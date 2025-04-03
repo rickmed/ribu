@@ -1,7 +1,7 @@
 import { go, sleep } from "ribu"
-import { Er, Err, type CancOK } from "../source/errors.js"
+import { Er, Err, type ECancOk } from "../source/errors.js"
 import { cancel } from "../source/cancelAllJobs.js"
-import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr, isOk } from "../source/job-helpers.js"
+import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr, isOk, groupByState } from "../source/job-helpers.js"
 import { type Job, type OkJob, type ErrJob } from "../source/job.js"
 
 export function* jobFn1(x?: number) {
@@ -18,10 +18,16 @@ export function* jobFn1(x?: number) {
 	return Err("Error1")
 }
 
+type SomeObj = {c: number}
+
 export function* jobFn2(x?: number) {
 	yield* sleep(1)
 	if (!x) {
 		return "hi"
+	}
+	if (x < 10) {
+		const obj: SomeObj = {c: 56}
+		return obj
 	}
 	return Err("Error2")
 }
@@ -29,8 +35,8 @@ export function* jobFn2(x?: number) {
 
 const job = go(jobFn1)
 
-if (job.is(PASS)) {
-  job
+if (job.is("ok")) {
+	job
 }
 else if (job.is("err")) {
 	const err = job.reason
@@ -45,7 +51,7 @@ const jobCtx = job.setCtx(false)
 
 const val = jobCtx.val
 
-if (jobCtx.is(PASS)) {
+if (jobCtx.is("ok")) {
 	const c = jobCtx.ctx
 	const val = jobCtx.val
 	const done = jobCtx.done
@@ -68,8 +74,7 @@ const _jobs = [jobCtx, job2]
 
 const doneOKJobs = _jobs
 	// .filter(isOk)
-	.filter(j => j.is(PASS))
-	.map(j => j.val)
+	.filter(j => j.is("ok"))
 
 const grouped = groupByState(_jobs)
 const doneOk = grouped.doneOk
@@ -77,9 +82,8 @@ const doneOk = grouped.doneOk
 const doneErr = grouped.doneErr
 	.map(j => j.reason)
 const notDone = grouped.notDone
-	.map(j => j.)
 
-type RibuErrs = Er | CancOK
+type RibuErrs = Er | ECancOk
 type ErrsJob1 = Err<"Error0"> | Err<"Error1">
 type AllErrsJob1 = ErrsJob1 | RibuErrs
 type NotErrsJob1 = false | 1
@@ -96,7 +100,7 @@ export const tests = {
 	*["yield* job: the returned type exclude all Error types"]() {
 		type Exp = NotErrsJob1
 		const _rec = yield* go(jobFn1)
-		PASS satisfies Equal<typeof _rec, Exp>
+		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	/* When using .handle, the returned type is the type returned from the
@@ -106,39 +110,39 @@ export const tests = {
 	*["yield* job.handle"]() {
 		type Exp = NotErrsJob1 | AllErrsJob1
 		const _rec = yield* go(jobFn1).handle
-		PASS satisfies Equal<typeof _rec, Exp>
+		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* job.cancel()"]() {
 		type Exp = void
 		const _rec = yield* go(jobFn1).cancel()
-		PASS satisfies Equal<typeof _rec, Exp>
+		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* job.cancelErr()"]() {
 		type Exp = void | Er
 		const _rec = yield* go(jobFn1).cancelErr()
-		PASS satisfies Equal<typeof _rec, Exp>
+		true satisfies Equal<typeof _rec, Exp>
 	},
 
-	*["job states using job.is()"]() {
-		type Exp = void | Er
+	["job states using job.is()"]() {
 		const job = go(jobFn1)
 		if (job.is("ok")) {
-			const val = job.val
-			PASS satisfies Equal<typeof job, Job<NotErrsJob1, AllJob1>>
-			PASS satisfies Equal<typeof val, NotErrsJob1>
+			const _val = job.val
+			true satisfies Equal<typeof job, OkJob<NotErrsJob1>>
+			true satisfies Equal<typeof _val, NotErrsJob1>
 		}
 		else if (job.is("err")) {
-			const err = job.reason
-			PASS satisfies Equal<typeof err, AllErrsJob1>
+			const _err = job.reason
+			true satisfies Equal<typeof job, ErrJob<AllErrsJob1>>
+			true satisfies Equal<typeof _err, AllErrsJob1>
 		}
 		else {
 			// const c = job.v
-			PASS satisfies Equal<typeof job, Job<NotErrsJob1, AllJob1>>
+			true satisfies Equal<typeof job, Job<NotErrsJob1, AllJob1>>
 		}
 
-		PASS satisfies Equal<typeof _rec, Exp>
+		job satisfies never
 	},
 
 
@@ -147,25 +151,25 @@ export const tests = {
 	*["yield* cancel(...jobs)"]() {
 		type Exp = void
 		const _rec = yield* cancel(go(jobFn1), go(jobFn1))
-		PASS satisfies Equal<typeof _rec, Exp>
+		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* cancel(...jobs).maxWait(ms)"]() {
 		type Exp = void
 		const _rec = yield* cancel(go(jobFn1), go(jobFn1)).maxWait(1)
-		PASS satisfies Equal<typeof _rec, Exp>
+		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* cancel(...jobs).handle"]() {
 		type Exp = void | EmptyArgsErr | Er
 		const _rec = yield* cancel(go(jobFn1), go(jobFn1)).handle
-		PASS satisfies Equal<typeof _rec, Exp>
+		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* cancel(...jobs).maxWait(ms).handle"]() {
 		type Exp = void | EmptyArgsErr | Er | TimeoutErr
 		const _rec = yield* cancel(go(jobFn1), go(jobFn1)).maxWait(1).handle
-		PASS satisfies Equal<typeof _rec, Exp>
+		true satisfies Equal<typeof _rec, Exp>
 	},
 
 
@@ -174,25 +178,25 @@ export const tests = {
 	*["yield* allOrErr()"]() {
 		type Exp = NotErrs
 		const _rec = yield* allOrErr(go(jobFn1), go(jobFn2))
-		PASS satisfies Equal<typeof _rec, Exp>
+		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* allOrErr().maxWait(ms)"]() {
 		type Exp = NotErrs
 		const _rec = yield* allOrErr(go(jobFn1), go(jobFn2)).maxWait(1)
-		PASS satisfies Equal<typeof _rec, Exp>
+		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* allOrErr().handle"]() {
 		type Exp = NotErrs | JobHadErr | EmptyArgsErr
 		const _rec = yield* allOrErr(go(jobFn1), go(jobFn2)).handle
-		PASS satisfies Equal<typeof _rec, Exp>
+		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* allOrErr().maxWait(ms).handle"]() {
 		type Exp = NotErrs | JobHadErr | EmptyArgsErr | TimeoutErr
 		const _rec = yield* allOrErr(go(jobFn1), go(jobFn2)).maxWait(1).handle
-		PASS satisfies Equal<typeof _rec, Exp>
+		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	// todo: not sure if can be cancelled
@@ -209,7 +213,6 @@ export const tests = {
 	// },
 }
 
-const PASS = PASS
 
 type IsEqual<A, B> =
 	(<T>() => T extends A ? 1 : 2) extends
@@ -222,5 +225,5 @@ type IsEqual<A, B> =
 
 type Equal<Rec, Exp> =
 	IsEqual<Rec, Exp> extends true ?
-	typeof PASS :
+	true :
 	{ error: "Type mismatch", rec: Rec, exp: Exp }

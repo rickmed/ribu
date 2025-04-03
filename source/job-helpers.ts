@@ -11,6 +11,7 @@ import {
 	  OkJob,
 	  ErrJob,
 	  GetTypes,
+	  Errs,
 	} from "./job.js"
 import { Er, Err } from "./errors.js"
 import { VOID_LINK, VOID_OBJ } from "./system.js"
@@ -474,20 +475,20 @@ export function groupByState<J extends Job>(jobs: J[]) {
 	return { doneOk, doneErr, notDone }
 }
 
-type OkJobFrom<J> = J extends Job<infer Ok, infer All, infer Ctx>
-	? J & OkJob<Ok, All, Ctx>
+type OkJobFrom<J> = J extends Job<infer Ret, infer Ctx>
+	? J & OkJob<NotErrs<Ret>, Ctx>
 	: never
 
-type PrettyOkJob<J> = J extends Job<infer Ok, infer All, infer Ctx>
-	? OkJob<Ok, All, Ctx>
+type PrettyOkJob<J> = J extends Job<infer Ret, infer Ctx>
+	? OkJob<NotErrs<Ret>, Ctx>
 	: never
 
-type ErrJobFrom<J> = J extends Job<infer Ok, infer All, infer Ctx>
-	? J & ErrJob<Ok, All, Ctx>
+type ErrJobFrom<J> = J extends Job<infer Ret, infer Ctx>
+	? J & ErrJob<Errs<Ret>, Ctx>
 	: never
 
-type PrettyErrJob<J> = J extends Job<infer Ok, infer All, infer Ctx>
-	? ErrJob<Ok, All, Ctx>
+type PrettyErrJob<J> = J extends Job<infer Ret, infer Ctx>
+	? ErrJob<Errs<Ret>, Ctx>
 	: never
 
 
