@@ -10,8 +10,8 @@ import {
 	  ANY_ERR_OR_CANCOK,
 	  OkJob,
 	  ErrJob,
-	  GetTypes,
 	  Errs,
+	  LiveJob,
 	} from "./job.js"
 import { Er, Err } from "./errors.js"
 import { VOID_LINK, VOID_OBJ } from "./system.js"
@@ -446,40 +446,42 @@ all:
 
 /** *****************  Utils  *********************************************** */
 
-
-export function isOk<J extends Job>(job: J): job is OkJobFrom<J> {
-	return (job as unknown as _Job)._doneOK
+export function live<J extends Job>(job: J): job is LiveJobFrom<J> {
+	return !(job as unknown as _Job).done
 }
 
-export function isErr<J extends Job>(job: J): job is ErrJobFrom<J> {
+export function ok<J extends Job>(job: J): job is OkJobFrom<J> {
+	return (job as unknown as _Job)._doneOk
+}
+
+export function err<J extends Job>(job: J): job is ErrJobFrom<J> {
 	return (job as unknown as _Job)._doneErr
 }
 
-
 export function groupByState<J extends Job>(jobs: J[]) {
-	const doneOk: PrettyOkJob<J>[] = []
-	const doneErr: PrettyErrJob<J>[] = []
-	const notDone: J[] = []
+	const _ok: PrettyOkJob<J>[] = []
+	const _err: PrettyErrJob<J>[] = []
+	const _live: PrettyLiveJob<J>[] = []
 	for (let i = 0; i < jobs.length; i++) {
 		const job = jobs[i]!
-		if (isOk(job)) {
-			doneOk.push(job)
+		if (ok(job)) {
+			_ok.push(job)
 		}
-		else if (isErr(job)) {
-			doneErr.push(job)
+		else if (err(job)) {
+			_err.push(job)
 		}
 		else {
-			notDone.push(job)
+			_live.push(job as LiveJobFrom<J>)
 		}
 	}
-	return { doneOk, doneErr, notDone }
+	return { ok: _ok, err: _err, live: _live }
 }
 
 type OkJobFrom<J> = J extends Job<infer Ret, infer Ctx>
 	? J & OkJob<NotErrs<Ret>, Ctx>
 	: never
 
-type PrettyOkJob<J> = J extends Job<infer Ret, infer Ctx>
+export type PrettyOkJob<J> = J extends Job<infer Ret, infer Ctx>
 	? OkJob<NotErrs<Ret>, Ctx>
 	: never
 
@@ -487,13 +489,17 @@ type ErrJobFrom<J> = J extends Job<infer Ret, infer Ctx>
 	? J & ErrJob<Errs<Ret>, Ctx>
 	: never
 
-type PrettyErrJob<J> = J extends Job<infer Ret, infer Ctx>
+export type PrettyErrJob<J> = J extends Job<infer Ret, infer Ctx>
 	? ErrJob<Errs<Ret>, Ctx>
 	: never
 
+type LiveJobFrom<J> = J extends Job<infer Ret, infer Ctx>
+	? J & LiveJob<Ret, Ctx>
+	: never
 
-
-
+export type PrettyLiveJob<J> = J extends Job<infer Ret, infer Ctx>
+	? LiveJob<Ret, Ctx>
+	: never
 
 
 // /* **********  newJob  ********** */

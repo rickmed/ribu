@@ -1,8 +1,8 @@
 import { go, sleep } from "ribu"
 import { Er, Err, type ECancOk } from "../source/errors.js"
 import { cancel } from "../source/cancelAllJobs.js"
-import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr, isOk, groupByState } from "../source/job-helpers.js"
-import { type Job, type OkJob, type ErrJob } from "../source/job.js"
+import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr, ok, groupByState, err, live, PrettyOkJob } from "../source/job-helpers.js"
+import {type OkJob, type ErrJob, LiveJob, Job, type ByStateJobBase } from "../source/job.js"
 
 export function* jobFn1(x?: number) {
 	yield* sleep(1)
@@ -32,73 +32,28 @@ export function* jobFn2(x?: number) {
 	return Err("Error2")
 }
 
-
-const job = go(jobFn1)
-
-if (job.is("ok")) {
-	job
-}
-else if (job.is("err")) {
-	const err = job.reason
-}
-else {
-	const c = job.v
-}
-
-
-
-const jobCtx = job.setCtx(false)
-
-const val = jobCtx.val
-
-if (jobCtx.is("ok")) {
-	const c = jobCtx.ctx
-	const val = jobCtx.val
-	const done = jobCtx.done
-	if (jobCtx.is("err")) {
-		const val = jobCtx.val
-	}
-}
-
-if (jobCtx.is("err")) {
-	const err = jobCtx.reason
-}
-
-
-if (isOk(job)) {
-	const val = job.val
-}
-
-const job2 = go(jobFn2)
-const _jobs = [jobCtx, job2]
-
-const doneOKJobs = _jobs
-	// .filter(isOk)
-	.filter(j => j.is("ok"))
-
-const grouped = groupByState(_jobs)
-const doneOk = grouped.doneOk
-	.map(j => j.val)
-const doneErr = grouped.doneErr
-	.map(j => j.reason)
-const notDone = grouped.notDone
-
 type RibuErrs = Er | ECancOk
+
 type ErrsJob1 = Err<"Error0"> | Err<"Error1">
 type AllErrsJob1 = ErrsJob1 | RibuErrs
-type NotErrsJob1 = false | 1
-type AllJob1 = NotErrsJob1 | AllErrsJob1
+type OksJob1 = false | 1
+type AllJob1 = OksJob1 | AllErrsJob1
+
+type ErrsJob2 = Err<"Error2">
+type AllErrsJob2 = ErrsJob2 | RibuErrs
+type OksJob2 = "hi" | SomeObj
+type AllJob2 = OksJob2 | AllErrsJob2
+
+
 type NotErr = false | 1 | "hi"
 type NotErrs = NotErr[]
-
-
 
 export const tests = {
 
 	/* ********** Basic Job Tests ********** */
 
 	*["yield* job: the returned type exclude all Error types"]() {
-		type Exp = NotErrsJob1
+		type Exp = OksJob1
 		const _rec = yield* go(jobFn1)
 		true satisfies Equal<typeof _rec, Exp>
 	},
@@ -108,7 +63,7 @@ export const tests = {
 		generic Ribu Err from thrown values.
 	*/
 	*["yield* job.handle"]() {
-		type Exp = NotErrsJob1 | AllErrsJob1
+		type Exp = OksJob1 | AllErrsJob1
 		const _rec = yield* go(jobFn1).handle
 		true satisfies Equal<typeof _rec, Exp>
 	},
@@ -125,26 +80,107 @@ export const tests = {
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
-	["job states using job.is()"]() {
+	["job variants using type guard methods"]() {
 		const job = go(jobFn1)
-		if (job.is("ok")) {
-			const _val = job.val
-			true satisfies Equal<typeof job, OkJob<NotErrsJob1>>
-			true satisfies Equal<typeof _val, NotErrsJob1>
+
+		if (job.ok()) {
+			checkOkJob(job)
 		}
-		else if (job.is("err")) {
-			const _err = job.reason
-			true satisfies Equal<typeof job, ErrJob<AllErrsJob1>>
-			true satisfies Equal<typeof _err, AllErrsJob1>
+		if (job.err()) {
+			checkErrJob(job)
 		}
-		else {
-			// const c = job.v
-			true satisfies Equal<typeof job, Job<NotErrsJob1, AllJob1>>
+		if (job.live()) {
+			checkLiveJob(job)
 		}
 
-		job satisfies never
+
+		const jobs = [go(jobFn1), go(jobFn2)]
+
+		const ok = jobs.filter(j => j.ok())
+		const err = jobs.filter(j => j.err())
+		const live = jobs.filter(j => j.live())
+
+		true satisfies Equal<
+			typeof ok,
+			(OkJob<OksJob1> | OkJob<OksJob2>)[]
+		>
+
+		true satisfies Equal<
+			typeof err,
+			(ErrJob<AllErrsJob1> | ErrJob<AllErrsJob2>)[]
+		>
+
+		true satisfies Equal<
+			typeof live,
+			(LiveJob<AllJob1> | LiveJob<AllJob2>)[]
+		>
+
+		const _okVals = ok.map(j => j.val)
+		true satisfies Equal<typeof _okVals, (OksJob1 | OksJob2)[]>
+
+		const _errVals = err.map(j => j.reason)
+		true satisfies Equal<typeof _errVals, (AllErrsJob1 | AllErrsJob2)[]>
+
+		const _liveJobs = live.map(j => j.st)
+		true satisfies Equal<typeof _liveJobs, "live"[]>
 	},
 
+	["job variants using type guard functions"]() {
+		const job = go(jobFn1)
+
+		if (ok(job)) {
+			checkOkJob(job)
+		}
+		if (err(job)) {
+			checkErrJob(job)
+		}
+		if (live(job)) {
+			checkLiveJob(job)
+		}
+
+
+		const jobs = [go(jobFn1), go(jobFn2)]
+
+		// The result of filter using functions will get ugly intersection type.
+		// So best to use the method versions or map immediately.
+
+		const _okVals = jobs.filter(ok).map(j => j.val)
+		const _errVals = jobs.filter(err).map(j => j.reason)
+		const _liveJobs = jobs.filter(live).map(j => j.st)
+
+		true satisfies Equal<typeof _okVals, (OksJob1 | OksJob2)[]>
+		true satisfies Equal<typeof _errVals, (AllErrsJob1 | AllErrsJob2)[]>
+		true satisfies Equal<typeof _liveJobs, "live"[]>
+	},
+
+	["job variants (exhaustive) using job.byState()"]() {
+		const job = go(jobFn1)
+
+		const _job = job.byState()
+
+		if (_job.st === "ok") {
+			checkOkJob(_job)
+			return
+		}
+		if (_job.st === "err") {
+			checkErrJob(_job)
+			return
+		}
+		if (_job.st === "live") {
+			checkLiveJob(_job)
+			return
+		}
+
+		_job satisfies never
+	},
+
+	["job ctx"]() {
+		const job = go(jobFn1)
+		true satisfies Equal<typeof job.ctx, unknown>
+
+		const _sameJobRef = job.setCtx(false)
+		true satisfies Equal<typeof _sameJobRef.ctx, boolean>
+	},
 
 	/* *************** cancel(...jobs) *************************************** */
 
@@ -172,6 +208,37 @@ export const tests = {
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
+
+	/* *************** groupByState() ******************************************** */
+
+	["groupByState()"]() {
+		const jobs = [go(jobFn1), go(jobFn2)]
+		const { ok, err, live } = groupByState(jobs)
+
+		true satisfies Equal<
+			typeof ok,
+			(OkJob<OksJob1> | OkJob<OksJob2>)[]
+		>
+
+		true satisfies Equal<
+			typeof err,
+			(ErrJob<AllErrsJob1> | ErrJob<AllErrsJob2>)[]
+		>
+
+		true satisfies Equal<
+			typeof live,
+			(LiveJob<AllJob1> | LiveJob<AllJob2>)[]
+		>
+
+		const _okVals = ok.map(j => j.val)
+		true satisfies Equal<typeof _okVals, (OksJob1 | OksJob2)[]>
+
+		const _errVals = err.map(j => j.reason)
+		true satisfies Equal<typeof _errVals, (AllErrsJob1 | AllErrsJob2)[]>
+
+		const _liveJobs = live.map(j => j.st)
+		true satisfies Equal<typeof _liveJobs, "live"[]>
+	},
 
 	/* *************** allOrErr() ******************************************** */
 
@@ -227,3 +294,29 @@ type Equal<Rec, Exp> =
 	IsEqual<Rec, Exp> extends true ?
 	true :
 	{ error: "Type mismatch", rec: Rec, exp: Exp }
+
+type Not<T extends boolean> = T extends true ? false : true;
+
+type HasKey<T, K extends string> = K extends keyof T ? true : false;
+
+
+function checkOkJob(_job: OkJob<OksJob1>) {
+	true satisfies Equal<typeof _job.st, "ok">
+	true satisfies Equal<typeof _job.val, OksJob1>
+	true satisfies Not<HasKey<typeof _job, "reason">>
+	true satisfies (typeof _job) extends ByStateJobBase ? true : false
+}
+
+function checkErrJob(_job: ErrJob<AllErrsJob1>) {
+	true satisfies Equal<typeof _job.st, "err">
+	true satisfies Equal<typeof _job.reason, AllErrsJob1>
+	true satisfies Not<HasKey<typeof _job, "val">>
+	true satisfies (typeof _job) extends ByStateJobBase ? true : false
+}
+
+function checkLiveJob(_job: LiveJob<AllJob1>) {
+	true satisfies Equal<typeof _job.st, "live">
+	true satisfies Not<HasKey<typeof _job, "val">>
+	true satisfies Not<HasKey<typeof _job, "reason">>
+	true satisfies (typeof _job) extends ByStateJobBase ? true : false
+}
