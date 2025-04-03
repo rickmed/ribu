@@ -47,7 +47,7 @@ Job's targets:
 //* **********************  Job Class  ************************************* *//
 
 const DUMMY_GEN = (function* () {})()
-let self: Job
+let self: _Job
 
 export type RibuGen<Ret = unknown> =
 	Generator<unknown, Ret, unknown>
@@ -55,19 +55,19 @@ export type RibuGen<Ret = unknown> =
 type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
 	(...args: Args) => RibuGen<Ret>
 
-type JobsLink = Link<Job, Job>
-type JobChanLink = Link<Job, Chan>
+type JobsLink = Link<_Job, _Job>
+type JobChanLink = Link<_Job, Chan>
 type WaitingChdLink = JobsLink
 type TgLink = JobChanLink | WaitingChdLink | PutterLink | ReceiverLink
 
-type OnJobDone<T = Job> = (val: unknown, tg: Job, bPosInLink: T) => void
-type CallbackLink<T = Job> = Link<OnJobDone<T>, T>
-type ObserverLink<T = Job> = JobsLink | CallbackLink<T>
+type OnJobDone<T = _Job> = (val: unknown, tg: _Job, bPosInLink: T) => void
+type CallbackLink<T = _Job> = Link<OnJobDone<T>, T>
+type ObserverLink<T = _Job> = JobsLink | CallbackLink<T>
 
 type SyncFn = () => unknown
 type AsyncFn = () => Promise<unknown>
 type OnEnd = SyncFn | AsyncFn | RibuGenFn
-type OnEndLink = Link<OnEnd, Job>
+type OnEndLink = Link<OnEnd, _Job>
 
 /* **** State Flags **** */
 const PARKED_CONTINUE = 1 << 0  // 1
@@ -121,9 +121,9 @@ export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
  *  _ctx:
  * 	Datalot potentially used by user or internally.
  */
-export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
+export class _Job<Ok = unknown, All = unknown, Ctx = unknown> implements Job<Ok, All, Ctx> {
 
-	_v = undefined as OkRet | AllRet
+	_v = undefined as Ok | All
 	_nm: string
 	_st = 0
 	_gn: RibuGen
@@ -134,7 +134,7 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 	_tm: NodeJS.Timeout | VoidObj = VOID_OBJ
 	_ctx = null as Ctx
 
-	constructor(name: string, gen?: RibuGen, parent?: Job) {
+	constructor(name: string, gen?: RibuGen, parent?: _Job) {
 		this._gn = gen ?? DUMMY_GEN
 		this._nm = name
 		if (parent) {
@@ -143,7 +143,7 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 			addTgLink(parent, link)
 		}
 	}
-	_onTgDone(tgJob: Job) {
+	_onTgDone(tgJob: _Job) {
 		const { _st } = this
 
 		if (_st & WAITING_CHILDREN) {
@@ -168,13 +168,13 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 
 	[Symbol.iterator]() {
 		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, `yield* ${this._nm}`)
-		return jobIterator<OkRet>(this)
+		return jobIterator<Ok>(this)
 	}
 
 	get handle() {
 		self = this
 		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, "job.handle")
-		return JOB_ITERABLE as SysIterable<AllRet>
+		return JOB_ITERABLE as SysIterable<All>
 	}
 
 	cancel() {
@@ -188,24 +188,41 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 	}
 
 	get done() {
-		return this._st & SETTLED
+		return !!(this._st & SETTLED)
 	}
 
-	get ok() {
-		return !(this._st & ANY_ERR_OR_CANCOK)
+	get _doneOK() {
+		return this.done && !(this._st & ANY_ERR_OR_CANCOK)
 	}
 
-	get OkVal() {
-		return this._v as OkRet
+	get val() {
+		return this._v
 	}
 
-	get err() {
-		return this._st & ANY_ERR_OR_CANCOK
+	get _doneErr() {
+		return this.done && !!(this._st & ANY_ERR_OR_CANCOK)
 	}
 
-	setCtx(ctx: Ctx) {
-		this._ctx = ctx
-		return this as Job<OkRet, AllRet, Ctx>
+	get reason() {
+		return this._v
+	}
+
+	get cancelled() {
+		return !!(this._st & CANCELLED)
+	}
+
+	is(tag: "ok"): this is OkJob<Ok, All, Ctx>;
+	is(tag: "err"): this is ErrJob<Ok, All, Ctx>;
+	is(tag: "notDone"): this is Job<Ok, All, Ctx>;
+	is(tag: "ok" | "err" | "notDone"): boolean {
+		if (tag === "ok") return this._doneOK
+		if (tag === "err") return this._doneErr
+		return !this.done
+	}
+
+	setCtx<NewCtx>(ctx: NewCtx) {
+		this._ctx = ctx as unknown as Ctx
+		return this as unknown as Job<Ok, All, NewCtx>
 	}
 
 	get ctx() {
@@ -220,7 +237,7 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 		this._st |= CANCEL_SIBLINGS_ON_ERR
 	}
 
-	then(res: (val: OkRet) => void, rej: (err: AllRet) => void) {
+	then(res: (val: Ok) => void, rej: (err: All) => void) {
 		if (this._st & SETTLED) {
 			resolveJobThenable(res, rej, this)
 		}
@@ -229,16 +246,16 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 			addObserver(this, link)
 		}
 
-		function onJobDone(_: unknown, thisJob: Job) {
+		function onJobDone(_: unknown, thisJob: _Job) {
 			resolveJobThenable(res, rej, thisJob)
 		}
 	}
 
 	get promErr() {
 		const self = this
-		return new Promise<AllRet>((res) => {
+		return new Promise<All>((res) => {
 			if (self._st & SETTLED) {
-				res(self._v as AllRet)
+				res(self._v as All)
 			}
 			else {
 				const link = freshLink(res as OnJobDone, self)
@@ -246,12 +263,9 @@ export class Job<OkRet = unknown, AllRet = unknown, Ctx = unknown> {
 			}
 		})
 	}
-	unObserveAll() {
-		unlinkFromAllJobs(this)
-	}
 }
 
-function handleCancel(job: Job, opName: string, callerJobNextSt: Job["_st"]) {
+function handleCancel(job: _Job, opName: string, callerJobNextSt: _Job["_st"]) {
 	if (job._st & SETTLED) {
 		iterRes.done = true
 		iterRes.value = undefined
@@ -285,7 +299,7 @@ function handleCancel(job: Job, opName: string, callerJobNextSt: Job["_st"]) {
 	iterRes.done = false
 }
 
-function resolveJobThenable<OkRet, GetterErr>(res: (val: OkRet) => void, rej: (err: GetterErr) => void, thisJob: Job) {
+function resolveJobThenable<OkRet, GetterErr>(res: (val: OkRet) => void, rej: (err: GetterErr) => void, thisJob: _Job) {
 	const { _st, _v: val } = thisJob
 	if (_st & ANY_ERR_OR_CANCOK) {
 		rej(val as GetterErr)
@@ -296,7 +310,7 @@ function resolveJobThenable<OkRet, GetterErr>(res: (val: OkRet) => void, rej: (e
 }
 
 
-function jobIterator<T>(job: Job) {
+function jobIterator<T>(job: _Job) {
 	let callerJob = sys.runningJob
 	const callerSt = callerJob._st
 	const thisSt = job._st
@@ -332,7 +346,7 @@ const JOB_ITERABLE = {
 	}
 }
 
-export function resumeJob(thisJob: Job, val?: unknown) {
+export function resumeJob(thisJob: _Job, val?: unknown) {
 	thisJob._st &= ~PARKED
 	sys.pushJob(thisJob)
 
@@ -376,7 +390,7 @@ export function resumeJob(thisJob: Job, val?: unknown) {
 	onGenFnDone(thisJob)
 }
 
-function onGenFnDone(thisJob: Job, cancelChildren = false) {
+function onGenFnDone(thisJob: _Job, cancelChildren = false) {
 	if (thisJob._tg === VOID_LINK) {
 		execOnEnds(thisJob)
 		return
@@ -386,7 +400,7 @@ function onGenFnDone(thisJob: Job, cancelChildren = false) {
 	loopChildren(thisJob, true, cancelChildren)
 }
 
-function genFnFailed(thisJob: Job, jobVal: Er) {
+function genFnFailed(thisJob: _Job, jobVal: Er) {
 	thisJob._v = jobVal
 	thisJob._st |= ERR_IN_GENFN
 	thisJob._st |= CANCEL_SIBLINGS_ON_ERR
@@ -396,7 +410,7 @@ function genFnFailed(thisJob: Job, jobVal: Er) {
 const syncFnCtor = (function DUMMY_SYNC_FN() {}).constructor
 const genFnCtor = (function* DUMMY_GEN_FN() {}).constructor
 
-function execOnEnds(thisJob: Job) {
+function execOnEnds(thisJob: _Job) {
 	const onEndLink = thisJob._oe
 	if (onEndLink === VOID_LINK) {
 		thisJob._st &= ~WAITING_ONENDS
@@ -427,7 +441,7 @@ function execOnEnds(thisJob: Job) {
 	}
 
 	if (onEndCtor === genFnCtor) {
-		const onEndJob = new Job(onEnd.name, (onEnd as RibuGenFn)())
+		const onEndJob = new _Job(onEnd.name, (onEnd as RibuGenFn)())
 		const observingLink = freshLink(onOnEndJobDone, thisJob)
 		addObserver(onEndJob, observingLink)
 		resumeJob(onEndJob)
@@ -439,14 +453,14 @@ function execOnEnds(thisJob: Job) {
 		.catch(e => handleOneOnEndResult(thisJob, e, onEnd, true))
 }
 
-function handleOneOnEndResult(thisJob: Job, onEndResult: unknown, onEnd: OnEnd, threw = false) {
+function handleOneOnEndResult(thisJob: _Job, onEndResult: unknown, onEnd: OnEnd, threw = false) {
 	if (threw || onEndResult instanceof RibuErr) {
 		addOnEndErr(thisJob, _Err(onEnd.name, onEndResult))
 	}
 	execOnEnds(thisJob)
 }
 
-function onOnEndJobDone(val: unknown, tg: Job, ob: Job) {
+function onOnEndJobDone(val: unknown, tg: _Job, ob: _Job) {
 	if (tg._st & HAD_ERR) {
 		addOnEndErr(ob, val as Er)
 	}
@@ -455,7 +469,7 @@ function onOnEndJobDone(val: unknown, tg: Job, ob: Job) {
 
 const CANCELLED_STR = "Cancelled"
 
-function addOnEndErr(thisJob: Job, err: Error) {
+function addOnEndErr(thisJob: _Job, err: Error) {
 	addErrorToJobVal(thisJob, err, ERR_IN_ONEND)
 	if (thisJob._st & CANCELLED) {
 		// @ts-ignore job.val is Err now and mutation of .message readonly property
@@ -463,11 +477,11 @@ function addOnEndErr(thisJob: Job, err: Error) {
 	}
 }
 
-function settleJob(thisJob: Job) {
+function settleJob(thisJob: _Job) {
 	// Release parent-child link.
 	const { _pr, _st } = thisJob
 	if (_pr !== VOID_LINK) {
-		removeTgLink(_pr.a as Job, _pr)
+		removeTgLink(_pr.a as _Job, _pr)
 		thisJob._pr = VOID_LINK
 		disposeLink(_pr)
 	}
@@ -482,7 +496,7 @@ function settleJob(thisJob: Job) {
 
 type NotVoidObj<T> = T extends VoidObj ? never : T
 
-export function markSettledAndNotifyObs(thisJob: Job) {
+export function markSettledAndNotifyObs(thisJob: _Job) {
 	thisJob._st |= SETTLED
 	const { _v: val } = thisJob
 
@@ -497,15 +511,15 @@ export function markSettledAndNotifyObs(thisJob: Job) {
 		}
 		else {  // JobsLink
 			removeOb(thisJob, obLink)
-			removeTgLink(observer as Job, obLink)
+			removeTgLink(observer as _Job, obLink)
 			disposeLink(obLink)
-			;(observer as Job)._onTgDone(thisJob)
+			;(observer as _Job)._onTgDone(thisJob)
 		}
 		obLink = nextLink
 	}
 }
 
-function onChildDone(job: Job, child: Job) {
+function onChildDone(job: _Job, child: _Job) {
 	if (child._st & HAD_ERR) {
 		addErrorToJobVal(job, child._v as Er, ERR_IN_GENFN)
 		const { _st } = job
@@ -523,7 +537,7 @@ function onChildDone(job: Job, child: Job) {
 // Is cancelJob() caller responsibility to not subscribe if job is done,
 // otherwise, observer job will be blocked forever.
 const CANCEL_NOOP = SETTLED | WAITING_ONENDS
-export function cancelJob(thisJob: Job) {
+export function cancelJob(thisJob: _Job) {
 	const { _st } = thisJob
 	if (_st & CANCEL_NOOP) {
 		return
@@ -567,7 +581,7 @@ export function cancelJob(thisJob: Job) {
 	loopChildren(thisJob, true, true)
 }
 
-function loopChildren(thisJob: Job, observe: boolean, cancel: boolean) {
+function loopChildren(thisJob: _Job, observe: boolean, cancel: boolean) {
 	if (cancel) {
 		thisJob._st |= CHILDREN_CANCELLED
 	}
@@ -575,7 +589,7 @@ function loopChildren(thisJob: Job, observe: boolean, cancel: boolean) {
 	let childLink = thisJob._tg
 	// Can start loop right away bc caller guards against job state.
 	do {
-		let childJob = childLink.b as Job
+		let childJob = childLink.b as _Job
 		if (observe) {
 			// Parent-child are already connected via ._tg/._pr, so we need to
 			// move child._pr link and add it to child._ob, so child doesn't
@@ -594,7 +608,7 @@ function loopChildren(thisJob: Job, observe: boolean, cancel: boolean) {
 	} while (childLink !== VOID_LINK)
 }
 
-export function addErrorToJobVal(thisJob: Job, err: Error, errFlag: Job["_st"]) {
+export function addErrorToJobVal(thisJob: _Job, err: Error, errFlag: _Job["_st"]) {
 	if (!(thisJob._st & HAD_ERR)) {
 		thisJob._v = _Err(thisJob._nm)
 	}
@@ -622,7 +636,7 @@ export function addErrorToJobVal(thisJob: Job, err: Error, errFlag: Job["_st"]) 
 		VL <- B <-> A -> VL
 */
 
-export function addObserver<T = Job>(thisJob: Job, link: ObserverLink<T>) {
+export function addObserver<T = _Job>(thisJob: _Job, link: ObserverLink<T>) {
 	let head = thisJob._ob
 	thisJob._ob = link as ObserverLink
 	if (head !== VOID_LINK) {
@@ -631,7 +645,7 @@ export function addObserver<T = Job>(thisJob: Job, link: ObserverLink<T>) {
 	}
 }
 
-export function removeOb(thisJob: Job, link: Link) {
+export function removeOb(thisJob: _Job, link: Link) {
 	let { pA, nA } = link
 	if (nA !== VOID_LINK) {
 		nA.pA = pA
@@ -650,7 +664,7 @@ export function removeOb(thisJob: Job, link: Link) {
 // Tg behaves like a stack Link, ie, it is added as head when job is blocked
 // and removed when job is resumed, ie, go(), which adds childs, can never
 // be called in between block/unblock.
-export function addTgLink(thisJob: Job, link: TgLink) {
+export function addTgLink(thisJob: _Job, link: TgLink) {
 	let head = thisJob._tg
 	thisJob._tg = link
 	if (head !== VOID_LINK) {
@@ -659,7 +673,7 @@ export function addTgLink(thisJob: Job, link: TgLink) {
 	}
 }
 
-export function removeTgLink(thisJob: Job, link: Link) {
+export function removeTgLink(thisJob: _Job, link: Link) {
 	let { pB, nB } = link
 	if (nB !== VOID_LINK) {
 		nB.pB = pB
@@ -675,18 +689,18 @@ export function removeTgLink(thisJob: Job, link: Link) {
 	// dispose the link immediately.
 }
 
-export function linkJobs(ob: Job, tg: Job) {
+export function linkJobs(ob: _Job, tg: _Job) {
 	const link = freshLink(ob, tg)
 	addTgLink(ob, link)
 	addObserver(tg, link)
 }
 
-export function unlinkFromAllJobs(thisJob: Job) {
+export function unlinkFromAllJobs(thisJob: _Job) {
 	let tgLink = thisJob._tg
 	while (tgLink !== VOID_LINK) {
 		const nextLink = tgLink.nB
 		removeTgLink(thisJob, tgLink)
-		removeOb(tgLink.b as Job, tgLink)
+		removeOb(tgLink.b as _Job, tgLink)
 		disposeLink(tgLink)
 		tgLink = nextLink
 	}
@@ -698,36 +712,61 @@ export function unlinkFromAllJobs(thisJob: Job) {
 
 let currLink: Link | VoidLink = VOID_LINK
 
-export function iter(head: Link | VoidLink): Job | false {
+export function iter(head: Link | VoidLink): _Job | false {
 	if (head === VOID_LINK) {
 		return false
 	}
-	head = head as Link<Job>
+	head = head as Link<_Job>
 	currLink = head.nA
-	return head.a as Job
+	return head.a as _Job
 }
 
-export function next(): Job | false {
+export function next(): _Job | false {
 	if (currLink === VOID_LINK) {
 		return false
 	}
 	const value = currLink.a
 	currLink = currLink.nA
-	return value as Job
+	return value as _Job
 }
 
 
 
 //* ****************   User API   ****************************************** *//
 
-export function go<Args extends unknown[], Ret>(genFn: RibuGenFn<Ret, Args>, ...args: Args) {
-	const gen = genFn(...args)
-	const job = new Job<Exclude<Ret, Error>, Ret | Er | CancOK>(genFn.name, gen, sys.runningJob)
-	resumeJob(job)
-	return job
+export interface Job<Ok = unknown, All = unknown, Ctx = unknown> {
+
+	[Symbol.iterator]: () => SysIterator<Ok>
+	readonly handle: SysIterable<All>
+	setCtx: <NewCtx>(ctx: NewCtx) => Job<Ok, All, NewCtx>
+	readonly ctx: Ctx
+	cancel: () => SysIterable<void>
+	cancelErr: () => SysIterable<void | Er>
+	onEnd: (fn: OnEnd) => void
+	then: (res: (val: Ok) => void, rej: (err: All) => void) => void
+	readonly promErr: Promise<All>
+
+	readonly done: boolean
+	readonly cancelled: boolean
+	// eslint-disable-next-line @typescript-eslint/method-signature-style
+	is(tag: "ok"): this is OkJob<Ok, All, Ctx>
+	// eslint-disable-next-line @typescript-eslint/method-signature-style
+	is(tag: "err"): this is ErrJob<Ok, All, Ctx>
+	// eslint-disable-next-line @typescript-eslint/method-signature-style
+	is(tag: "notDone"): this is Job<Ok, All, Ctx>
 }
 
-export function me(): Job {
+export function go<Args extends unknown[], Ret>(
+	genFn: RibuGenFn<Ret, Args>,
+	...args: Args
+) {
+	const gen = genFn(...args)
+	const job = new _Job<Exclude<Ret, Error>, Ret | Er | CancOK>(genFn.name, gen, sys.runningJob)
+	resumeJob(job)
+	return job as unknown as Job<Exclude<Ret, Error>, Ret | Er | CancOK>
+}
+
+export function me(): _Job {
 	return sys.runningJob
 }
 
@@ -739,3 +778,29 @@ export function onEnd(onEnd: OnEnd, thisJob = sys.runningJob) {
 		link.nA = head
 	}
 }
+
+
+
+//* ****************   Types   ******************************************** *//
+
+export type GetTypes<J> =
+	J extends Job<infer Ok, infer All, infer Ctx> ? [Ok, All, Ctx] : never
+
+export type OkJob<Ok, All, Ctx = unknown> =
+	Job<Ok, All, Ctx> &
+	{
+		readonly val: Ok
+		readonly done: true
+	}
+
+export type ErrJob<Ok, All, Ctx = unknown> =
+	Job<Ok, All, Ctx> &
+	{
+		readonly reason: Extract<All, Error>
+		readonly done: true
+	}
+
+
+// export type ErrJobFrom<J> = J extends Job<infer Ok, infer All, infer Ctx>
+// 	? J & ErrJob<Ok, All, Ctx>
+// 	: never

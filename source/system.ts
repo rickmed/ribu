@@ -1,4 +1,4 @@
-import { PARKED, type Job } from "./job.js"
+import { PARKED, type _Job } from "./job.js"
 
 
 export const VOID_OBJ = { _v: 0 } as const
@@ -7,11 +7,11 @@ export type VoidObj = typeof VOID_OBJ
 
 
 class System {
-	#stack: Array<Job> = []  // todo: optimize to Linked List
-	runningJob = null as unknown as Job
+	#stack: Array<_Job> = []  // todo: optimize to Linked List
+	runningJob = null as unknown as _Job
 	deadline = 5000
 
-	pushJob(job: Job) {
+	pushJob(job: _Job) {
 		this.runningJob = job
 		this.#stack.push(job)
 	}
@@ -51,7 +51,7 @@ export const SYS_ITERABLE = {
 }
 
 
-export function ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt: Job["_st"], opName: string) {
+export function ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt: _Job["_st"], opName: string) {
 	const callerJob = sys.runningJob
 	if (callerJob._st & PARKED) {
 		throwNotYielded(opName)

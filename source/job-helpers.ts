@@ -1,4 +1,17 @@
-import { cancelJob, ERR_IN_GENFN, Job, linkJobs, markSettledAndNotifyObs, PARKED_CH_REC, SETTLED, unlinkFromAllJobs } from "./job.js"
+import {
+	cancelJob,
+	ERR_IN_GENFN,
+	type _Job,
+	type Job,
+	linkJobs,
+	markSettledAndNotifyObs,
+	 PARKED_CH_REC, SETTLED,
+	  unlinkFromAllJobs,
+	  ANY_ERR_OR_CANCOK,
+	  OkJob,
+	  ErrJob,
+	  GetTypes,
+	} from "./job.js"
 import { Er, Err } from "./errors.js"
 import { VOID_LINK, VOID_OBJ } from "./system.js"
 
@@ -248,92 +261,37 @@ const JOB_HAD_ERR = "JobHadErr"
 export type JobHadErr = Err<typeof JOB_HAD_ERR>
 
 function allOrErrOnTgJobDone<Jobs extends Job[]>(this: Job, tgJob: Jobs[number]) {
-	if (tgJob.err) {
+	if (tgJob.doneErr) {
 		this._st |= FAIL
 		return this._v = Err(JOB_HAD_ERR, this._nm, "", tgJob._v as Er)
 	}
 	let results = this._v as AllOkRet<Jobs>[]
-	results.push(tgJob._v as AllOkRet<Jobs>)
+	results.push(tgJob._v a	 AllOkRet<Jobs>)
 	return results
 }
 
-function allOrErrInit(this: Job) {
+function allOrErr	nit(this: Job) {
 	this._v = []
 }
 
 
-/*
-allOrErr():
-Both versions (return Jobs or values), need to return also JobHadErr.
-Let's try to work an API/Impl
-
-in, theory, resVals is just jobs.map(j => j.val)
-	I bit less performant than current impl, since current impl doesn't iterate all jobs.
-	it just processed the ones that returned ok values.
-	Most likely is that needs to accumulate results in an array.
-
-API:
-	const res = yield* allOrErr(jobs).mapOut.handle
-
-IMPLEMENTATION:
-Option 1)
-	if .mapOut is called, mutate: this.prototype._onTgJobDone = this.constructor.mapOutFn
-Option 2)
-	JobPlus to override [Symbol.iterator] to return this.v instead of this._v
-		so each JopPlus could override get val()
-
-ok, types: ==>>
-	ISSUE is that .mapOut and .handle need to return a different type depending
-	whether the other was called or not.
-
-.mapOut:
-	Array<JobsOkRet>
-
-I think I have access to current OkRet, AllRet. So:
-
-const res = yield* allOrErr(jobs).mapOut
-no .handle means all jobs succeeded.
-
-yield* in job, return object with just [Symbol.iterator]<something> (.handle: AllRet)
-
-allOrErr() should create -> JobPlus<
-
-yield* should settle -> Array<Jobs<OkRet>>
-	so it needs some info to return iterator<X>(this)
-	let's say is JobPlus<Jobs = Array<Jobs<AllRet>>>, ???>
-
-.handle:
-
-if .mapOut is not called, OkRet is: Array<Jobs<JobsOkRet>>
-	Need to return: Array<Jobs<AllRet>> (input array) -> remove inner Job (if existing)
-
-if .mapOut is called, OkRet is: Array<JobsOkRet>
-	Need to return: Err | Array<JobsOkRet>
-
-
-.mapOut:
-
-if .handle is not called, OkRet is: Array<Jobs<JobsOkRet>>
-	Need to return: Array<JobsOkRet>
-
-if .handle is called, OkRet is: Array<JobsAllRet>
-	Need to return: Array<JobsAllRet>  (same array)
+/* No .mapOut!!!, people map themselves.
 
 
 
-
-
-
-	Promise.allSettled() / all() -> waits for all jobs to settle.
-		ok -> Job<JobAllRet>
-		err -> never
-	Promise.race() / first() -> settles when a job settled.
-		ok -> Job<JobAllRet>
-		err -> never
-	Promise.any() / firstOk() -> settles when first successful job.
-		ok -> Job<JobOkRet>
-		err -> Err<"AllJobsFailed">
-
+*****
+allOrErr() / P.all() -> if Job failed, fail fast.
+	ok -> Job<JobOkRet>[]
+	err -> JobHadErr<failedJob> | Job<JobOkRet>[]
+all() | P.allSettled() -> waits for all jobs to settle.
+	ok -> Job<JobAllRet>
+	err -> never
+Promise.race() / first() -> settles when a job settled.
+	ok -> Job<JobAllRet>
+	err -> never
+Promise.any() / firstOk() -> settles when first successful job.
+	ok -> Job<JobOkRet>
+	err -> Err<"AllJobsFailed">
 
 
 
@@ -364,7 +322,7 @@ all:
 
 */
 
-
+// todo: provide map, filter, reduce helpers.
 
 
 
@@ -488,15 +446,53 @@ all:
 /** *****************  Utils  *********************************************** */
 
 
-
-type OkJob<A> = Job<A> & {
-	val: A
-	ok: true
+export function isOk<J extends Job>(job: J): job is OkJobFrom<J> {
+	return (job as unknown as _Job)._doneOK
 }
 
-export function isOk<A>(j: Job<A>): j is OkJob<A> {
-	return j.ok
+export function isErr<J extends Job>(job: J): job is ErrJobFrom<J> {
+	return (job as unknown as _Job)._doneErr
 }
+
+
+export function groupByState<J extends Job>(jobs: J[]) {
+	const doneOk: PrettyOkJob<J>[] = []
+	const doneErr: PrettyErrJob<J>[] = []
+	const notDone: J[] = []
+	for (let i = 0; i < jobs.length; i++) {
+		const job = jobs[i]!
+		if (isOk(job)) {
+			doneOk.push(job)
+		}
+		else if (isErr(job)) {
+			doneErr.push(job)
+		}
+		else {
+			notDone.push(job)
+		}
+	}
+	return { doneOk, doneErr, notDone }
+}
+
+type OkJobFrom<J> = J extends Job<infer Ok, infer All, infer Ctx>
+	? J & OkJob<Ok, All, Ctx>
+	: never
+
+type PrettyOkJob<J> = J extends Job<infer Ok, infer All, infer Ctx>
+	? OkJob<Ok, All, Ctx>
+	: never
+
+type ErrJobFrom<J> = J extends Job<infer Ok, infer All, infer Ctx>
+	? J & ErrJob<Ok, All, Ctx>
+	: never
+
+type PrettyErrJob<J> = J extends Job<infer Ok, infer All, infer Ctx>
+	? ErrJob<Ok, All, Ctx>
+	: never
+
+
+
+
 
 
 // /* **********  newJob  ********** */

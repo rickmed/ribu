@@ -1,4 +1,4 @@
-import { addTgLink, Job, PARKED, PARKED_CH_PUT, PARKED_CH_REC, removeTgLink, resumeJob } from "./job.js"
+import { addTgLink, _Job, PARKED, PARKED_CH_PUT, PARKED_CH_REC, removeTgLink, resumeJob } from "./job.js"
 import { SysIterable, freshLink, iterRes, type Link, type VoidLink, VOID_LINK, disposeLink, sys, throwNotYielded } from "./system.js"
 
 
@@ -11,11 +11,11 @@ import { SysIterable, freshLink, iterRes, type Link, type VoidLink, VOID_LINK, d
 	yield* ch.put(3)
 */
 
-type PutterJobLink = Link<Job, 0>
+type PutterJobLink = Link<_Job, 0>
 type enQLink = Link<unknown, 1>
 export type PutterLink = PutterJobLink | enQLink
 
-export type ReceiverLink = Link<Job, Job>
+export type ReceiverLink = Link<_Job, _Job>
 
 
 /** Chan Class
@@ -87,7 +87,7 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 
 
 			if (putType === 0) {  // putter is a job
-				const putJob = putVal as Job
+				const putJob = putVal as _Job
 				const msg = putJob._v
 				removeTgLink(putJob, _pt)
 				resumeJob(putJob)

@@ -1,4 +1,4 @@
-import { resumeJob, PARKED_SLEEP, Job } from "./job.js"
+import { resumeJob, PARKED_SLEEP, _Job } from "./job.js"
 import { SYS_ITERABLE, type SysIterable, ensurePreviousYieldAndSetCallerJobNextSt, iterRes, sys } from "./system.js"
 
 export function sleep(ms: number) {
@@ -9,6 +9,6 @@ export function sleep(ms: number) {
 	return SYS_ITERABLE as SysIterable<undefined>
 }
 
-function timeOutCB(callerJob: Job) {
+function timeOutCB(callerJob: _Job) {
 	resumeJob(callerJob)
 }
