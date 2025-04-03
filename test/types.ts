@@ -111,7 +111,7 @@ export const tests = {
 
 		true satisfies Equal<
 			typeof live,
-			(LiveJob<AllJob1> | LiveJob<AllJob2>)[]
+			(LiveJob<OksJob1, AllErrsJob1> | LiveJob<OksJob2, AllErrsJob2>)[]
 		>
 
 		const _okVals = ok.map(j => j.val)

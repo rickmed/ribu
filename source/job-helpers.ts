@@ -450,9 +450,22 @@ export function live<J extends Job>(job: J): job is LiveJobFrom<J> {
 	return !(job as unknown as _Job).done
 }
 
-export function ok<J extends Job>(job: J): job is OkJobFrom<J> {
-	return (job as unknown as _Job)._doneOk
+// export function ok<J extends Job>(job: J): job is OkJobFrom<J> {
+// 	return (job as unknown as _Job)._doneOk
+// }
+
+
+export function ok(job: _Job<any, any, any>): job is OkJob<any, any> {
+	return (job as _Job)._doneOk;
 }
+
+// export function ok<J extends Job>(job: J): job is Extract<J, { st: "ok" }> {
+// 	return (job as _Job)._doneOk;
+// }
+
+// export function ok<J extends Job>(job: J): job is J & { st: "ok"; done: true; val: J extends Job<infer Ok, any, any> ? Ok : never } {
+// 	return job.st === "ok";
+//  }
 
 export function err<J extends Job>(job: J): job is ErrJobFrom<J> {
 	return (job as unknown as _Job)._doneErr
@@ -477,28 +490,28 @@ export function groupByState<J extends Job>(jobs: J[]) {
 	return { ok: _ok, err: _err, live: _live }
 }
 
-type OkJobFrom<J> = J extends Job<infer Ret, infer Ctx>
-	? J & OkJob<NotErrs<Ret>, Ctx>
+type OkJobFrom<J> = J extends Job<infer Ok, infer _E, infer Ctx>
+	? J & OkJob<Ok, Ctx>
 	: never
 
-export type PrettyOkJob<J> = J extends Job<infer Ret, infer Ctx>
-	? OkJob<NotErrs<Ret>, Ctx>
+export type PrettyOkJob<J> = J extends Job<infer Ok, infer _E, infer Ctx>
+	? OkJob<Ok, Ctx>
 	: never
 
-type ErrJobFrom<J> = J extends Job<infer Ret, infer Ctx>
-	? J & ErrJob<Errs<Ret>, Ctx>
+type ErrJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
+	? J & ErrJob<E, Ctx>
 	: never
 
-export type PrettyErrJob<J> = J extends Job<infer Ret, infer Ctx>
-	? ErrJob<Errs<Ret>, Ctx>
+export type PrettyErrJob<J> = J extends Job<infer _Ok, infer E, infer Ctx>
+	? ErrJob<E, Ctx>
 	: never
 
-type LiveJobFrom<J> = J extends Job<infer Ret, infer Ctx>
-	? J & LiveJob<Ret, Ctx>
+type LiveJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
+	? J & LiveJob<_Ok, E, Ctx>
 	: never
 
-export type PrettyLiveJob<J> = J extends Job<infer Ret, infer Ctx>
-	? LiveJob<Ret, Ctx>
+export type PrettyLiveJob<J> = J extends Job<infer _Ok, infer E, infer Ctx>
+	? LiveJob<_Ok, E, Ctx>
 	: never
 
 
