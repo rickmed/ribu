@@ -13,7 +13,7 @@ import {
 	  Errs,
 	  LiveJob,
 	} from "./job.js"
-import { Er, Err } from "./errors.js"
+import { Er, Err, RibuErr } from "./errors.js"
 import { VOID_LINK, VOID_OBJ } from "./system.js"
 
 // todo: consider passing a timeout parameter
@@ -450,22 +450,9 @@ export function live<J extends Job>(job: J): job is LiveJobFrom<J> {
 	return !(job as unknown as _Job).done
 }
 
-// export function ok<J extends Job>(job: J): job is OkJobFrom<J> {
-// 	return (job as unknown as _Job)._doneOk
-// }
-
-
-export function ok(job: _Job<any, any, any>): job is OkJob<any, any> {
-	return (job as _Job)._doneOk;
+export function ok<J extends Job>(job: J): job is OkJobFrom<J> {
+	return (job as unknown as _Job)._doneOk
 }
-
-// export function ok<J extends Job>(job: J): job is Extract<J, { st: "ok" }> {
-// 	return (job as _Job)._doneOk;
-// }
-
-// export function ok<J extends Job>(job: J): job is J & { st: "ok"; done: true; val: J extends Job<infer Ok, any, any> ? Ok : never } {
-// 	return job.st === "ok";
-//  }
 
 export function err<J extends Job>(job: J): job is ErrJobFrom<J> {
 	return (job as unknown as _Job)._doneErr

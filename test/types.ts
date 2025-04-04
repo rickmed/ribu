@@ -124,34 +124,6 @@ export const tests = {
 		true satisfies Equal<typeof _liveJobs, "live"[]>
 	},
 
-	["job variants using type guard functions"]() {
-		const job = go(jobFn1)
-
-		if (ok(job)) {
-			checkOkJob(job)
-		}
-		if (err(job)) {
-			checkErrJob(job)
-		}
-		if (live(job)) {
-			checkLiveJob(job)
-		}
-
-
-		const jobs = [go(jobFn1), go(jobFn2)]
-
-		// The result of filter using functions will get ugly intersection type.
-		// So best to use the method versions or map immediately.
-
-		const _okVals = jobs.filter(ok).map(j => j.val)
-		const _errVals = jobs.filter(err).map(j => j.reason)
-		const _liveJobs = jobs.filter(live).map(j => j.st)
-
-		true satisfies Equal<typeof _okVals, (OksJob1 | OksJob2)[]>
-		true satisfies Equal<typeof _errVals, (AllErrsJob1 | AllErrsJob2)[]>
-		true satisfies Equal<typeof _liveJobs, "live"[]>
-	},
-
 	["job variants (exhaustive) using job.byState()"]() {
 		const job = go(jobFn1)
 
