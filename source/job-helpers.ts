@@ -445,33 +445,33 @@ all:
 /** *****************  Utils  *********************************************** */
 
 export function groupByState<J extends Job>(jobs: J[]) {
-	let _ok: PrettyOkJob<J>[] = []
-	let _err: PrettyErrJob<J>[] = []
-	let _live: J[] = []
+	let ok: PrettyOkJob<J>[] = []
+	let err: PrettyErrJob<J>[] = []
+	let live: J[] = []
 	for (let i = 0; i < jobs.length; i++) {
 		const job = jobs[i]!
-		if (ok(job)) {
-			_ok.push(job)
+		if (isOk(job)) {
+			ok.push(job)
 		}
-		else if (err(job)) {
-			_err.push(job)
+		else if (isErr(job)) {
+			err.push(job)
 		}
 		else {
-			_live.push(job)
+			live.push(job)
 		}
 	}
-	return { ok: _ok, err: _err, live: _live }
+	return { ok, err, live }
 }
 
 export function done<J extends Job>(job: J): job is DoneJobFrom<J> {
 	return !(job as unknown as _Job)._done
 }
 
-export function ok<J extends Job>(job: J): job is OkJobFrom<J> {
+export function isOk<J extends Job>(job: J): job is OkJobFrom<J> {
 	return (job as unknown as _Job)._doneOk
 }
 
-export function err<J extends Job>(job: J): job is ErrJobFrom<J> {
+export function isErr<J extends Job>(job: J): job is ErrJobFrom<J> {
 	return (job as unknown as _Job)._doneErr
 }
 
