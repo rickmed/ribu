@@ -1,4 +1,4 @@
-export { go, onEnd, type _Job as _Job, me, type RibuGen } from "./job.js"
+export { go, onEnd, type Job, me, type RibuGen } from "./job.js"
 export { cancel } from "./cancelAllJobs.js"
 export { sleep } from "./timers.js"
 export { Ch, type OutCh, type InCh } from "./channel.js"

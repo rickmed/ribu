@@ -1,19 +1,17 @@
 import {
+	_Job,
 	cancelJob,
 	ERR_IN_GENFN,
-	type _Job,
 	type Job,
 	linkJobs,
 	markSettledAndNotifyObs,
-	 PARKED_CH_REC, SETTLED,
-	  unlinkFromAllJobs,
-	  ANY_ERR_OR_CANCOK,
-	  OkJob,
-	  ErrJob,
-	  Errs,
-	  LiveJob,
-	} from "./job.js"
-import { Er, Err, RibuErr } from "./errors.js"
+	PARKED_CH_REC, SETTLED,
+	unlinkFromAllJobs,
+	OkJob,
+	ErrJob,
+	DoneJob,
+} from "./job.js"
+import { Er, Err } from "./errors.js"
 import { VOID_LINK, VOID_OBJ } from "./system.js"
 
 // todo: consider passing a timeout parameter
@@ -112,20 +110,20 @@ export const FAIL = HALT | ERR_IN_GENFN
 export const TIME_OUT = "Timeout"
 export type TimeoutErr = Err<typeof TIME_OUT>
 
-abstract class JobPlus<Ret = unknown, Ctx = unknown> extends Job<Ret, Ctx> {
+abstract class JobPlus<Ok = unknown, E = unknown, Ctx = unknown> extends _Job<Ok, E, Ctx> {
 	constructor() {
 		super("")
 	}
 
 	maxWait(ms: number) {
 		this._tm = setTimeout(maxWaitFired, ms, this)
-		return this as Job<Ret | TimeoutErr, Ctx>
+		return this as _Job<Ok, Ok | E | TimeoutErr, Ctx>
 	}
 
 	_go(jobs: Job[], cancel = false) {
 		if (jobs.length === 0) {
 			this._st |= (SETTLED | ERR_IN_GENFN)
-			this._v = Err(EMPTY_ARGS, this._nm) as AllRet
+			this._v = Err(EMPTY_ARGS, this._nm) as Ok | E
 		}
 		else {
 			this._init()
@@ -177,7 +175,7 @@ export function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
 	const len = jobs.length
 	for (let i = 0; i < len; i++) {
 		const job = jobs[i]!
-		const res = checkIfTgSettledSync(obJob, job, unsettledTargets)
+		const res = checkIfTgSettledSync(obJob, job as _Job, unsettledTargets)
 		if (res === 3) {
 			return
 		}
@@ -185,8 +183,8 @@ export function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
 			continue
 		}
 		if (cancel) {
-			cancelJob(job)
-			const res = checkIfTgSettledSync(obJob, job, unsettledTargets)
+			cancelJob(job as _Job)
+			const res = checkIfTgSettledSync(obJob, job as _Job, unsettledTargets)
 			if (res === 3) {
 				return
 			}
@@ -195,7 +193,7 @@ export function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
 			}
 		}
 		unsettledTargets = true
-		linkJobs(obJob, job)
+		linkJobs(obJob, job as _Job)
 	}
 	if (!unsettledTargets) {
 		markSettledAndNotifyObs(obJob)
@@ -205,7 +203,7 @@ export function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
 // 1: tgJob didn't settle
 // 2: tgJob settled but thisJob didn't halt
 // 3: thisJob halted
-function checkIfTgSettledSync(thisJob: JobPlus, tgJob: Job, unsettledTargets: boolean): number {
+function checkIfTgSettledSync(thisJob: JobPlus, tgJob: _Job, unsettledTargets: boolean): number {
 	if (tgJob._st & SETTLED) {
 		thisJob._onTgJobDone(tgJob)
 		if (thisJob._st & HALT) {
@@ -222,8 +220,8 @@ function checkIfTgSettledSync(thisJob: JobPlus, tgJob: Job, unsettledTargets: bo
 
 export function ExtendJobPlus<Jobs extends Job[], Ret>(
 	name: string,
-	_onTgJobDone: (this: Job, tgJob: Jobs[number]) => Ret,
-	_init?: (this: Job) => void,
+	_onTgJobDone: (this: JobPlus, tgJob: Jobs[number]) => Ret,
+	_init?: (this: JobPlus) => void,
 	cancel = false
 ) {
 
@@ -261,17 +259,17 @@ export const allOrErr = ExtendJobPlus("allOrErr", allOrErrOnTgJobDone, allOrErrI
 const JOB_HAD_ERR = "JobHadErr"
 export type JobHadErr = Err<typeof JOB_HAD_ERR>
 
-function allOrErrOnTgJobDone<Jobs extends Job[]>(this: Job, tgJob: Jobs[number]) {
-	if (tgJob.doneErr) {
+function allOrErrOnTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[number]) {
+	if ((tgJob as _Job)._doneErr) {
 		this._st |= FAIL
-		return this._v = Err(JOB_HAD_ERR, this._nm, "", tgJob._v as Er)
+		return this._v = Err(JOB_HAD_ERR, this._nm, "", (tgJob as _Job)._v as Er)
 	}
 	let results = this._v as AllOkRet<Jobs>[]
-	results.push(tgJob._v a	 AllOkRet<Jobs>)
+	results.push((tgJob as _Job)._v as AllOkRet<Jobs>)
 	return results
 }
 
-function allOrErr	nit(this: Job) {
+function allOrErrInit(this: JobPlus) {
 	this._v = []
 }
 
@@ -446,8 +444,8 @@ all:
 
 /** *****************  Utils  *********************************************** */
 
-export function live<J extends Job>(job: J): job is LiveJobFrom<J> {
-	return !(job as unknown as _Job).done
+export function done<J extends Job>(job: J): job is DoneJobFrom<J> {
+	return !(job as unknown as _Job)._done
 }
 
 export function ok<J extends Job>(job: J): job is OkJobFrom<J> {
@@ -459,9 +457,9 @@ export function err<J extends Job>(job: J): job is ErrJobFrom<J> {
 }
 
 export function groupByState<J extends Job>(jobs: J[]) {
-	const _ok: PrettyOkJob<J>[] = []
-	const _err: PrettyErrJob<J>[] = []
-	const _live: PrettyLiveJob<J>[] = []
+	let _ok: PrettyOkJob<J>[] = []
+	let _err: PrettyErrJob<J>[] = []
+	let _done: PrettyDoneJob<J>[] = []
 	for (let i = 0; i < jobs.length; i++) {
 		const job = jobs[i]!
 		if (ok(job)) {
@@ -471,10 +469,10 @@ export function groupByState<J extends Job>(jobs: J[]) {
 			_err.push(job)
 		}
 		else {
-			_live.push(job as LiveJobFrom<J>)
+			_done.push(job as DoneJobFrom<J>)
 		}
 	}
-	return { ok: _ok, err: _err, live: _live }
+	return { ok: _ok, err: _err, done: _done }
 }
 
 type OkJobFrom<J> = J extends Job<infer Ok, infer _E, infer Ctx>
@@ -493,12 +491,12 @@ export type PrettyErrJob<J> = J extends Job<infer _Ok, infer E, infer Ctx>
 	? ErrJob<E, Ctx>
 	: never
 
-type LiveJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
-	? J & LiveJob<_Ok, E, Ctx>
+type DoneJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
+	? J & DoneJob<_Ok, E, Ctx>
 	: never
 
-export type PrettyLiveJob<J> = J extends Job<infer _Ok, infer E, infer Ctx>
-	? LiveJob<_Ok, E, Ctx>
+export type PrettyDoneJob<J> = J extends Job<infer _Ok, infer E, infer Ctx>
+	? DoneJob<_Ok, E, Ctx>
 	: never
 
 

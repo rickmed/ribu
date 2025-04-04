@@ -4,6 +4,7 @@ import { child, child2, sleepProm } from "./utils.js"
 import { _Err } from "../source/errors.js"
 import { CANCEL_ALL_OP_NAME } from "../source/cancelAllJobs.js"
 import { TIME_OUT } from "../source/job-helpers.js"
+import { _Job } from "../source/job.js"
 // import { CANCEL_ALL_OP_NAME, TIME_OUT } from "../source/job.js"
 
 
@@ -55,7 +56,7 @@ describe("yield* cancel(...jobs)", () => {
 	it(".cancel() is a no-op on already settled jobs", async () => {
 
 		function* child1() {
-			yield* sleep(1)
+			yield* sleep(2)
 			return Err("Bad")
 		}
 
@@ -63,7 +64,7 @@ describe("yield* cancel(...jobs)", () => {
 
 		function* main() {
 			chldJob = go(child1)
-			yield* sleep(2)
+			yield* sleep(4)
 			const res = yield* cancel(chldJob)
 			return res
 		}
@@ -71,7 +72,7 @@ describe("yield* cancel(...jobs)", () => {
 		const rec = await go(main).promErr
 		expect(rec).toEqual(undefined)
 		const exp = _Err("child1", Err("Bad"))
-		expect(chldJob._v).toStrictEqual(exp)
+		expect((chldJob as _Job)._v).toStrictEqual(exp)
 	})
 })
 
@@ -275,7 +276,7 @@ describe("yield* cancel(...jobs).err", () => {
 		const rec = await go(main).promErr
 		expect(rec).toEqual("ok")
 		const exp = _Err("child1", Err("Bad"))
-		expect(chldJob._v).toStrictEqual(exp)
+		expect((chldJob as _Job)._v).toStrictEqual(exp)
 	})
 })
 
