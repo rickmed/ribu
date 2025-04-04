@@ -183,7 +183,12 @@ export const tests = {
 
 	["groupByState()"]() {
 		const jobs = [go(jobFn1), go(jobFn2)]
-		const { ok, err, live: _live } = groupByState(jobs)
+		const { live: _live, ok, err } = groupByState(jobs)
+
+		true satisfies Equal<
+			typeof _live,
+			(Job<OksJob1, AllErrsJob1> | Job<OksJob2, AllErrsJob2>)[]
+		>
 
 		true satisfies Equal<
 			typeof ok,
@@ -193,11 +198,6 @@ export const tests = {
 		true satisfies Equal<
 			typeof err,
 			(ErrJob<AllErrsJob1> | ErrJob<AllErrsJob2>)[]
-		>
-
-		true satisfies Equal<
-			typeof _live,
-			(Job<OksJob1, AllErrsJob1> | Job<OksJob2, AllErrsJob2>)[]
 		>
 
 		const _okVals = ok.map(j => j.val)
