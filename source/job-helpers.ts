@@ -447,7 +447,7 @@ all:
 export function groupByState<J extends Job>(jobs: J[]) {
 	let _ok: PrettyOkJob<J>[] = []
 	let _err: PrettyErrJob<J>[] = []
-	let _done: PrettyDoneJob<J>[] = []
+	let _live: J[] = []
 	for (let i = 0; i < jobs.length; i++) {
 		const job = jobs[i]!
 		if (ok(job)) {
@@ -457,10 +457,10 @@ export function groupByState<J extends Job>(jobs: J[]) {
 			_err.push(job)
 		}
 		else {
-			_done.push(job as DoneJobFrom<J>)
+			_live.push(job)
 		}
 	}
-	return { ok: _ok, err: _err, done: _done }
+	return { ok: _ok, err: _err, live: _live }
 }
 
 export function done<J extends Job>(job: J): job is DoneJobFrom<J> {

@@ -2,7 +2,7 @@ import { go, sleep } from "ribu"
 import { Er, Err, type ECancOk } from "../source/errors.js"
 import { cancel } from "../source/cancelAllJobs.js"
 import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr, groupByState } from "../source/job-helpers.js"
-import {type OkJob, type ErrJob, DoneJob, type ByStateJobBase } from "../source/job.js"
+import {type OkJob, type ErrJob, DoneJob, type ByStateJobBase, Job } from "../source/job.js"
 
 export function* jobFn1(x?: number) {
 	yield* sleep(1)
@@ -42,7 +42,6 @@ type AllJob1 = OksJob1 | AllErrsJob1
 type ErrsJob2 = Err<"Error2">
 type AllErrsJob2 = ErrsJob2 | RibuErrs
 type OksJob2 = "hi" | SomeObj
-type AllJob2 = OksJob2 | AllErrsJob2
 
 type NotErr = OksJob1 | OksJob2
 type NotErrs = NotErr[]
@@ -184,7 +183,7 @@ export const tests = {
 
 	["groupByState()"]() {
 		const jobs = [go(jobFn1), go(jobFn2)]
-		const { ok, err, done } = groupByState(jobs)
+		const { ok, err, live: _live } = groupByState(jobs)
 
 		true satisfies Equal<
 			typeof ok,
@@ -197,8 +196,8 @@ export const tests = {
 		>
 
 		true satisfies Equal<
-			typeof done,
-			(DoneJob<OksJob1, AllErrsJob1> | DoneJob<OksJob2, AllErrsJob2>)[]
+			typeof _live,
+			(Job<OksJob1, AllErrsJob1> | Job<OksJob2, AllErrsJob2>)[]
 		>
 
 		const _okVals = ok.map(j => j.val)
@@ -206,9 +205,6 @@ export const tests = {
 
 		const _errVals = err.map(j => j.reason)
 		true satisfies Equal<typeof _errVals, (AllErrsJob1 | AllErrsJob2)[]>
-
-		const _doneJobs = done.map(j => j.val)
-		true satisfies Equal<typeof _doneJobs, (AllJob1 | AllJob2)[]>
 	},
 
 	/* *************** allOrErr() ******************************************** */
