@@ -77,10 +77,10 @@ describe("yield* job", () => {
 
 
 /**
- * yield* job.err
+ * yield* job.handle
  * Handle errors manually.
  */
-describe("yield* job.err", () => {
+describe("yield* job.handle", () => {
 
 	it("caller job resumes if target does not fail", async () => {
 

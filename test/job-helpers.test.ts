@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest"
 import { go, sleep, allOrErr, Err } from "ribu"
-import { child } from "./utils.js"
+import { incCountonDoneJob } from "./utils.js"
 import { _Err } from "../source/errors.js"
 import { EMPTY_ARGS } from "../source/job-helpers.js"
 
 
 describe("allOrErr()", () => {
+
+	function* badJob() {
+		yield* sleep(3)
+		return Err("Bad")
+	}
 
 	it("all jobs succeed", async () => {
 
@@ -20,7 +25,8 @@ describe("allOrErr()", () => {
 		}
 
 		function* main() {
-			const res = yield* allOrErr(go(job1), go(job2))
+			const jobs = [go(job1), go(job2)]
+			const res = yield* allOrErr(jobs)
 			return res
 		}
 
@@ -29,17 +35,13 @@ describe("allOrErr()", () => {
 	})
 
 	it("settles with correct error if a passed-in job fails. Siblings are "+
-		"not cancelled", async () => {
+		"NOT cancelled", async () => {
 
 		let ctx = { count: 0 }
 
-		function* job2() {
-			yield* sleep(3)
-			throw Error("Bad")
-		}
-
 		function* main() {
-			const res = yield* allOrErr(go(child, ctx), go(job2)).handle
+			const jobs = [go(incCountonDoneJob, ctx), go(badJob)]
+			const res = yield* allOrErr(jobs).handle
 			return { res }
 		}
 
@@ -47,7 +49,7 @@ describe("allOrErr()", () => {
 
 		const exp =
 			Err("JobHadErr", "allOrErr", undefined,
-				_Err("job2", Error("Bad"))
+				_Err("badJob", Err("Bad"))
 			)
 
 		expect(rec.res).toStrictEqual(exp)
@@ -57,7 +59,7 @@ describe("allOrErr()", () => {
 	it(`fails with ${EMPTY_ARGS} if arguments empty`, async () => {
 
 		function* main() {
-			yield* allOrErr()
+			yield* allOrErr([])
 		}
 
 		const rec = await go(main).promErr
@@ -68,6 +70,25 @@ describe("allOrErr()", () => {
 			)
 
 		expect(rec).toStrictEqual(exp)
+	})
+
+	it.todo("recover from err", async () => {
+
+		// let ctx = { count: 0 }
+
+		// function* goodJob() {
+		// 	yield* sleep(2)
+		// 	ctx.count++
+		// 	return "good"
+		// }
+
+		// function* main() {
+		// 	const jobs = [go(badJob), go(goodJob)]
+		// 	const res = yield* allOrErr(jobs).handle
+		// 	return res
+		// }
+
+		// const rec = await go(main)
 	})
 })
 

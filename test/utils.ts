@@ -4,7 +4,7 @@ export function sleepProm(ms: number): Promise<void> {
 	return new Promise(res => setTimeout(res, ms))
 }
 
-export function* child(ctx: {count: number}) {
+export function* incCountonDoneJob(ctx: {count: number}) {
 	yield* sleep(5)
 	ctx.count++
 }

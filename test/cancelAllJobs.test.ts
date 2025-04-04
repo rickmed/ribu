@@ -1,12 +1,10 @@
 import { describe, it, expect } from "vitest"
 import { go, cancel, sleep, Err, Job, onEnd } from "ribu"
-import { child, child2, sleepProm } from "./utils.js"
+import { incCountonDoneJob, child2, sleepProm } from "./utils.js"
 import { _Err } from "../source/errors.js"
 import { CANCEL_ALL_OP_NAME } from "../source/cancelAllJobs.js"
 import { TIME_OUT } from "../source/job-helpers.js"
 import { _Job } from "../source/job.js"
-// import { CANCEL_ALL_OP_NAME, TIME_OUT } from "../source/job.js"
-
 
 describe("yield* cancel(...jobs)", () => {
 
@@ -15,10 +13,10 @@ describe("yield* cancel(...jobs)", () => {
 		let ctx = { count: 0 }
 
 		function* main() {
-			const job1 = go(child, ctx)
+			const job1 = go(incCountonDoneJob, ctx)
 			const job2 = go(child2, ctx)
 			yield* sleep(1)
-			yield* cancel(job1, job2)
+			yield* cancel([job1, job2])
 		}
 
 		await go(main)
@@ -28,17 +26,17 @@ describe("yield* cancel(...jobs)", () => {
 	/**
 	 * NOTE:
 	 * Users should NOT use plain `yield* cancel()` to handle the return value.
-	 * Use `.err` instead.
+	 * Use `.handle` instead.
 	 */
 	it("returns undefined if all jobs finished their cancellation without errors", async () => {
 
 		let ctx = { count: 0 }
 
 		function* main() {
-			const job1 = go(child, ctx)
+			const job1 = go(incCountonDoneJob, ctx)
 			const job2 = go(child2, ctx)
 			yield* sleep(1)
-			const res = yield* cancel(job1, job2)
+			const res = yield* cancel([job1, job2])
 			return res
 		}
 
@@ -65,7 +63,7 @@ describe("yield* cancel(...jobs)", () => {
 		function* main() {
 			chldJob = go(child1)
 			yield* sleep(4)
-			const res = yield* cancel(chldJob)
+			const res = yield* cancel([chldJob])
 			return res
 		}
 
@@ -80,17 +78,17 @@ describe("yield* cancel(...jobs)", () => {
 /**
  * Handle unhappy paths manually.
  */
-describe("yield* cancel(...jobs).err", () => {
+describe("yield* cancel(...jobs).handle", () => {
 
 	it("returns undefined if all jobs cancelled ok", async () => {
 
 		let ctx = { count: 0 }
 
 		function* main() {
-			const job1 = go(child, ctx)
+			const job1 = go(incCountonDoneJob, ctx)
 			const job2 = go(child2, ctx)
 			yield* sleep(1)
-			const res = yield* cancel(job1, job2).handle
+			const res = yield* cancel([job1, job2]).handle
 			return res
 		}
 
@@ -110,10 +108,10 @@ describe("yield* cancel(...jobs).err", () => {
 		}
 
 		function* main() {
-			const job1 = go(child, ctx)
+			const job1 = go(incCountonDoneJob, ctx)
 			const job2 = go(badChild, ctx)
 			yield* sleep(1)
-			const res = yield* cancel(job1, job2).handle
+			const res = yield* cancel([job1, job2]).handle
 			// Recovering: if res !== undefined, cancelling failed.
 			if (res) {
 				return "recovered"
@@ -215,7 +213,7 @@ describe("yield* cancel(...jobs).err", () => {
 			]
 			const jobs = children.map(go)
 			yield* sleep(1)
-			const res = yield* cancel(...jobs).handle
+			const res = yield* cancel(jobs).handle
 			return res
 		}
 
@@ -268,7 +266,7 @@ describe("yield* cancel(...jobs).err", () => {
 		function* main() {
 			chldJob = go(child1)
 			yield* sleep(2)
-			const cancelThing = cancel(chldJob).handle
+			const cancelThing = cancel([chldJob]).handle
 			yield* cancelThing
 			return "ok"
 		}
@@ -285,7 +283,7 @@ describe("cancel(...jobs).maxWait(ms)", () => {
 	/**
 	 * NOTE:
 	 * Users should NOT use plain `yield* cancel()` to handle the return value.
-	 * Use `.err` instead.
+	 * Use `.handle` instead.
 	 */
 	it("returns undefined if all jobs finished their cancellation on time and " +
 		"without errors", async () => {
@@ -293,10 +291,10 @@ describe("cancel(...jobs).maxWait(ms)", () => {
 		let ctx = { count: 0 }
 
 		function* main() {
-			const job1 = go(child, ctx)
+			const job1 = go(incCountonDoneJob, ctx)
 			const job2 = go(child2, ctx)
 			yield* sleep(1)
-			const res = yield* cancel(job1, job2).maxWait(10)
+			const res = yield* cancel([job1, job2]).maxWait(10)
 			return res
 		}
 
@@ -331,7 +329,7 @@ describe("cancel(...jobs).maxWait(ms)", () => {
 			const job1 = go(child1)
 			const job2 = go(child2)
 			yield* sleep(1)
-			yield* cancel(job1, job2).maxWait(2)
+			yield* cancel([job1, job2]).maxWait(2)
 		}
 
 		const rec = await go(main).promErr
@@ -348,12 +346,12 @@ describe("cancel(...jobs).maxWait(ms)", () => {
 /**
  * Handle cancel timeouts manually.
  */
-describe("cancel(...jobs).maxWait(ms).err", () => {
+describe("cancel(...jobs).maxWait(ms).handle", () => {
 
 	/**
 	 * NOTE:
 	 * Users should NOT use plain `yield* cancel()` to handle the return value.
-	 * Use `.err` instead.
+	 * Use `.handle` instead.
 	 */
 	it("returns undefined if all jobs finished their cancellation on time and " +
 		"without errors", async () => {
@@ -361,10 +359,10 @@ describe("cancel(...jobs).maxWait(ms).err", () => {
 		let ctx = { count: 0 }
 
 		function* main() {
-			const job1 = go(child, ctx)
+			const job1 = go(incCountonDoneJob, ctx)
 			const job2 = go(child2, ctx)
 			yield* sleep(1)
-			const res = yield* cancel(job1, job2).maxWait(10).handle
+			const res = yield* cancel([job1, job2]).maxWait(10).handle
 			return res
 		}
 
@@ -399,7 +397,7 @@ describe("cancel(...jobs).maxWait(ms).err", () => {
 			const job1 = go(child1)
 			const job2 = go(child2)
 			yield* sleep(1)
-			const res = yield* cancel(job1, job2).maxWait(2).handle
+			const res = yield* cancel([job1, job2]).maxWait(2).handle
 			return res
 		}
 

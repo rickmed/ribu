@@ -19,7 +19,7 @@ function* httpSupervisor() {
 
 
 function* reqHandlerSup(reqHandler: ReqHandler, ctx: Ctx) {
-	const res = yield* go(appReqHandler, ctx).err
+	const res = yield* go(appReqHandler, ctx).handle
 	if (isErr(res)) {
 		// ctx.connection.close() or something
 		return
@@ -42,7 +42,7 @@ function* reqHandler(ctx: Ctx) {
 const withLogReqHandler = (reqHandler: typeof reqHandler) =>
 	function* (ctx: Ctx) {
 		const start = Date.now()
-		yield* go(reqHandler, ctx).err
+		yield* go(reqHandler, ctx).handle
 		const ms = Date.now() - start
 		ctx.req.set("X-Response-Time", `${ms}ms`)
 	}
@@ -52,8 +52,8 @@ const appReqHandler = withLogReqHandler(reqHandler)
 
 
 const res = await go(httpSupervisor).promErr
-if (res.err) {
-	console.error("something really bad happened", res.err)
+if (res.handle) {
+	console.error("something really bad happened", res.handle)
 	process.exit(1)
 }
 console.log("server done, bye")

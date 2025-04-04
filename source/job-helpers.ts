@@ -10,6 +10,7 @@ import {
 	OkJob,
 	ErrJob,
 	DoneJob,
+	Errs,
 } from "./job.js"
 import { Er, Err } from "./errors.js"
 import { VOID_LINK, VOID_OBJ } from "./system.js"
@@ -164,7 +165,7 @@ function maxWaitFired(thisJob: JobPlus) {
 	// Reset ._st and .val in case some passed-in jobs already settled with Err.
 	thisJob._st = 0
 	thisJob._v = Err(TIME_OUT, thisJob._nm)
-	// Make caller fail if it didn't call .err.
+	// Make caller fail if it didn't call .handle.
 	thisJob._st |= ERR_IN_GENFN
 	unlinkFromAllJobs(thisJob)
 	markSettledAndNotifyObs(thisJob)
@@ -218,14 +219,14 @@ function checkIfTgSettledSync(thisJob: JobPlus, tgJob: _Job, unsettledTargets: b
 	return 1
 }
 
-export function ExtendJobPlus<Jobs extends Job[], Ret>(
+export function makeJobCombinator<Jobs extends Job[], Ret>(
 	name: string,
 	_onTgJobDone: (this: JobPlus, tgJob: Jobs[number]) => Ret,
 	_init?: (this: JobPlus) => void,
 	cancel = false
 ) {
 
-	class JobP extends JobPlus<NotErrs<Ret>, Ret | Err<typeof EMPTY_ARGS>> {
+	class JobP extends JobPlus<NotErrs<Ret>, Errs<Ret> | Err<typeof EMPTY_ARGS>> {
 		_nm = name
 	}
 
@@ -236,7 +237,7 @@ export function ExtendJobPlus<Jobs extends Job[], Ret>(
 
 	return factory
 
-	function factory(...jobs: Jobs) {
+	function factory(jobs: Jobs) {
 		const instance = new JobP()
 		return instance._go(jobs, cancel)
 	}
@@ -254,7 +255,7 @@ type AllOkRet<Jobs extends Job[]> = Jobs[number] extends Job<infer A, unknown> ?
  *  If one job fails (or is cancelled, even successfully), it fails.
  *  Fails also if the passed-in array is empty.
  */
-export const allOrErr = ExtendJobPlus("allOrErr", allOrErrOnTgJobDone, allOrErrInit)
+export const allOrErr = makeJobCombinator("allOrErr", allOrErrOnTgJobDone, allOrErrInit)
 
 const JOB_HAD_ERR = "JobHadErr"
 export type JobHadErr = Err<typeof JOB_HAD_ERR>
@@ -274,27 +275,8 @@ function allOrErrInit(this: JobPlus) {
 }
 
 
-/* No .mapOut!!!, people map themselves.
 
-
-
-*****
-allOrErr() / P.all() -> if Job failed, fail fast.
-	ok -> Job<JobOkRet>[]
-	err -> JobHadErr<failedJob> | Job<JobOkRet>[]
-all() | P.allSettled() -> waits for all jobs to settle.
-	ok -> Job<JobAllRet>
-	err -> never
-Promise.race() / first() -> settles when a job settled.
-	ok -> Job<JobAllRet>
-	err -> never
-Promise.any() / firstOk() -> settles when first successful job.
-	ok -> Job<JobOkRet>
-	err -> Err<"AllJobsFailed">
-
-
-
-
+/*
 
 WHAT GENERAL CLASS TO USE
 need a PoolBase that I give an array of jobs and let me know when

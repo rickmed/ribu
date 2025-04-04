@@ -151,7 +151,7 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 			return
 		}
 
-		// Parked at yield* tgJob or yield* tgJob.err/cancel/cancelErr.
+		// Parked at yield* tgJob or yield* tgJob.handle/cancel/cancelErr.
 		const { _st: tgSt } = tgJob
 
 		const shouldThisJobFail =
