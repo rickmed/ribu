@@ -28,7 +28,8 @@ describe("allOrErr()", () => {
 		expect(rec.toSorted()).toStrictEqual([2, "one"].toSorted())
 	})
 
-	it("settles with correct error if a passed-in job fails (others are cancelled)", async () => {
+	it("settles with correct error if a passed-in job fails. Siblings are "+
+		"not cancelled", async () => {
 
 		let ctx = { count: 0 }
 
@@ -38,19 +39,19 @@ describe("allOrErr()", () => {
 		}
 
 		function* main() {
-			return yield* allOrErr(go(child, ctx), go(job2)).handle
+			const res = yield* allOrErr(go(child, ctx), go(job2)).handle
+			return { res }
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main)
 
 		const exp =
-			_Err("main",
-				Err("JobHadErr", "allOrErr", undefined,
-					_Err("job2", Error("Bad"))
-				))
+			Err("JobHadErr", "allOrErr", undefined,
+				_Err("job2", Error("Bad"))
+			)
 
-		expect(rec).toStrictEqual(exp)
-		expect(ctx.count).toBe(0)
+		expect(rec.res).toStrictEqual(exp)
+		expect(ctx.count).toBe(1)
 	})
 
 	it(`fails with ${EMPTY_ARGS} if arguments empty`, async () => {

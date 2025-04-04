@@ -83,12 +83,12 @@ pool.isIdle()	Returns true if all jobs are settled (i.e. inFlight === 0)
 
 /**
  *  When helper is done, it NEVER cancels the other passed-in jobs.
- *   Are only "unlinked" from passed-in jobs when it returns.
+ *   Is only "unlinked" from passed-in jobs when it returns.
  *
  *  Other jobs are cancelled only if yield* helper.cancel() is called.
  *    This is the equivalent of yield* cancel(...passedInJobs)
  *
- *  Although, if plain yield* jobHelper(...jobs) is used, and jobHelper
+ *  Keep in mind though, if plain yield* jobHelper(...) is used, and jobHelper
  *    fails (returns ::Err, for example), the caller will fail, so if
  *    the passed-in jobs are chilren of caller, they'll be cancelled
  *    via parent's automatic structured concurrency anyway.
@@ -444,18 +444,6 @@ all:
 
 /** *****************  Utils  *********************************************** */
 
-export function done<J extends Job>(job: J): job is DoneJobFrom<J> {
-	return !(job as unknown as _Job)._done
-}
-
-export function ok<J extends Job>(job: J): job is OkJobFrom<J> {
-	return (job as unknown as _Job)._doneOk
-}
-
-export function err<J extends Job>(job: J): job is ErrJobFrom<J> {
-	return (job as unknown as _Job)._doneErr
-}
-
 export function groupByState<J extends Job>(jobs: J[]) {
 	let _ok: PrettyOkJob<J>[] = []
 	let _err: PrettyErrJob<J>[] = []
@@ -475,6 +463,18 @@ export function groupByState<J extends Job>(jobs: J[]) {
 	return { ok: _ok, err: _err, done: _done }
 }
 
+export function done<J extends Job>(job: J): job is DoneJobFrom<J> {
+	return !(job as unknown as _Job)._done
+}
+
+export function ok<J extends Job>(job: J): job is OkJobFrom<J> {
+	return (job as unknown as _Job)._doneOk
+}
+
+export function err<J extends Job>(job: J): job is ErrJobFrom<J> {
+	return (job as unknown as _Job)._doneErr
+}
+
 type OkJobFrom<J> = J extends Job<infer Ok, infer _E, infer Ctx>
 	? J & OkJob<Ok, Ctx>
 	: never
@@ -483,7 +483,7 @@ export type PrettyOkJob<J> = J extends Job<infer Ok, infer _E, infer Ctx>
 	? OkJob<Ok, Ctx>
 	: never
 
-type ErrJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
+export type ErrJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
 	? J & ErrJob<E, Ctx>
 	: never
 

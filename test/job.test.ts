@@ -121,3 +121,31 @@ describe("yield* job.err", () => {
 	})
 
 })
+
+describe("Access job states", () => {
+
+	it("successful job", async () => {
+
+		function* okJob () {
+			yield* sleep(1)
+			return "allOk"
+		}
+
+		const job = go(okJob)
+		expect(job.isDone()).toBe(false)
+		expect(job.isOk()).toBe(false)
+		expect(job.isErr()).toBe(false)
+		await job
+		expect(job.isDone() && job.val).toBe("allOk")
+		expect(job.st).toBe("done")
+	})
+
+	// it("failed job", async () => {
+
+	// 	function* badJob () {
+	// 		yield* sleep(1)
+	// 		throw Error("SomeErrorTag")
+	// 	}
+
+	// })
+})

@@ -123,18 +123,18 @@ describe("job.cancel()", () => {
 		}
 
 		function* main() {
-			const chldJob = go(child1)
+			const childJob = go(child1)
 			yield* sleep(3)
-			const cancelRes = yield* chldJob.cancel()
-			return { cancelRes, chldJob }
+			const cancelRes = yield* childJob.cancel()
+			return { cancelRes, childJob }
 		}
 
-		const { cancelRes, chldJob } = await go(main)
+		const { cancelRes, childJob } = await go(main)
 
 		expect(cancelRes).toStrictEqual(undefined)
 
 		const exp = _Err("child1", Err("Bad"))
-		const rec = chldJob.done()?.val
+		const rec = childJob.isDone() && childJob.val
 		expect(rec).toStrictEqual(exp)
 	})
 })
@@ -242,7 +242,7 @@ describe("yield* job.cancelErr()", () => {
 		expect(cancelRes).toEqual(undefined)
 
 		const exp = _Err("child1", Err("Bad"))
-		const rec = chldJob.done()?.val
+		const rec = chldJob.isDone() && chldJob.val
 		expect(rec).toStrictEqual(exp)
 	})
 })

@@ -275,6 +275,7 @@ function checkOkJob(_job: OkJob<OksJob1>) {
 	true satisfies Equal<typeof _job.st, "ok">
 	true satisfies Equal<typeof _job.val, OksJob1>
 	true satisfies Not<HasKey<typeof _job, "reason">>
+	true satisfies Not<HasKey<typeof _job, "done">>
 	true satisfies (typeof _job) extends ByStateJobBase ? true : false
 }
 
@@ -282,6 +283,7 @@ function checkErrJob(_job: ErrJob<AllErrsJob1>) {
 	true satisfies Equal<typeof _job.st, "err">
 	true satisfies Equal<typeof _job.reason, AllErrsJob1>
 	true satisfies Not<HasKey<typeof _job, "val">>
+	true satisfies Not<HasKey<typeof _job, "done">>
 	true satisfies (typeof _job) extends ByStateJobBase ? true : false
 }
 
@@ -289,5 +291,6 @@ function checkDoneJob(_job: DoneJob<OksJob1, AllErrsJob1>) {
 	true satisfies Equal<typeof _job.st, "done">
 	true satisfies Equal<typeof _job.val, AllJob1>
 	true satisfies Not<HasKey<typeof _job, "reason">>
+	true satisfies Not<HasKey<typeof _job, "done">>
 	true satisfies (typeof _job) extends ByStateJobBase ? true : false
 }

@@ -13,17 +13,17 @@ export type Er = Err<typeof RIBU_ERR_NAME>
  * _oe:
  * 	Errors that occurred in onEnd() functions.
  */
-export class RibuErr<Name extends string = string> implements Error {
+export class RibuErr<Name extends string = string, T = unknown> implements Error {
 
 	readonly name: Name
 	readonly message: string
 	readonly fn: string
 	// Errors from yield* job and/or from waiting chil	dren (both always ::Err)
-	private _errs?: unknown  // unknown | unknown[]
+	private _errs?: T  // unknown | unknown[]
 	// Errors from onEnd() functions
 	private _oe?: Error | Error[]
 
-	constructor(name: Name, fnName: string, errs?: RibuErr["_errs"], onEndErrs?: RibuErr["_oe"], msg = "") {
+	constructor(name: Name, fnName: string, errs?: T, onEndErrs?: RibuErr["_oe"], msg = "") {
 		this.name = name
 		this.message = msg
 		this.fn = fnName
@@ -35,19 +35,19 @@ export class RibuErr<Name extends string = string> implements Error {
 	_addErr(error: Error) {
 		const { _errs } = this
 		if (_errs === undefined) {
-			this._errs = error
+			this._errs = error as T
 		}
 		else if (Array.isArray(_errs)) {
 			(_errs as unknown[]).push(error)
 		}
 		else {
-			this._errs = [_errs, error]
+			this._errs = [_errs, error] as T
 		}
 		return this
 	}
 
 	get errors() {
-		return this._errs
+		return this._errs as T
 	}
 
 	_addOnEndErr(error: Error) {

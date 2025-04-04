@@ -212,9 +212,10 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 	}
 
 	get st() {
-		if (!this._done) return "done"
+		if (this._done) return "done"
 		if (this._doneErr) return "err"
-		return "ok"
+		if (this._doneOk) return "ok"
+		return "running"
 	}
 
 	byState() {
@@ -225,9 +226,6 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 		)
 	}
 
-	done(): DoneJob<Ok, E, Ctx> | undefined {
-		return this._done ? this as unknown as DoneJob<Ok, E, Ctx> : undefined
-	}
 
 	isDone(): this is DoneJob<Ok, E, Ctx> {
 		return this._done
@@ -767,12 +765,11 @@ export interface JobBase<Ok = unknown, E = unknown, Ctx = unknown> {
 	then: (res: (val: Ok) => void, rej: (err: E) => void) => void
 	readonly promErr: Promise<Ok | E>
 
-	done: () => DoneJob<Ok, E, Ctx> | undefined
 	isDone: () => this is DoneJob<Ok, E, Ctx>
 	isOk: () => this is OkJob<Ok, Ctx>
 	isErr: () => this is ErrJob<E, Ctx>
 
-	readonly st: "done" | "ok" | "err"
+	readonly st: "running" | "done" | "ok" | "err"
 	byState: () =>
 		| DoneJob<Ok, E, Ctx>
 		| OkJob<Ok, Ctx>
@@ -817,22 +814,18 @@ export type ByStateJobBase = {
 
 export type OkJob<Ok, Ctx = unknown> = JobBase<Ok, never, Ctx> & {
 	readonly st: "ok"
-	readonly done: true
 	readonly val: Ok
 } & ByStateJobBase
 
 export type ErrJob<E, Ctx = unknown> = JobBase<never, E, Ctx> & {
 	readonly st: "err"
-	readonly done: true
 	readonly reason: E
 } & ByStateJobBase
 
 export type DoneJob<Ok, E, Ctx = unknown> = JobBase<Ok, E, Ctx> & {
 	readonly st: "done"
 	readonly val: Ok | E
-	isDone: never
-	done: never
-}
+} & ByStateJobBase
 
 
 export type Errs<T> = Extract<T, RibuErr>
