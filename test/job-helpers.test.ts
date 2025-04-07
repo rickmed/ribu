@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { go, sleep, allOrErr, Err } from "ribu"
-import { incCountonDoneJob } from "./utils.js"
+import { incCountOnDoneJob } from "./utils.js"
 import { _Err } from "../source/errors.js"
 import { EMPTY_ARGS } from "../source/job-helpers.js"
 
@@ -20,7 +20,7 @@ describe("allOrErr()", () => {
 		}
 
 		function* job2() {
-			yield* sleep(1)
+			yield* sleep(3)
 			return 2
 		}
 
@@ -40,7 +40,7 @@ describe("allOrErr()", () => {
 		let ctx = { count: 0 }
 
 		function* main() {
-			const jobs = [go(incCountonDoneJob, ctx), go(badJob)]
+			const jobs = [go(incCountOnDoneJob, ctx), go(badJob)]
 			const res = yield* allOrErr(jobs).handle
 			return { res }
 		}

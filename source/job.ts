@@ -70,19 +70,19 @@ type OnEnd = SyncFn | AsyncFn | RibuGenFn
 type OnEndLink = Link<OnEnd, _Job>
 
 /* **** State Flags **** */
-const PARKED_CONTINUE = 1 << 0  // 1
+export const PARKED_CONTINUE = 1 << 0  // 1
 const PARKED_JOB = 1 << 1  // 2
 const PARKED_CANCEL = 1 << 2  // 4
 const PARKED_CANCEL_ERR = 1 << 3  // 8
 export const PARKED_SLEEP = 1 << 4  // 16
-export const PARKED_CH_PUT = 1 << 5  // 64
-export const PARKED_CH_REC = 1 << 6  // 128
-const WAITING_CHILDREN = 1 << 7  // 256
-const CHILDREN_CANCELLED = 1 << 8  // 512
-const WAITING_ONENDS = 1 << 9  // 1024
-export const CANCELLED = 1 << 10  // 2048
-export const SETTLED = 1 << 11  // 4096
-const CANCOK = 1 << 12  // 8192
+export const PARKED_CH_PUT = 1 << 5  // 32
+export const PARKED_CH_REC = 1 << 6  // 64
+const WAITING_CHILDREN = 1 << 7  // 128
+const CHILDREN_CANCELLED = 1 << 8  // 256
+const WAITING_ONENDS = 1 << 9  // 512
+export const CANCELLED = 1 << 10  // 1024
+export const SETTLED = 1 << 11  // 2048
+const CANCOK = 1 << 12  // 4096
 export const ERR_IN_GENFN = 1 << 13  // 8192
 export const ERR_IN_ONEND = 1 << 14  // 16384
 const CANCEL_SIBLINGS_ON_ERR = 1 << 15  // 32768
@@ -171,19 +171,17 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 		return jobIterator<Ok>(this)
 	}
 
-	get handle() {
-		self = this
-		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, "job.handle")
-		return JOB_ITERABLE as SysIterable<Ok | E>
+	get handle(): SysIterable<Ok | E> {
+		return processHandle<Ok | E>(this)
 	}
 
 	cancel() {
-		handleCancel(this, "job.cancel()", PARKED_CANCEL)
+		processCancel(this, ".cancel()", PARKED_CANCEL)
 		return SYS_ITERABLE as SysIterable<void>
 	}
 
 	cancelHandle() {
-		handleCancel(this, "job.cancelErr()", PARKED_CANCEL_ERR)
+		processCancel(this, ".cancelHandle()", PARKED_CANCEL_ERR)
 		return SYS_ITERABLE as SysIterable<void | Er>
 	}
 
@@ -225,7 +223,6 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 			| ErrJob<E, Ctx>
 		)
 	}
-
 
 	isDone(): this is DoneJob<Ok, E, Ctx> {
 		return this._done
@@ -284,7 +281,14 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 	}
 }
 
-function handleCancel(job: _Job, opName: string, callerJobNextSt: _Job["_st"]) {
+export function processHandle<T>(job: _Job) {
+	self = job
+	ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, ".handle")
+	return JOB_ITERABLE as SysIterable<T>
+}
+
+
+function processCancel(job: _Job, opName: string, callerJobNextSt: _Job["_st"]) {
 	if (job._st & SETTLED) {
 		iterRes.done = true
 		iterRes.value = undefined
@@ -359,7 +363,7 @@ function jobIterator<T>(job: _Job) {
 }
 
 
-const JOB_ITERABLE = {
+export const JOB_ITERABLE = {
 	[Symbol.iterator]() {
 		return jobIterator(self)
 	}
@@ -518,7 +522,6 @@ type NotVoidObj<T> = T extends VoidObj ? never : T
 export function markSettledAndNotifyObs(thisJob: _Job) {
 	thisJob._st |= SETTLED
 	const { _v: val } = thisJob
-
 	// Notify observers.
 	let obLink = thisJob._ob
 	while (obLink !== VOID_LINK) {

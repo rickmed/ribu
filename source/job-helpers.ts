@@ -10,10 +10,10 @@ import {
 	OkJob,
 	ErrJob,
 	DoneJob,
-	Errs,
+	processHandle,
 } from "./job.js"
 import { Er, Err } from "./errors.js"
-import { VOID_LINK, VOID_OBJ } from "./system.js"
+import { SysIterable, VOID_LINK, VOID_OBJ } from "./system.js"
 
 // todo: consider passing a timeout parameter
 
@@ -111,7 +111,9 @@ export const FAIL = HALT | ERR_IN_GENFN
 export const TIME_OUT = "Timeout"
 export type TimeoutErr = Err<typeof TIME_OUT>
 
-abstract class JobPlus<Ok = unknown, E = unknown, Ctx = unknown> extends _Job<Ok, E, Ctx> {
+export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
+	extends _Job<Ok, E, Ctx> {
+
 	constructor() {
 		super("")
 	}
@@ -134,31 +136,42 @@ abstract class JobPlus<Ok = unknown, E = unknown, Ctx = unknown> extends _Job<Ok
 	}
 
 	_onTgDone(tgJob: Job): void {
-		this._onTgJobDone(tgJob)
+		if ((tgJob as _Job)._doneErr) {
+			this._onFailedTgDoneExec(tgJob)
+		}
+		else {
+			this._onTgDoneExec(tgJob)
+		}
+
 		if (this._tg === VOID_LINK) {
-			settleJob(this)
+			this._settleJob()
 			return
 		}
 		if (this._st & HALT) {
 			unlinkFromAllJobs(this)
-			settleJob(this)
-			return
+			this._settleJob()
 		}
+	}
+
+	_settleJob() {
+		this._st &= ~HALT
+		if (this._tm !== VOID_OBJ) {
+			clearTimeout(this._tm as NodeJS.Timeout)
+			this._tm = VOID_OBJ
+		}
+		markSettledAndNotifyObs(this)
+	}
+
+	get handle(): SysIterable<Ok | E> {
+		return processHandle(this)
 	}
 
 	// To be overridden by subclasses
 	_init(): void {}
-	_onTgJobDone(_: Job) {}
+	_onTgDoneExec(_: Job) {}
+	_onFailedTgDoneExec(_: Job) {}
 }
 
-function settleJob(thisJob: JobPlus) {
-	thisJob._st &= ~HALT
-	if (thisJob._tm !== VOID_OBJ) {
-		clearTimeout(thisJob._tm as NodeJS.Timeout)
-		thisJob._tm = VOID_OBJ
-	}
-	markSettledAndNotifyObs(thisJob)
-}
 
 function maxWaitFired(thisJob: JobPlus) {
 	thisJob._tm = VOID_OBJ
@@ -175,6 +188,7 @@ export function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
 	let unsettledTargets = false
 	const len = jobs.length
 	for (let i = 0; i < len; i++) {
+
 		const job = jobs[i]!
 		const res = checkIfTgSettledSync(obJob, job as _Job, unsettledTargets)
 		if (res === 3) {
@@ -196,6 +210,7 @@ export function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
 		unsettledTargets = true
 		linkJobs(obJob, job as _Job)
 	}
+
 	if (!unsettledTargets) {
 		markSettledAndNotifyObs(obJob)
 	}
@@ -206,12 +221,12 @@ export function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
 // 3: thisJob halted
 function checkIfTgSettledSync(thisJob: JobPlus, tgJob: _Job, unsettledTargets: boolean): number {
 	if (tgJob._st & SETTLED) {
-		thisJob._onTgJobDone(tgJob)
+		thisJob._onTgDoneExec(tgJob)
 		if (thisJob._st & HALT) {
 			if (unsettledTargets) {
 				unlinkFromAllJobs(thisJob)
 			}
-			settleJob(thisJob)
+			thisJob._settleJob()
 			return 3
 		}
 		return 2
@@ -219,26 +234,32 @@ function checkIfTgSettledSync(thisJob: JobPlus, tgJob: _Job, unsettledTargets: b
 	return 1
 }
 
-export function makeJobCombinator<Jobs extends Job[], Ret>(
+function makeJobCombinator<Jobs extends Job[], Ok, E>(
 	name: string,
-	_onTgJobDone: (this: JobPlus, tgJob: Jobs[number]) => Ret,
+	_onTgJobDone?: (this: JobPlus, tgJob: Jobs[number]) => Ok,
+	_onFailedTgJobDone?: (this: JobPlus, tgJob: Jobs[number]) => E,
 	_init?: (this: JobPlus) => void,
 	cancel = false
 ) {
 
-	class JobP extends JobPlus<NotErrs<Ret>, Errs<Ret> | Err<typeof EMPTY_ARGS>> {
+	class JobCombinator extends JobPlus<Ok, E | Err<typeof EMPTY_ARGS>> {
 		_nm = name
 	}
 
-	JobP.prototype._onTgJobDone = _onTgJobDone
+	if (_onTgJobDone) {
+		JobCombinator.prototype._onTgDoneExec = _onTgJobDone
+	}
+	if (_onFailedTgJobDone) {
+		JobCombinator.prototype._onFailedTgDoneExec = _onFailedTgJobDone
+	}
 	if (_init) {
-		JobP.prototype._init = _init
+		JobCombinator.prototype._init = _init
 	}
 
 	return factory
 
 	function factory(jobs: Jobs) {
-		const instance = new JobP()
+		const instance = new JobCombinator()
 		return instance._go(jobs, cancel)
 	}
 }
@@ -255,19 +276,25 @@ type AllOkRet<Jobs extends Job[]> = Jobs[number] extends Job<infer A, unknown> ?
  *  If one job fails (or is cancelled, even successfully), it fails.
  *  Fails also if the passed-in array is empty.
  */
-export const allOrErr = makeJobCombinator("allOrErr", allOrErrOnTgJobDone, allOrErrInit)
+export const allOrErr = makeJobCombinator(
+	"allOrErr",
+	allOrErrOnTgJobDone,
+	allOrErrOnFailedTgJobDone,
+	allOrErrInit
+)
 
 const JOB_HAD_ERR = "JobHadErr"
 export type JobHadErr = Err<typeof JOB_HAD_ERR>
 
 function allOrErrOnTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[number]) {
-	if ((tgJob as _Job)._doneErr) {
-		this._st |= FAIL
-		return this._v = Err(JOB_HAD_ERR, this._nm, "", (tgJob as _Job)._v as Er)
-	}
 	let results = this._v as AllOkRet<Jobs>[]
 	results.push((tgJob as _Job)._v as AllOkRet<Jobs>)
 	return results
+}
+
+function allOrErrOnFailedTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[number]) {
+	this._st |= FAIL
+	return this._v = Err(JOB_HAD_ERR, this._nm, "", (tgJob as _Job)._v as Er)
 }
 
 function allOrErrInit(this: JobPlus) {

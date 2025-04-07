@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { go, cancel, sleep, Err, Job, onEnd } from "ribu"
-import { incCountonDoneJob, child2, sleepProm } from "./utils.js"
+import { incCountOnDoneJob, child2, sleepProm } from "./utils.js"
 import { _Err } from "../source/errors.js"
 import { CANCEL_ALL_OP_NAME } from "../source/cancelAllJobs.js"
 import { TIME_OUT } from "../source/job-helpers.js"
@@ -13,7 +13,7 @@ describe("yield* cancel(...jobs)", () => {
 		let ctx = { count: 0 }
 
 		function* main() {
-			const job1 = go(incCountonDoneJob, ctx)
+			const job1 = go(incCountOnDoneJob, ctx)
 			const job2 = go(child2, ctx)
 			yield* sleep(1)
 			yield* cancel([job1, job2])
@@ -33,7 +33,7 @@ describe("yield* cancel(...jobs)", () => {
 		let ctx = { count: 0 }
 
 		function* main() {
-			const job1 = go(incCountonDoneJob, ctx)
+			const job1 = go(incCountOnDoneJob, ctx)
 			const job2 = go(child2, ctx)
 			yield* sleep(1)
 			const res = yield* cancel([job1, job2])
@@ -85,7 +85,7 @@ describe("yield* cancel(...jobs).handle", () => {
 		let ctx = { count: 0 }
 
 		function* main() {
-			const job1 = go(incCountonDoneJob, ctx)
+			const job1 = go(incCountOnDoneJob, ctx)
 			const job2 = go(child2, ctx)
 			yield* sleep(1)
 			const res = yield* cancel([job1, job2]).handle
@@ -108,7 +108,7 @@ describe("yield* cancel(...jobs).handle", () => {
 		}
 
 		function* main() {
-			const job1 = go(incCountonDoneJob, ctx)
+			const job1 = go(incCountOnDoneJob, ctx)
 			const job2 = go(badChild, ctx)
 			yield* sleep(1)
 			const res = yield* cancel([job1, job2]).handle
@@ -291,7 +291,7 @@ describe("cancel(...jobs).maxWait(ms)", () => {
 		let ctx = { count: 0 }
 
 		function* main() {
-			const job1 = go(incCountonDoneJob, ctx)
+			const job1 = go(incCountOnDoneJob, ctx)
 			const job2 = go(child2, ctx)
 			yield* sleep(1)
 			const res = yield* cancel([job1, job2]).maxWait(10)
@@ -359,7 +359,7 @@ describe("cancel(...jobs).maxWait(ms).handle", () => {
 		let ctx = { count: 0 }
 
 		function* main() {
-			const job1 = go(incCountonDoneJob, ctx)
+			const job1 = go(incCountOnDoneJob, ctx)
 			const job2 = go(child2, ctx)
 			yield* sleep(1)
 			const res = yield* cancel([job1, job2]).maxWait(10).handle
