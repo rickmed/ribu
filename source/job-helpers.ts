@@ -12,7 +12,6 @@ import {
 	DoneJob,
 	processHandle,
 	WAITING_CHILDREN,
-	loop_tg,
 	ERR_IN_ONEND,
 	addErrorToJobVal,
 } from "./job.js"
@@ -148,8 +147,15 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 			return
 		}
 		if (this._st & HALT) {
+			// Trigger cancel on rest of passed-in jobs
 			this._st |= WAITING_CANCELLED_JOBS
-			loop_tg(this, false, true)
+			let jobLink = this._tg
+			do {
+				let job = jobLink.b as _Job
+				const nextLink = jobLink.nB
+				cancelJob(job)
+				jobLink = nextLink
+			} while (jobLink !== VOID_LINK)
 		}
 	}
 
