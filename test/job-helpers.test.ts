@@ -34,8 +34,8 @@ describe("allOrErr()", () => {
 		expect(rec.toSorted()).toStrictEqual([2, "one"].toSorted())
 	})
 
-	it("settles with correct error if a passed-in job fails. Siblings are "+
-		"NOT cancelled", async () => {
+	it("settles with correct error if a passed-in job fails. The other" +
+		"passed-in jobs are cancelled", async () => {
 
 		let ctx = { count: 0 }
 
@@ -53,7 +53,7 @@ describe("allOrErr()", () => {
 			)
 
 		expect(rec.res).toStrictEqual(exp)
-		expect(ctx.count).toBe(1)
+		expect(ctx.count).toBe(0)
 	})
 
 	it(`fails with ${EMPTY_ARGS} if arguments empty`, async () => {

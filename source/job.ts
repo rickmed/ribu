@@ -77,7 +77,7 @@ const PARKED_CANCEL_ERR = 1 << 3  // 8
 export const PARKED_SLEEP = 1 << 4  // 16
 export const PARKED_CH_PUT = 1 << 5  // 32
 export const PARKED_CH_REC = 1 << 6  // 64
-const WAITING_CHILDREN = 1 << 7  // 128
+export const WAITING_CHILDREN = 1 << 7  // 128
 const CHILDREN_CANCELLED = 1 << 8  // 256
 const WAITING_ONENDS = 1 << 9  // 512
 export const CANCELLED = 1 << 10  // 1024
@@ -420,7 +420,7 @@ function onGenFnDone(thisJob: _Job, cancelChildren = false) {
 	}
 
 	thisJob._st |= WAITING_CHILDREN
-	loopChildren(thisJob, true, cancelChildren)
+	loop_tg(thisJob, true, cancelChildren)
 }
 
 function genFnFailed(thisJob: _Job, jobVal: Er) {
@@ -546,7 +546,7 @@ function onChildDone(job: _Job, child: _Job) {
 		addErrorToJobVal(job, child._v as Er, ERR_IN_GENFN)
 		const { _st } = job
 		if ((_st & CANCEL_SIBLINGS_ON_ERR) && !(_st & CHILDREN_CANCELLED)) {
-			loopChildren(job, false, true)
+			loop_tg(job, false, true)
 		}
 	}
 
@@ -595,15 +595,15 @@ export function cancelJob(thisJob: _Job) {
 	// Waiting for children but not cancelled yet, so trigger cancel
 	// but don't link them again.
 	if (thisJob._st & WAITING_CHILDREN) {
-		loopChildren(thisJob, false, true)
+		loop_tg(thisJob, false, true)
 		return
 	}
 
 	// Trigger cancel and link to them.
-	loopChildren(thisJob, true, true)
+	loop_tg(thisJob, true, true)
 }
 
-function loopChildren(thisJob: _Job, observe: boolean, cancel: boolean) {
+export function loop_tg(thisJob: _Job, observe: boolean, cancel: boolean) {
 	if (cancel) {
 		thisJob._st |= CHILDREN_CANCELLED
 	}

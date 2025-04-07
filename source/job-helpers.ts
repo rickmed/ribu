@@ -11,6 +11,10 @@ import {
 	ErrJob,
 	DoneJob,
 	processHandle,
+	WAITING_CHILDREN,
+	loop_tg,
+	ERR_IN_ONEND,
+	addErrorToJobVal,
 } from "./job.js"
 import { Er, Err } from "./errors.js"
 import { SysIterable, VOID_LINK, VOID_OBJ } from "./system.js"
@@ -81,24 +85,12 @@ pool.isIdle()	Returns true if all jobs are settled (i.e. inFlight === 0)
 */
 
 
+/** *****************  Base JobPlus Class  ********************************** */
 
 /**
- *  When helper is done, it NEVER cancels the other passed-in jobs.
- *   Is only "unlinked" from passed-in jobs when it returns.
- *
- *  Other jobs are cancelled only if yield* helper.cancel() is called.
- *    This is the equivalent of yield* cancel(...passedInJobs)
- *
- *  Keep in mind though, if plain yield* jobHelper(...) is used, and jobHelper
- *    fails (returns ::Err, for example), the caller will fail, so if
- *    the passed-in jobs are chilren of caller, they'll be cancelled
- *    via parent's automatic structured concurrency anyway.
- *
- *  All fail with Err("EmptyArguments") if passed-in array is empty.
+ *  All JobPlus subclasses fail with Err("EmptyArguments") if passed-in array
+ *  is empty.
  */
-
-
-/** *****************  Base JobPlus Class  ********************************** */
 
 export const EMPTY_ARGS = "EmptyArguments"
 export type EmptyArgsErr = Err<typeof EMPTY_ARGS>
@@ -106,7 +98,8 @@ export type NotErrs<Ret> = Exclude<Ret, Error>
 
 // Reuse Job flags since they won't be used in JobPlus instances.
 const HALT = PARKED_CH_REC
-export const FAIL = HALT | ERR_IN_GENFN
+const FAIL = HALT | ERR_IN_GENFN
+const WAITING_CANCELLED_JOBS = WAITING_CHILDREN
 
 export const TIME_OUT = "Timeout"
 export type TimeoutErr = Err<typeof TIME_OUT>
@@ -136,11 +129,18 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 	}
 
 	_onTgDone(tgJob: Job): void {
-		if ((tgJob as _Job)._doneErr) {
-			this._onFailedTgDoneExec(tgJob)
+		if (this._st & WAITING_CANCELLED_JOBS) {
+			if ((tgJob as _Job)._st & ERR_IN_ONEND) {
+				addErrorToJobVal(this, (tgJob as _Job)._v as Er, ERR_IN_GENFN)
+			}
 		}
 		else {
-			this._onTgDoneExec(tgJob)
+			if ((tgJob as _Job)._doneErr) {
+				this._onFailedTgDoneExec(tgJob)
+			}
+			else {
+				this._onTgDoneExec(tgJob)
+			}
 		}
 
 		if (this._tg === VOID_LINK) {
@@ -148,8 +148,8 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 			return
 		}
 		if (this._st & HALT) {
-			unlinkFromAllJobs(this)
-			this._settleJob()
+			this._st |= WAITING_CANCELLED_JOBS
+			loop_tg(this, false, true)
 		}
 	}
 
@@ -269,12 +269,14 @@ type AllOkRet<Jobs extends Job[]> = Jobs[number] extends Job<infer A, unknown> ?
 
 
 
-/** *****************  allOrErr()  ****************************************** */
-
-/** allOrErr()
+/** *****************  allOrErr()  *********************************************
+ *
  *  Returns an array of the  _successful_ settled values of the passed-in jobs.
- *  If one job fails (or is cancelled, even successfully), it fails.
- *  Fails also if the passed-in array is empty.
+ *
+ *  If one job fails (or is cancelled, even successfully), it fails. And the
+ *  other passed-in jobs are cancelled.
+ *
+ *  Fails with Err("EmptyArguments") if passed-in array is empty.
  */
 export const allOrErr = makeJobCombinator(
 	"allOrErr",
