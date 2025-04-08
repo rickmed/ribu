@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest"
-import { go, sleep, allOrErr, Err } from "ribu"
-import { incCountOnDoneJob } from "./utils.js"
-import { _Err } from "../source/errors.js"
+import { go, sleep, allOrErr, Err, onEnd } from "ribu"
 import { EMPTY_ARGS } from "../source/job-helpers.js"
-
+import { _Err } from "../source/errors.js"
 
 describe("allOrErr()", () => {
 
@@ -34,35 +32,13 @@ describe("allOrErr()", () => {
 		expect(rec.toSorted()).toStrictEqual([2, "one"].toSorted())
 	})
 
-	it("settles with correct error if a passed-in job fails. The other" +
-		"passed-in jobs are cancelled", async () => {
-
-		let ctx = { count: 0 }
-
-		function* main() {
-			const jobs = [go(incCountOnDoneJob, ctx), go(badJob)]
-			const res = yield* allOrErr(jobs).handle
-			return { res }
-		}
-
-		const rec = await go(main)
-
-		const exp =
-			Err("JobHadErr", "allOrErr", undefined,
-				_Err("badJob", Err("Bad"))
-			)
-
-		expect(rec.res).toStrictEqual(exp)
-		expect(ctx.count).toBe(0)
-	})
-
 	it(`fails with ${EMPTY_ARGS} if arguments empty`, async () => {
 
 		function* main() {
 			yield* allOrErr([])
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 
 		const exp =
 			_Err("main",
@@ -72,23 +48,32 @@ describe("allOrErr()", () => {
 		expect(rec).toStrictEqual(exp)
 	})
 
-	it.todo("recover from err", async () => {
+	it("settles with correct error if a passed-in job fails. The other" +
+		"passed-in jobs are cancelled", async () => {
 
-		// let ctx = { count: 0 }
+		let ctx = { count: 0 }
 
-		// function* goodJob() {
-		// 	yield* sleep(2)
-		// 	ctx.count++
-		// 	return "good"
-		// }
+		function* jobFailsCancelling(ctx: {count: number}) {
+			onEnd(() => Err("BadCancelling"))
+			yield* sleep(5)
+			ctx.count++
+		}
 
-		// function* main() {
-		// 	const jobs = [go(badJob), go(goodJob)]
-		// 	const res = yield* allOrErr(jobs).handle
-		// 	return res
-		// }
+		function* main() {
+			const jobs = [go(jobFailsCancelling, ctx), go(badJob)]
+			const res = yield* allOrErr(jobs).handle
+			return { res }
+		}
 
-		// const rec = await go(main)
+		const rec = await go(main)
+
+		const exp =
+			Err("JobHadErr", "allOrErr", undefined, [
+				Err("Bad", "badJob"),
+				_Err("jobFailsCancelling", undefined, Err("BadCancelling"), "Cancelled")
+			])
+		expect(rec.res).toStrictEqual(exp)
+		expect(ctx.count).toBe(0)
 	})
 })
 

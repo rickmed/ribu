@@ -3,7 +3,6 @@ import { go, sleep, onEnd, Err } from "ribu"
 import { sleepProm } from "./utils.js"
 import { _Err } from "../source/errors.js"
 
-
 it("can run sync functions, async functions and job generator functions." +
 	"Are executed sequentially and in reverse order of registration", async () => {
 
@@ -45,8 +44,8 @@ it("job fails with correct Err if onEnd fails", async () => {
 		yield* sleep(1)
 	}
 
-	const rec = await go(main).promErr
-	const exp = _Err("main", undefined, _Err("badSync", Err("BadSync")))
+	const rec = await go(main).promHandle
+	const exp = _Err("main", undefined, Err("BadSync", "badSync"))
 	expect(rec).toStrictEqual(exp)
 })
 
@@ -88,12 +87,12 @@ it("job executes all onEnds even if some of them fail. " +
 		yield* sleep(1)
 	}
 
-	const rec = await go(main).promErr
+	const rec = await go(main).promHandle
 	const exp = _Err("main", undefined,
 		[
 			_Err("badAsync", Error("BadAsync")),
-			_Err("badJob", Err("BadJob")),
-			_Err("badSync", Err("BadSync"))
+			Err("BadJob", "badJob"),
+			Err("BadSync", "badSync")
 		]
 	)
 	expect(rec).toStrictEqual(exp)

@@ -2,7 +2,8 @@ import { EMPTY_ARGS, JobPlus } from "./job-helpers.js"
 import { addErrorToJobVal, ERR_IN_GENFN, type _Job, Job, ERR_IN_ONEND } from "./job.js"
 import { type Er, type Err } from "./errors.js"
 import { VOID_LINK } from "./system.js"
-export const CANCEL_ALL_OP_NAME = "cancel(...jobs)"
+
+export const CANCEL_ALL_OP_NAME = "cancel"
 
 class CancellAll<Ok, E> extends JobPlus<Ok, E | Err<typeof EMPTY_ARGS>> {
 	_nm = CANCEL_ALL_OP_NAME

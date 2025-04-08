@@ -40,7 +40,7 @@ describe("yield* cancel(...jobs)", () => {
 			return res
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		expect(ctx.count).toBe(0)
 		expect(rec).toBe(undefined)
 	})
@@ -67,9 +67,9 @@ describe("yield* cancel(...jobs)", () => {
 			return res
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		expect(rec).toEqual(undefined)
-		const exp = _Err("child1", Err("Bad"))
+		const exp = Err("Bad", "child1")
 		expect((chldJob as _Job)._v).toStrictEqual(exp)
 	})
 })
@@ -92,7 +92,7 @@ describe("yield* cancel(...jobs).handle", () => {
 			return res
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		expect(ctx.count).toBe(0)
 		expect(rec).toBe(undefined)
 	})
@@ -119,7 +119,7 @@ describe("yield* cancel(...jobs).handle", () => {
 			return "never reached"
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		expect(rec).toBe("recovered")
 		expect(ctx.count).toBe(0)
 	})
@@ -129,10 +129,7 @@ describe("yield* cancel(...jobs).handle", () => {
 		let ctx = { count: 0 }
 
 		function* syncBad1() {
-			onEnd(() => {
-				return Err("SyncBad1")
-			})
-
+			onEnd(() => Err("SyncBad1"))
 			yield* sleep(5)
 			ctx.count++
 		}
@@ -217,33 +214,31 @@ describe("yield* cancel(...jobs).handle", () => {
 			return res
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		expect(ctx.count).toBe(0)
 
 		const exp =
-			_Err("main",
-				_Err(CANCEL_ALL_OP_NAME, [
-					_Err("syncBad1", undefined,
-						_Err("", Err("SyncBad1")),
-						"Cancelled"),
+			_Err(CANCEL_ALL_OP_NAME, [
+				_Err("syncBad1", undefined,
+					Err("SyncBad1"),
+					"Cancelled"),
 
-					_Err("syncBad2", undefined,
-						_Err("", Error("SyncBad2")),
-						"Cancelled"),
+				_Err("syncBad2", undefined,
+					_Err("", Error("SyncBad2")),
+					"Cancelled"),
 
-					_Err("jobBad1", undefined,
-						_Err("jobBad1OE", Err("JobBad1")),
-						"Cancelled"),
+				_Err("jobBad1", undefined,
+					Err("JobBad1", "jobBad1OE"),
+					"Cancelled"),
 
-					_Err("jobBad2", undefined,
-						_Err("jobBad2OE", Error("JobBad2")),
-						"Cancelled"),
+				_Err("jobBad2", undefined,
+					_Err("jobBad2OE", Error("JobBad2")),
+					"Cancelled"),
 
-					_Err("AsyncBad", undefined,
-						_Err("", Error("AsyncBad")),
-						"Cancelled"),
-				])
-			)
+				_Err("AsyncBad", undefined,
+					_Err("", Error("AsyncBad")),
+					"Cancelled"),
+			])
 
 		expect(rec).toStrictEqual(exp)
 	})
@@ -271,9 +266,9 @@ describe("yield* cancel(...jobs).handle", () => {
 			return "ok"
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		expect(rec).toEqual("ok")
-		const exp = _Err("child1", Err("Bad"))
+		const exp = Err("Bad", "child1")
 		expect((chldJob as _Job)._v).toStrictEqual(exp)
 	})
 })
@@ -298,7 +293,7 @@ describe("cancel(...jobs).maxWait(ms)", () => {
 			return res
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		expect(ctx.count).toBe(0)
 		expect(rec).toBe(undefined)
 	})
@@ -332,7 +327,7 @@ describe("cancel(...jobs).maxWait(ms)", () => {
 			yield* cancel([job1, job2]).maxWait(2)
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		const exp =
 			_Err("main",
 				Err(TIME_OUT, CANCEL_ALL_OP_NAME)
@@ -366,7 +361,7 @@ describe("cancel(...jobs).maxWait(ms).handle", () => {
 			return res
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		expect(ctx.count).toBe(0)
 		expect(rec).toBe(undefined)
 	})
@@ -401,8 +396,8 @@ describe("cancel(...jobs).maxWait(ms).handle", () => {
 			return res
 		}
 
-		const rec = await go(main).promErr
-		const exp = _Err("main", Err(TIME_OUT, CANCEL_ALL_OP_NAME))
+		const rec = await go(main).promHandle
+		const exp = Err(TIME_OUT, CANCEL_ALL_OP_NAME)
 		expect(rec).toStrictEqual(exp)
 		expect(ctx.count).toBe(0)
 	})

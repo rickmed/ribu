@@ -1,17 +1,8 @@
 import { describe, it, expect } from "vitest"
-import { Err, go, sleep } from "ribu"
-import { _Err } from "../source/errors.js"
+import { Err, go, sleep, errIs } from "ribu"
+import { _Err, isErr } from "../source/errors.js"
 
-/**
- * Jobs can block and resume each other with their return values
- */
-
-
-/**
- * yield* job
- * Provides automatic error propagation
- */
-describe("yield* job", () => {
+describe("yield*", () => {
 
 	it("caller job resumes if target does not fail", async () => {
 
@@ -28,12 +19,16 @@ describe("yield* job", () => {
 		const rec = await go(main)
 		expect(rec).toBe("ok")
 	})
+})
 
-	it("caller job fails and propagates error via returning ::Err", async () => {
+describe("yield* automatic error propagation", () => {
+
+	it("if target job returns ::Err, the name of the function is added to it and" +
+		"the caller propagates the error wrapped in its own ::Err", async () => {
 
 		function* child() {
 			yield* sleep(1)
-			return Err("SomeErrorTag")
+			return Err("Recovered")
 		}
 
 		function* main() {
@@ -41,18 +36,16 @@ describe("yield* job", () => {
 			return res
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		const exp =
 			_Err("main",
-				_Err("child",
-					Err("SomeErrorTag")
-				)
+				Err("Recovered", "child")
 			)
 		expect(rec).toStrictEqual(exp)
 	})
 
-
-	it("caller job fails and propagates error via throwing", async () => {
+	it("if target job throws ::Error, caller propagates the error wrapped in its" +
+		"own ::Err", async () => {
 
 		function* child() {
 			yield* sleep(1)
@@ -64,7 +57,7 @@ describe("yield* job", () => {
 			return res
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		const exp =
 			_Err("main",
 				_Err("child",
@@ -73,11 +66,33 @@ describe("yield* job", () => {
 			)
 		expect(rec).toStrictEqual(exp)
 	})
+
+
+	it("if target job throws not ::Error, caller propagates the error wrapped" +
+		"in its own ::Err", async () => {
+
+		function* child() {
+			yield* sleep(1)
+			// eslint-disable-next-line @typescript-eslint/only-throw-error
+			throw "Bad"
+		}
+
+		function* main() {
+			const res = yield* go(child)
+			return res
+		}
+
+		const rec = await go(main).promHandle
+		const exp =
+			_Err("main",
+				_Err("child", "Bad")
+			)
+		expect(rec).toStrictEqual(exp)
+	})
 })
 
 
 /**
- * yield* job.handle
  * Handle errors manually.
  */
 describe("yield* job.handle", () => {
@@ -90,7 +105,7 @@ describe("yield* job.handle", () => {
 		}
 
 		function* main() {
-			const res = yield* go(child)
+			const res = yield* go(child).handle
 			return res
 		}
 
@@ -102,7 +117,7 @@ describe("yield* job.handle", () => {
 
 		function* child() {
 			yield* sleep(1)
-			return Err("SomeErrorTag")
+			return Err("Recovered")
 		}
 
 		function* main() {
@@ -110,18 +125,80 @@ describe("yield* job.handle", () => {
 			return res
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
+		const exp = Err("Recovered", "child")
+		expect(rec).toStrictEqual(exp)
+	})
+
+	it("caller job resumes if target fails via throwing ::Error", async () => {
+
+		function* child() {
+			yield* sleep(1)
+			throw Error("Bad")
+		}
+
+		function* main() {
+			const res = yield* go(child).handle
+			return res
+		}
+
+		const rec = await go(main).promHandle
+		const exp = _Err("child", Error("Bad"))
+		expect(rec).toStrictEqual(exp)
+	})
+
+	it("caller job resumes if target fails via throwing non ::Error", async () => {
+
+		function* child() {
+			yield* sleep(1)
+			// eslint-disable-next-line @typescript-eslint/only-throw-error
+			throw "Really Bad"
+		}
+
+		function* main() {
+			const res = yield* go(child).handle
+			return res
+		}
+
+		const rec = await go(main).promHandle
+		const exp = _Err("child", "Really Bad")
+		expect(rec).toStrictEqual(exp)
+	})
+
+	it("caller job can handle ::Err", async () => {
+
+		function* job1(x?: number) {
+			yield* sleep(1)
+			if (!x) {
+				return "ok"
+			}
+			if (x < 10) {
+				return Err("Error0")
+			}
+			return Err("Error1")
+		}
+
+		function* main() {
+			const res = yield* go(job1, 5).handle
+			if (isErr(res)) {
+				return res.Err("Recovered")
+			}
+			return res
+		}
+
+		const rec = await go(main).promHandle
 		const exp =
-			_Err("main",
-				_Err("child",
-					Err("SomeErrorTag")
-				)
+			Err("Recovered", "main", undefined,
+				Err("Error0", "job1")
 			)
 		expect(rec).toStrictEqual(exp)
 	})
 
+
+
 })
 
+// todo
 describe("Access job states", () => {
 
 	it("successful job", async () => {

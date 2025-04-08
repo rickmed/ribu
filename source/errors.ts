@@ -1,6 +1,11 @@
-const RIBU_ERR_NAME = "Err"
+const RIBU_ERR_KIND = ""
+// todo: try unify Err and Er
 export type Err<T extends string> = RibuErr<T>
-export type Er = Err<typeof RIBU_ERR_NAME>
+export type Er = Err<typeof RIBU_ERR_KIND>
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+type InnerErr = Error | RibuErr | {} | null | undefined
+type InnerErrs = InnerErr | InnerErr[]
 
 /**
  * Ribu Err Class
@@ -8,49 +13,57 @@ export type Er = Err<typeof RIBU_ERR_NAME>
  * Is instanceof Error but does not call super() because constructing an Error
  * is slow.
  *
+ * @param kind The kind of the error.
  * @param fn The name of the job's generator function or the name of the function if
  *           the user wants to return Err objects in sync functions.
  * _oe:
  * 	Errors that occurred in onEnd() functions.
  */
-export class RibuErr<Name extends string = string, T = unknown> implements Error {
+export class RibuErr<Kind = unknown> {
 
-	readonly name: Name
-	readonly message: string
 	readonly fn: string
+	readonly kind?: Kind
 	// Errors from yield* job and/or from waiting chil	dren (both always ::Err)
-	private _errs?: T  // unknown | unknown[]
+	private _errs?: InnerErrs
 	// Errors from onEnd() functions
-	private _oe?: Error | Error[]
+	private _oe?: InnerErrs
+	readonly msg?: string
 
-	constructor(name: Name, fnName: string, errs?: T, onEndErrs?: RibuErr["_oe"], msg = "") {
-		this.name = name
-		this.message = msg
+	constructor(kind?: Kind, fnName = "", errs?: RibuErr["_errs"], onEndErrs?: RibuErr["_oe"], msg?: string) {
 		this.fn = fnName
-		// todo, instantiate one dummy RibuErr as VOID_LINK in system.ts
-		this._oe = onEndErrs
-		this._errs = errs
+		if (kind) {
+			this.kind = kind
+		}
+		if (errs) {
+			this._errs = errs
+		}
+		if (onEndErrs) {
+			this._oe = onEndErrs
+		}
+		if (msg) {
+			this.msg = msg
+		}
 	}
 
-	_addErr(error: Error) {
+	_addErr(error: Error | RibuErr) {
 		const { _errs } = this
 		if (_errs === undefined) {
-			this._errs = error as T
+			this._errs = error
 		}
 		else if (Array.isArray(_errs)) {
-			(_errs as unknown[]).push(error)
+			_errs.push(error)
 		}
 		else {
-			this._errs = [_errs, error] as T
+			this._errs = [_errs, error]
 		}
 		return this
 	}
 
 	get errors() {
-		return this._errs as T
+		return this._errs
 	}
 
-	_addOnEndErr(error: Error) {
+	_addOnEndErr(error: Error | RibuErr) {
 		const { _oe } = this
 		if (_oe === undefined) {
 			this._oe = error
@@ -69,40 +82,27 @@ export class RibuErr<Name extends string = string, T = unknown> implements Error
 		return ""  // todo
 	}
 
-	get onEndErrors() {
-		return Array.isArray(this._oe) ? this._oe : [this._oe]
-	}
-
-	isCancOK() {
-		return this instanceof ECancOk
-	}
-
-	// todo: implement this
-	// Err<Name extends string>(name: Name, fn = "", msg = "") {
-	// 	return new Err(name, fn, this, msg)
-	// }
-}
-
-// Make (errInstance instanceof Error) === true
-Object.setPrototypeOf(RibuErr.prototype, Error.prototype)
-
-
-export function _Err<Name extends string>(fnName: string, errs?: RibuErr["_errs"], onEndErrs?: RibuErr["_oe"], msg = "") {
-	return new RibuErr(RIBU_ERR_NAME, fnName, errs, onEndErrs, msg) as Err<Name>
-}
-
-export function Err<Name extends string>(name: Name, fnName = "", msg = "", ribuErr?: RibuErr) {
-	return new RibuErr<Name>(name, fnName, ribuErr, undefined, msg) as Err<Name>
-}
-
-const E_CANC_OK_NAME = "ECancOk"
-export class ECancOk extends RibuErr {
-	constructor() {
-		super(E_CANC_OK_NAME, "")
+	Err<Kind extends string>(kind: Kind, msg?: string, fnName?: string) {
+		return new RibuErr<Kind>(kind, fnName, this, undefined, msg) as Err<Kind>
 	}
 }
-export const E_CANC_OK = new ECancOk() as Err<typeof E_CANC_OK_NAME>
 
+export function _Err(fnName: string, errs?: RibuErr["_errs"], onEndErrs?: RibuErr["_oe"], msg?: string) {
+	return new RibuErr(RIBU_ERR_KIND, fnName, errs, onEndErrs, msg) as Err<typeof RIBU_ERR_KIND>
+}
+
+// todo: add a way to add payload.
+export function Err<Kind extends string>(kind: Kind, fnName?: string, msg?: string, errs?: RibuErr["_errs"], onEndErrs?: RibuErr["_oe"]) {
+	return new RibuErr<Kind>(kind, fnName, errs, onEndErrs, msg) as Err<Kind>
+}
+
+// export threwErr
+
+const E_CANC_OK_KIND = "ECancOk"
+export const E_CANC_OK = new RibuErr(E_CANC_OK_KIND)
+export type ECancOk = RibuErr<typeof E_CANC_OK_KIND> & {
+	readonly kind: typeof E_CANC_OK_KIND
+}
 
 export function isErr(x: unknown): x is RibuErr<string> {
 	return x instanceof RibuErr
@@ -110,10 +110,10 @@ export function isErr(x: unknown): x is RibuErr<string> {
 
 type EE = RibuErr<string>
 
-export function errIsNot<X, T extends Extract<X, EE>["name"]>(x: X, name: T): x is Extract<X, EE> & Exclude<X, RibuErr<T>> {
-	return x instanceof RibuErr && x.name !== name
+export function errIsNot<X, T extends Extract<X, EE>["kind"]>(x: X, kind: T): x is Extract<X, EE> & Exclude<X, RibuErr<T>> {
+	return x instanceof RibuErr && x.kind !== kind
 }
 
-export function errIs<X, T extends Extract<X, EE>["name"]>(x: X, name: T): x is Extract<X, RibuErr<T>> {
-	return x instanceof RibuErr && x.name === name
+export function errIs<X, T extends Extract<X, EE>["kind"]>(x: X, kind: T): x is Extract<X, RibuErr<T>> {
+	return x instanceof RibuErr && x.kind === kind
 }

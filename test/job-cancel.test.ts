@@ -47,7 +47,7 @@ describe("job.cancel()", () => {
 			return res
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		expect(rec).toStrictEqual(undefined)
 		expect(ctx.count).toBe(0)
 	})
@@ -91,7 +91,7 @@ describe("job.cancel()", () => {
 			yield* chld.cancel()
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 
 		const exp =
 			_Err("main",
@@ -133,7 +133,7 @@ describe("job.cancel()", () => {
 
 		expect(cancelRes).toStrictEqual(undefined)
 
-		const exp = _Err("child1", Err("Bad"))
+		const exp = Err("Bad", "child1")
 		const rec = childJob.isDone() && childJob.val
 		expect(rec).toStrictEqual(exp)
 	})
@@ -163,7 +163,7 @@ describe("yield* job.cancelErr()", () => {
 			return "never reached"
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		expect(rec).toEqual("saved")
 	})
 
@@ -177,7 +177,7 @@ describe("yield* job.cancelErr()", () => {
 			return yield* chld.cancelHandle()
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 		expect(rec).toBe(undefined)
 		expect(ctx.count).toBe(0)
 	})
@@ -201,7 +201,7 @@ describe("yield* job.cancelErr()", () => {
 			return { rec }
 		}
 
-		const rec = await go(main).promErr
+		const rec = await go(main).promHandle
 
 		expect(ctx.count).toBe(0)
 
@@ -241,7 +241,7 @@ describe("yield* job.cancelErr()", () => {
 
 		expect(cancelRes).toEqual(undefined)
 
-		const exp = _Err("child1", Err("Bad"))
+		const exp = Err("Bad", "child1")
 		const rec = chldJob.isDone() && chldJob.val
 		expect(rec).toStrictEqual(exp)
 	})

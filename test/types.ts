@@ -1,4 +1,4 @@
-import { go, sleep } from "ribu"
+import { go, sleep, isErr } from "ribu"
 import { Er, Err, type ECancOk } from "../source/errors.js"
 import { cancel } from "../source/cancelAllJobs.js"
 import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr, groupByState } from "../source/job-helpers.js"
@@ -59,12 +59,23 @@ export const tests = {
 
 	/* When using .handle, the returned type is the type returned from the
 		generator function, plus ECancOK (in case the job was cancelled) and the
-		generic Ribu Err from thrown values.
+		generic Ribu Err from unexpected values.
 	*/
 	*["yield* job.handle"]() {
 		type Exp = OksJob1 | AllErrsJob1
 		const _rec = yield* go(jobFn1).handle
 		true satisfies Equal<typeof _rec, Exp>
+	},
+
+	*["yield* job.handle: using isErr()"]() {
+		const res = yield* go(jobFn1).handle
+		if (isErr(res)) {
+			type Exp = AllErrsJob1
+			true satisfies Equal<typeof res, Exp>
+			return res
+		}
+		true satisfies Equal<typeof res, OksJob1>
+		return res
 	},
 
 	*["yield* job.cancel()"]() {

@@ -52,7 +52,7 @@ it("if parent fails, it cancels its children", async () => {
 		throw Error("Bad")
 	}
 
-	const rec = await go(main).promErr
+	const rec = await go(main).promHandle
 	const exp = _Err("main", Error("Bad"))
 	expect(rec).toStrictEqual(exp)
 	expect(finished).toBe(0)
@@ -79,13 +79,13 @@ it("if child fails, parent waits for its other children to settle " +
 		go(child2)
 	}
 
-	const rec = await go(main).promErr
+	const rec = await go(main).promHandle
 	const exp = _Err("main", _Err("child1", Error("Bad")))
 	expect(rec).toStrictEqual(exp)
 	expect(child2Finished).toBe(true)
 })
 
-it("if child fails and parent is set up at cancelSiblingsOnErr(), parent" +
+it("if child fails and parent is set up at cancelSiblingsOnErr(), parent " +
 	"cancels its other children and settles with correct Error", async () => {
 
 	let childrenFinished = 0
@@ -113,12 +113,10 @@ it("if child fails and parent is set up at cancelSiblingsOnErr(), parent" +
 		go(child3)
 	}
 
-	const rec = await go(main).promErr
+	const rec = await go(main).promHandle
 	const exp =
 		_Err("main",
-			_Err("child1",
-				Err("Bad")
-			)
+			Err("Bad", "child1")
 		)
 	expect(rec).toStrictEqual(exp)
 	expect(childrenFinished).toBe(0)
