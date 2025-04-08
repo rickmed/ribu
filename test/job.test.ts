@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { Err, go, sleep, errIs } from "ribu"
+import { Err, go, sleep } from "ribu"
 import { _Err, isErr } from "../source/errors.js"
 
 describe("yield*", () => {

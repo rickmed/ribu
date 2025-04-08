@@ -1,7 +1,6 @@
-const RIBU_ERR_KIND = ""
-// todo: try unify Err and Er
-export type Err<T extends string> = RibuErr<T>
-export type Er = Err<typeof RIBU_ERR_KIND>
+const RIBU_ERR_KIND = "$RibuErr$"
+type RibuErrKind = typeof RIBU_ERR_KIND
+export type Err<Kind extends string = RibuErrKind> = RibuErr<Kind>
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 type InnerErr = Error | RibuErr | {} | null | undefined
@@ -22,15 +21,13 @@ type InnerErrs = InnerErr | InnerErr[]
 export class RibuErr<Kind = unknown> {
 
 	readonly fn: string
-	readonly kind?: Kind
+	readonly kind: Kind
 	private _errs?: InnerErrs
 	readonly msg?: string
 
-	constructor(kind?: Kind, fnName = "", errs?: RibuErr["_errs"], msg?: string) {
+	constructor(kind: Kind, fnName = "", errs?: RibuErr["_errs"], msg?: string) {
 		this.fn = fnName
-		if (kind) {
-			this.kind = kind
-		}
+		this.kind = kind
 		if (errs) {
 			this._errs = errs
 		}
@@ -68,7 +65,7 @@ export class RibuErr<Kind = unknown> {
 }
 
 export function _Err(fnName: string, errs?: RibuErr["_errs"], msg?: string) {
-	return new RibuErr(RIBU_ERR_KIND, fnName, errs, msg) as Err<typeof RIBU_ERR_KIND>
+	return new RibuErr(RIBU_ERR_KIND, fnName, errs, msg) as Err
 }
 
 // todo: add a way to add payload.
@@ -76,12 +73,9 @@ export function Err<Kind extends string>(kind: Kind, fnName?: string, msg?: stri
 	return new RibuErr<Kind>(kind, fnName, errs, msg) as Err<Kind>
 }
 
-// export threwErr
-
-const E_CANC_OK_KIND = "ECancOk"
-export const E_CANC_OK = new RibuErr(E_CANC_OK_KIND)
-export type ECancOk = RibuErr<typeof E_CANC_OK_KIND> & {
-	readonly kind: typeof E_CANC_OK_KIND
+export const E_CANC_OK = new RibuErr("ECancOk")
+export type ECancOk = RibuErr & {
+	readonly kind: "ECancOk"
 }
 
 export function isErr(x: unknown): x is RibuErr<string> {
@@ -90,10 +84,10 @@ export function isErr(x: unknown): x is RibuErr<string> {
 
 type EE = RibuErr<string>
 
-export function errIsNot<X, T extends Extract<X, EE>["kind"]>(x: X, kind: T): x is Extract<X, EE> & Exclude<X, RibuErr<T>> {
+export function errIsNot<X, T extends Extract<X, EE>["kind"]>(kind: T, x: X): x is Extract<X, EE> & Exclude<X, RibuErr<T>> {
 	return x instanceof RibuErr && x.kind !== kind
 }
 
-export function errIs<X, T extends Extract<X, EE>["kind"]>(x: X, kind: T): x is Extract<X, RibuErr<T>> {
+export function errIs<X, T extends Extract<X, EE>["kind"]>(kind: T, x: X): x is Extract<X, RibuErr<T>> {
 	return x instanceof RibuErr && x.kind === kind
 }

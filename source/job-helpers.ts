@@ -15,7 +15,7 @@ import {
 	ERR_IN_ONEND,
 	addErrorToJobVal,
 } from "./job.js"
-import { Er, Err } from "./errors.js"
+import { Err } from "./errors.js"
 import { SysIterable, VOID_LINK, VOID_OBJ } from "./system.js"
 
 // todo: consider passing a timeout parameter
@@ -130,7 +130,7 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 	_onTgDone(tgJob: Job): void {
 		if (this._st & WAITING_CANCELLED_JOBS) {
 			if ((tgJob as _Job)._st & ERR_IN_ONEND) {
-				addErrorToJobVal(this, (tgJob as _Job)._v as Er, ERR_IN_GENFN)
+				addErrorToJobVal(this, (tgJob as _Job)._v as Err, ERR_IN_GENFN)
 			}
 		}
 		else {
@@ -302,7 +302,7 @@ function allOrErrOnTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[numb
 
 function allOrErrOnFailedTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[number]) {
 	this._st |= FAIL
-	return this._v = Err(JOB_HAD_ERR, this._nm, "", (tgJob as _Job)._v as Er)
+	return this._v = Err(JOB_HAD_ERR, this._nm, "", (tgJob as _Job)._v as Err)
 }
 
 function allOrErrInit(this: JobPlus) {
@@ -467,10 +467,10 @@ export function groupByState<J extends Job>(jobs: J[]) {
 	let live: J[] = []
 	for (let i = 0; i < jobs.length; i++) {
 		const job = jobs[i]!
-		if (isOk(job)) {
+		if (isOkJob(job)) {
 			ok.push(job)
 		}
-		else if (isErr(job)) {
+		else if (isErrJob(job)) {
 			err.push(job)
 		}
 		else {
@@ -480,15 +480,15 @@ export function groupByState<J extends Job>(jobs: J[]) {
 	return { ok, err, live }
 }
 
-export function done<J extends Job>(job: J): job is DoneJobFrom<J> {
+export function doneJob<J extends Job>(job: J): job is DoneJobFrom<J> {
 	return !(job as unknown as _Job)._done
 }
 
-export function isOk<J extends Job>(job: J): job is OkJobFrom<J> {
+function isOkJob<J extends Job>(job: J): job is OkJobFrom<J> {
 	return (job as unknown as _Job)._doneOk
 }
 
-export function isErr<J extends Job>(job: J): job is ErrJobFrom<J> {
+function isErrJob<J extends Job>(job: J): job is ErrJobFrom<J> {
 	return (job as unknown as _Job)._doneErr
 }
 
@@ -496,24 +496,20 @@ type OkJobFrom<J> = J extends Job<infer Ok, infer _E, infer Ctx>
 	? J & OkJob<Ok, Ctx>
 	: never
 
-export type PrettyOkJob<J> = J extends Job<infer Ok, infer _E, infer Ctx>
+type PrettyOkJob<J> = J extends Job<infer Ok, infer _E, infer Ctx>
 	? OkJob<Ok, Ctx>
 	: never
 
-export type ErrJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
+type ErrJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
 	? J & ErrJob<E, Ctx>
 	: never
 
-export type PrettyErrJob<J> = J extends Job<infer _Ok, infer E, infer Ctx>
+type PrettyErrJob<J> = J extends Job<infer _Ok, infer E, infer Ctx>
 	? ErrJob<E, Ctx>
 	: never
 
 type DoneJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
 	? J & DoneJob<_Ok, E, Ctx>
-	: never
-
-export type PrettyDoneJob<J> = J extends Job<infer _Ok, infer E, infer Ctx>
-	? DoneJob<_Ok, E, Ctx>
 	: never
 
 

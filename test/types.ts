@@ -1,5 +1,5 @@
-import { go, sleep, isErr } from "ribu"
-import { Er, Err, type ECancOk } from "../source/errors.js"
+import { go, sleep, isErr, Err, errIs } from "ribu"
+import { type ECancOk } from "../source/errors.js"
 import { cancel } from "../source/cancelAllJobs.js"
 import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr, groupByState } from "../source/job-helpers.js"
 import {type OkJob, type ErrJob, DoneJob, type ByStateJobBase, Job } from "../source/job.js"
@@ -32,7 +32,7 @@ export function* jobFn2(x?: number) {
 	return Err("Error2")
 }
 
-type RibuErrs = Er | ECancOk
+type RibuErrs = Err | ECancOk
 
 type ErrsJob1 = Err<"Error0"> | Err<"Error1">
 type AllErrsJob1 = ErrsJob1 | RibuErrs
@@ -67,7 +67,7 @@ export const tests = {
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
-	*["yield* job.handle: using isErr()"]() {
+	*["yield* job.handle using isErr()"]() {
 		const res = yield* go(jobFn1).handle
 		if (isErr(res)) {
 			type Exp = AllErrsJob1
@@ -78,6 +78,18 @@ export const tests = {
 		return res
 	},
 
+	*["yield* job.handle using errIs()"]() {
+		const res = yield* go(jobFn1).handle
+		type Err0 = Err<"Error0">
+		if (errIs("Error0", res)) {
+			type Exp = Err0
+			true satisfies Equal<typeof res, Exp>
+			return res
+		}
+		true satisfies Equal<typeof res, Exclude<AllJob1, Err0>>
+		return res
+	},
+
 	*["yield* job.cancel()"]() {
 		type Exp = void
 		const _rec = yield* go(jobFn1).cancel()
@@ -85,7 +97,7 @@ export const tests = {
 	},
 
 	*["yield* job.cancelErr()"]() {
-		type Exp = void | Er
+		type Exp = void | Err
 		const _rec = yield* go(jobFn1).cancelHandle()
 		true satisfies Equal<typeof _rec, Exp>
 	},
@@ -105,32 +117,32 @@ export const tests = {
 
 		const jobs = [go(jobFn1), go(jobFn2)]
 
-		const ok = jobs.filter(j => j.isOk())
-		const err = jobs.filter(j => j.isErr())
-		const done = jobs.filter(j => j.isDone())
+		const okJobs = jobs.filter(j => j.isOk())
+		const errJobs = jobs.filter(j => j.isErr())
+		const doneJobs = jobs.filter(j => j.isDone())
 
 		true satisfies Equal<
-			typeof ok,
+			typeof okJobs,
 			(OkJob<OksJob1> | OkJob<OksJob2>)[]
 		>
 
 		true satisfies Equal<
-			typeof err,
+			typeof errJobs,
 			(ErrJob<AllErrsJob1> | ErrJob<AllErrsJob2>)[]
 		>
 
 		true satisfies Equal<
-			typeof done,
+			typeof doneJobs,
 			(DoneJob<OksJob1, AllErrsJob1> | DoneJob<OksJob2, AllErrsJob2>)[]
 		>
 
-		const _okVals = ok.map(j => j.val)
+		const _okVals = okJobs.map(j => j.val)
 		true satisfies Equal<typeof _okVals, (OksJob1 | OksJob2)[]>
 
-		const _errVals = err.map(j => j.reason)
+		const _errVals = errJobs.map(j => j.reason)
 		true satisfies Equal<typeof _errVals, (AllErrsJob1 | AllErrsJob2)[]>
 
-		const _liveJobs = done.map(j => j.st)
+		const _liveJobs = doneJobs.map(j => j.st)
 		true satisfies Equal<typeof _liveJobs, "done"[]>
 	},
 
@@ -180,14 +192,14 @@ export const tests = {
 	},
 
 	*["yield* cancel(...jobs).handle"]() {
-		type Exp = void | EmptyArgsErr | Er
+		type Exp = void | EmptyArgsErr | Err
 		const jobs = [go(jobFn1), go(jobFn2)]
 		const _rec = yield* cancel(jobs).handle
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* cancel(...jobs).maxWait(ms).handle"]() {
-		type Exp = void | EmptyArgsErr | Er | TimeoutErr
+		type Exp = void | EmptyArgsErr | Err | TimeoutErr
 		const jobs = [go(jobFn1), go(jobFn2)]
 		const _rec = yield* cancel(jobs).maxWait(1).handle
 		true satisfies Equal<typeof _rec, Exp>
@@ -267,25 +279,6 @@ export const tests = {
 }
 
 
-type IsEqual<A, B> =
-	(<T>() => T extends A ? 1 : 2) extends
-	(<T>() => T extends B ? 1 : 2)
-		? (<T>() => T extends B ? 1 : 2) extends
-			(<T>() => T extends A ? 1 : 2)
-			? true
-			: false
-		: false
-
-type Equal<Rec, Exp> =
-	IsEqual<Rec, Exp> extends true ?
-	true :
-	{ error: "Type mismatch", rec: Rec, exp: Exp }
-
-type Not<T extends boolean> = T extends true ? false : true;
-
-type HasKey<T, K extends string> = K extends keyof T ? true : false;
-
-
 function checkOkJob(_job: OkJob<OksJob1>) {
 	true satisfies Equal<typeof _job.st, "ok">
 	true satisfies Equal<typeof _job.val, OksJob1>
@@ -309,3 +302,22 @@ function checkDoneJob(_job: DoneJob<OksJob1, AllErrsJob1>) {
 	true satisfies Not<HasKey<typeof _job, "done">>
 	true satisfies (typeof _job) extends ByStateJobBase ? true : false
 }
+
+
+type IsEqual<A, B> =
+	(<T>() => T extends A ? 1 : 2) extends
+	(<T>() => T extends B ? 1 : 2)
+		? (<T>() => T extends B ? 1 : 2) extends
+			(<T>() => T extends A ? 1 : 2)
+			? true
+			: false
+		: false
+
+type Equal<Rec, Exp> =
+	IsEqual<Rec, Exp> extends true ?
+	true :
+	{ error: "Type mismatch", rec: Rec, exp: Exp }
+
+type Not<T extends boolean> = T extends true ? false : true
+
+type HasKey<T, K extends string> = K extends keyof T ? true : false
