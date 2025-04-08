@@ -70,7 +70,7 @@ describe("allOrErr()", () => {
 		const exp =
 			Err("JobHadErr", "allOrErr", undefined, [
 				Err("Bad", "badJob"),
-				_Err("jobFailsCancelling", undefined, Err("BadCancelling"), "Cancelled")
+				_Err("jobFailsCancelling", Err("BadCancelling"), "Cancelled")
 			])
 		expect(rec.res).toStrictEqual(exp)
 		expect(ctx.count).toBe(0)

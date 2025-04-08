@@ -45,7 +45,7 @@ it("job fails with correct Err if onEnd fails", async () => {
 	}
 
 	const rec = await go(main).promHandle
-	const exp = _Err("main", undefined, Err("BadSync", "badSync"))
+	const exp = _Err("main", Err("BadSync", "badSync"))
 	expect(rec).toStrictEqual(exp)
 })
 
@@ -88,13 +88,12 @@ it("job executes all onEnds even if some of them fail. " +
 	}
 
 	const rec = await go(main).promHandle
-	const exp = _Err("main", undefined,
-		[
+	const exp =
+		_Err("main", [
 			_Err("badAsync", Error("BadAsync")),
 			Err("BadJob", "badJob"),
 			Err("BadSync", "badSync")
-		]
-	)
+		])
 	expect(rec).toStrictEqual(exp)
 	expect(finished).toStrictEqual(["async", "job", "sync"])
 })

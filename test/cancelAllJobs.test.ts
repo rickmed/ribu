@@ -219,23 +219,23 @@ describe("yield* cancel(...jobs).handle", () => {
 
 		const exp =
 			_Err(CANCEL_ALL_OP_NAME, [
-				_Err("syncBad1", undefined,
+				_Err("syncBad1",
 					Err("SyncBad1"),
 					"Cancelled"),
 
-				_Err("syncBad2", undefined,
+				_Err("syncBad2",
 					_Err("", Error("SyncBad2")),
 					"Cancelled"),
 
-				_Err("jobBad1", undefined,
+				_Err("jobBad1",
 					Err("JobBad1", "jobBad1OE"),
 					"Cancelled"),
 
-				_Err("jobBad2", undefined,
+				_Err("jobBad2",
 					_Err("jobBad2OE", Error("JobBad2")),
 					"Cancelled"),
 
-				_Err("AsyncBad", undefined,
+				_Err("AsyncBad",
 					_Err("", Error("AsyncBad")),
 					"Cancelled"),
 			])

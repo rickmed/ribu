@@ -96,7 +96,6 @@ describe("job.cancel()", () => {
 		const exp =
 			_Err("main",
 				_Err("child1",
-					undefined,
 					_Err("", Error("Bad")),
 					"Cancelled"
 				),
@@ -206,7 +205,7 @@ describe("yield* job.cancelErr()", () => {
 		expect(ctx.count).toBe(0)
 
 		const childSettleVal =
-			_Err("child1", undefined,
+			_Err("child1",
 				_Err("", Error("Bad")),
 				"Cancelled")
 

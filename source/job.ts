@@ -650,7 +650,7 @@ export function addErrorToJobVal(thisJob: _Job, err: Error | RibuErr, errFlag: _
 		errVal._addErr(err)
 	}
 	else {
-		errVal._addOnEndErr(err)
+		errVal._addErr(err)
 	}
 	thisJob._st |= errFlag
 	return errVal

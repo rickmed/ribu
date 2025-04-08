@@ -23,22 +23,16 @@ export class RibuErr<Kind = unknown> {
 
 	readonly fn: string
 	readonly kind?: Kind
-	// Errors from yield* job and/or from waiting chil	dren (both always ::Err)
 	private _errs?: InnerErrs
-	// Errors from onEnd() functions
-	private _oe?: InnerErrs
 	readonly msg?: string
 
-	constructor(kind?: Kind, fnName = "", errs?: RibuErr["_errs"], onEndErrs?: RibuErr["_oe"], msg?: string) {
+	constructor(kind?: Kind, fnName = "", errs?: RibuErr["_errs"], msg?: string) {
 		this.fn = fnName
 		if (kind) {
 			this.kind = kind
 		}
 		if (errs) {
 			this._errs = errs
-		}
-		if (onEndErrs) {
-			this._oe = onEndErrs
 		}
 		if (msg) {
 			this.msg = msg
@@ -63,37 +57,23 @@ export class RibuErr<Kind = unknown> {
 		return this._errs
 	}
 
-	_addOnEndErr(error: Error | RibuErr) {
-		const { _oe } = this
-		if (_oe === undefined) {
-			this._oe = error
-		}
-		else if (Array.isArray(_oe)) {
-			_oe.push(error)
-		}
-		else {
-			this._oe = [_oe, error]
-		}
-		return this
-	}
-
 	get stack(): string {
 		// if first in _errors is not OnEndErr, then it was the callee
 		return ""  // todo
 	}
 
 	Err<Kind extends string>(kind: Kind, msg?: string, fnName?: string) {
-		return new RibuErr<Kind>(kind, fnName, this, undefined, msg) as Err<Kind>
+		return new RibuErr<Kind>(kind, fnName, this, msg) as Err<Kind>
 	}
 }
 
-export function _Err(fnName: string, errs?: RibuErr["_errs"], onEndErrs?: RibuErr["_oe"], msg?: string) {
-	return new RibuErr(RIBU_ERR_KIND, fnName, errs, onEndErrs, msg) as Err<typeof RIBU_ERR_KIND>
+export function _Err(fnName: string, errs?: RibuErr["_errs"], msg?: string) {
+	return new RibuErr(RIBU_ERR_KIND, fnName, errs, msg) as Err<typeof RIBU_ERR_KIND>
 }
 
 // todo: add a way to add payload.
-export function Err<Kind extends string>(kind: Kind, fnName?: string, msg?: string, errs?: RibuErr["_errs"], onEndErrs?: RibuErr["_oe"]) {
-	return new RibuErr<Kind>(kind, fnName, errs, onEndErrs, msg) as Err<Kind>
+export function Err<Kind extends string>(kind: Kind, fnName?: string, msg?: string, errs?: RibuErr["_errs"]) {
+	return new RibuErr<Kind>(kind, fnName, errs, msg) as Err<Kind>
 }
 
 // export threwErr
