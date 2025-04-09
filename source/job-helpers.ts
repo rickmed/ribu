@@ -15,7 +15,7 @@ import {
 	ERR_IN_ONEND,
 	addErrorToJobVal,
 } from "./job.js"
-import { _Er, type Err } from "./errors.js"
+import { _Er, type Er } from "./errors.js"
 import { SysIterable, VOID_LINK, VOID_OBJ } from "./system.js"
 
 // todo: consider passing a timeout parameter
@@ -92,7 +92,7 @@ pool.isIdle()	Returns true if all jobs are settled (i.e. inFlight === 0)
  */
 
 export const EMPTY_ARGS = "EmptyArguments"
-export type EmptyArgsErr = Err<typeof EMPTY_ARGS>
+export type EmptyArgsErr = Er<typeof EMPTY_ARGS>
 export type NotErrs<Ret> = Exclude<Ret, Error>
 
 // Reuse Job flags since they won't be used in JobPlus instances.
@@ -101,7 +101,7 @@ const FAIL = HALT | ERR_IN_GENFN
 const WAITING_CANCELLED_JOBS = WAITING_CHILDREN
 
 export const TIME_OUT = "Timeout"
-export type TimeoutErr = Err<typeof TIME_OUT>
+export type TimeoutErr = Er<typeof TIME_OUT>
 
 export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 	extends _Job<Ok, E, Ctx> {
@@ -130,7 +130,7 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 	_onTgDone(tgJob: Job): void {
 		if (this._st & WAITING_CANCELLED_JOBS) {
 			if ((tgJob as _Job)._st & ERR_IN_ONEND) {
-				addErrorToJobVal(this, (tgJob as _Job)._v as Err, ERR_IN_GENFN)
+				addErrorToJobVal(this, (tgJob as _Job)._v as Er, ERR_IN_GENFN)
 			}
 		}
 		else {
@@ -248,7 +248,7 @@ function makeJobCombinator<Jobs extends Job[], Ok, E>(
 	cancel = false
 ) {
 
-	class JobCombinator extends JobPlus<Ok, E | Err<typeof EMPTY_ARGS>> {
+	class JobCombinator extends JobPlus<Ok, E | Er<typeof EMPTY_ARGS>> {
 		_nm = name
 	}
 
@@ -292,7 +292,7 @@ export const allOrErr = makeJobCombinator(
 )
 
 const JOB_HAD_ERR = "JobHadErr"
-export type JobHadErr = Err<typeof JOB_HAD_ERR>
+export type JobHadErr = Er<typeof JOB_HAD_ERR>
 
 function allOrErrOnTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[number]) {
 	let results = this._v as AllOkRet<Jobs>[]
@@ -302,7 +302,7 @@ function allOrErrOnTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[numb
 
 function allOrErrOnFailedTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[number]) {
 	this._st |= FAIL
-	return this._v = _Er(JOB_HAD_ERR, this._nm, (tgJob as _Job)._v as Err)
+	return this._v = _Er(JOB_HAD_ERR, this._nm, (tgJob as _Job)._v as Er)
 }
 
 function allOrErrInit(this: JobPlus) {
