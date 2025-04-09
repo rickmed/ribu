@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { Err, go, sleep } from "ribu"
-import { _Err, isErr } from "../source/errors.js"
+import { _Err, _Er, isErr } from "../source/errors.js"
 
 describe("yield*", () => {
 
@@ -39,7 +39,7 @@ describe("yield* automatic error propagation", () => {
 		const rec = await go(main).promHandle
 		const exp =
 			_Err("main",
-				Err("Recovered", "child")
+				_Er("Recovered", "child")
 			)
 		expect(rec).toStrictEqual(exp)
 	})
@@ -126,7 +126,7 @@ describe("yield* job.handle", () => {
 		}
 
 		const rec = await go(main).promHandle
-		const exp = Err("Recovered", "child")
+		const exp = _Er("Recovered", "child")
 		expect(rec).toStrictEqual(exp)
 	})
 
@@ -188,8 +188,8 @@ describe("yield* job.handle", () => {
 
 		const rec = await go(main).promHandle
 		const exp =
-			Err("Recovered", "main", undefined,
-				Err("Error0", "job1")
+			_Er("Recovered", "main",
+				_Er("Error0", "job1")
 			)
 		expect(rec).toStrictEqual(exp)
 	})

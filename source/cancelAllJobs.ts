@@ -26,19 +26,3 @@ class CancellAll<Ok, E> extends JobPlus<Ok, E | Err<typeof EMPTY_ARGS>> {
 export function cancel(jobs: Job[]) {
 	return new CancellAll<void, Err>()._go(jobs, true)
 }
-
-
-// export function addErrorToJobVal(thisJob: _Job, err: Error, errFlag: _Job["_st"]) {
-// 	if (!(thisJob._st & HAD_ERR)) {
-// 		thisJob._v = _Err(thisJob._nm)
-// 	}
-// 	const errVal = thisJob._v as Er
-// 	if (errFlag & ERR_IN_GENFN) {
-// 		errVal._addErr(err)
-// 	}
-// 	else {
-// 		errVal._addOnEndErr(err)
-// 	}
-// 	thisJob._st |= errFlag
-// 	return errVal
-// }

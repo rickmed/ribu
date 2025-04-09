@@ -1,6 +1,6 @@
 import { expect, it } from "vitest"
 import { Err, go, me, sleep } from "ribu"
-import { _Err } from "../source/errors.js"
+import { _Er, _Err } from "../source/errors.js"
 
 /*
 	This suite is focused on what happens when a job returns and still
@@ -116,7 +116,7 @@ it("if child fails and parent is set up at cancelSiblingsOnErr(), parent " +
 	const rec = await go(main).promHandle
 	const exp =
 		_Err("main",
-			Err("Bad", "child1")
+			_Er("Bad", "child1")
 		)
 	expect(rec).toStrictEqual(exp)
 	expect(childrenFinished).toBe(0)

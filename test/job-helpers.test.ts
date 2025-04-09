@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { go, sleep, allOrErr, Err, onEnd } from "ribu"
 import { EMPTY_ARGS } from "../source/job-helpers.js"
-import { _Err } from "../source/errors.js"
+import { _Err, _Er } from "../source/errors.js"
 
 describe("allOrErr()", () => {
 
@@ -42,7 +42,7 @@ describe("allOrErr()", () => {
 
 		const exp =
 			_Err("main",
-				Err(EMPTY_ARGS, "allOrErr")
+				_Er(EMPTY_ARGS, "allOrErr")
 			)
 
 		expect(rec).toStrictEqual(exp)
@@ -68,9 +68,9 @@ describe("allOrErr()", () => {
 		const rec = await go(main)
 
 		const exp =
-			Err("JobHadErr", "allOrErr", undefined, [
-				Err("Bad", "badJob"),
-				_Err("jobFailsCancelling", Err("BadCancelling"), "Cancelled")
+			_Er("JobHadErr", "allOrErr", [
+				_Er("Bad", "badJob"),
+				_Err("jobFailsCancelling", _Er("BadCancelling"), "Cancelled")
 			])
 		expect(rec.res).toStrictEqual(exp)
 		expect(ctx.count).toBe(0)

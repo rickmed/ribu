@@ -18,16 +18,16 @@ type InnerErrs = InnerErr | InnerErr[]
  * _oe:
  * 	Errors that occurred in onEnd() functions.
  */
-export class RibuErr<Kind = unknown> {
+export class RibuErr<Kind extends string = string> {
 
+	kind: Kind
 	readonly fn: string
-	readonly kind: Kind
-	private _errs?: InnerErrs
+	_errs?: InnerErrs
 	readonly msg?: string
 
 	constructor(kind: Kind, fnName = "", errs?: RibuErr["_errs"], msg?: string) {
-		this.fn = fnName
 		this.kind = kind
+		this.fn = fnName
 		if (errs) {
 			this._errs = errs
 		}
@@ -64,10 +64,6 @@ export class RibuErr<Kind = unknown> {
 	}
 }
 
-export function _Err(fnName: string, errs?: RibuErr["_errs"], msg?: string) {
-	return new RibuErr(RIBU_ERR_KIND, fnName, errs, msg) as Err
-}
-
 // todo: add a way to add payload.
 export function Err<Kind extends string>(kind: Kind, fnName?: string, msg?: string, errs?: RibuErr["_errs"]) {
 	return new RibuErr<Kind>(kind, fnName, errs, msg) as Err<Kind>
@@ -82,12 +78,27 @@ export function isErr(x: unknown): x is RibuErr<string> {
 	return x instanceof RibuErr
 }
 
-type EE = RibuErr<string>
+type E = RibuErr<string>
 
-export function errIsNot<X, T extends Extract<X, EE>["kind"]>(kind: T, x: X): x is Extract<X, EE> & Exclude<X, RibuErr<T>> {
+export function errIsNot<X, T extends Extract<X, E>["kind"]>(kind: T, x: X): x is Extract<X, E> & Exclude<X, RibuErr<T>> {
 	return x instanceof RibuErr && x.kind !== kind
 }
 
-export function errIs<X, T extends Extract<X, EE>["kind"]>(kind: T, x: X): x is Extract<X, RibuErr<T>> {
+export function errIs<X, T extends Extract<X, E>["kind"]>(kind: T, x: X):
+	x is Extract<X, RibuErr<T>>
+{
 	return x instanceof RibuErr && x.kind === kind
+}
+
+export function _Err(fnName: string, errs?: RibuErr["_errs"], msg?: string): Err {
+	return new RibuErr(RIBU_ERR_KIND, fnName, errs, msg)
+}
+
+export function _Er<Kind extends string>(
+	kind: Kind,
+	fnName?: string,
+	errs?: RibuErr["_errs"],
+	msg?: string,
+) {
+	return new RibuErr(kind, fnName, errs, msg)
 }

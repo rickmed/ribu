@@ -15,7 +15,7 @@ import {
 	ERR_IN_ONEND,
 	addErrorToJobVal,
 } from "./job.js"
-import { Err } from "./errors.js"
+import { _Er, type Err } from "./errors.js"
 import { SysIterable, VOID_LINK, VOID_OBJ } from "./system.js"
 
 // todo: consider passing a timeout parameter
@@ -118,7 +118,7 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 	_go(jobs: Job[], cancel = false) {
 		if (jobs.length === 0) {
 			this._st |= (SETTLED | ERR_IN_GENFN)
-			this._v = Err(EMPTY_ARGS, this._nm) as Ok | E
+			this._v = _Er(EMPTY_ARGS, this._nm) as Ok | E
 		}
 		else {
 			this._init()
@@ -183,7 +183,7 @@ function maxWaitFired(thisJob: JobPlus) {
 	thisJob._tm = VOID_OBJ
 	// Reset ._st and .val in case some passed-in jobs already settled with Err.
 	thisJob._st = 0
-	thisJob._v = Err(TIME_OUT, thisJob._nm)
+	thisJob._v = _Er(TIME_OUT, thisJob._nm)
 	// Make caller fail if it didn't call .handle.
 	thisJob._st |= ERR_IN_GENFN
 	unlinkFromAllJobs(thisJob)
@@ -302,7 +302,7 @@ function allOrErrOnTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[numb
 
 function allOrErrOnFailedTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[number]) {
 	this._st |= FAIL
-	return this._v = Err(JOB_HAD_ERR, this._nm, "", (tgJob as _Job)._v as Err)
+	return this._v = _Er(JOB_HAD_ERR, this._nm, (tgJob as _Job)._v as Err)
 }
 
 function allOrErrInit(this: JobPlus) {

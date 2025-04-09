@@ -1,7 +1,7 @@
 import { it, expect } from "vitest"
 import { go, sleep, onEnd, Err } from "ribu"
 import { sleepProm } from "./utils.js"
-import { _Err } from "../source/errors.js"
+import { _Err, _Er } from "../source/errors.js"
 
 it("can run sync functions, async functions and job generator functions." +
 	"Are executed sequentially and in reverse order of registration", async () => {
@@ -45,7 +45,7 @@ it("job fails with correct Err if onEnd fails", async () => {
 	}
 
 	const rec = await go(main).promHandle
-	const exp = _Err("main", Err("BadSync", "badSync"))
+	const exp = _Err("main", _Er("BadSync", "badSync"))
 	expect(rec).toStrictEqual(exp)
 })
 
@@ -91,8 +91,8 @@ it("job executes all onEnds even if some of them fail. " +
 	const exp =
 		_Err("main", [
 			_Err("badAsync", Error("BadAsync")),
-			Err("BadJob", "badJob"),
-			Err("BadSync", "badSync")
+			_Er("BadJob", "badJob"),
+			_Er("BadSync", "badSync")
 		])
 	expect(rec).toStrictEqual(exp)
 	expect(finished).toStrictEqual(["async", "job", "sync"])

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import { go, cancel, sleep, Err, Job, onEnd } from "ribu"
 import { incCountOnDoneJob, child2, sleepProm } from "./utils.js"
-import { _Err } from "../source/errors.js"
+import { _Err, _Er } from "../source/errors.js"
 import { CANCEL_ALL_OP_NAME } from "../source/cancelAllJobs.js"
 import { TIME_OUT } from "../source/job-helpers.js"
 import { _Job } from "../source/job.js"
@@ -69,7 +69,7 @@ describe("yield* cancel(...jobs)", () => {
 
 		const rec = await go(main).promHandle
 		expect(rec).toEqual(undefined)
-		const exp = Err("Bad", "child1")
+		const exp = _Er("Bad", "child1")
 		expect((chldJob as _Job)._v).toStrictEqual(exp)
 	})
 })
@@ -220,7 +220,7 @@ describe("yield* cancel(...jobs).handle", () => {
 		const exp =
 			_Err(CANCEL_ALL_OP_NAME, [
 				_Err("syncBad1",
-					Err("SyncBad1"),
+					_Er("SyncBad1"),
 					"Cancelled"),
 
 				_Err("syncBad2",
@@ -228,7 +228,7 @@ describe("yield* cancel(...jobs).handle", () => {
 					"Cancelled"),
 
 				_Err("jobBad1",
-					Err("JobBad1", "jobBad1OE"),
+					_Er("JobBad1", "jobBad1OE"),
 					"Cancelled"),
 
 				_Err("jobBad2",
@@ -268,7 +268,7 @@ describe("yield* cancel(...jobs).handle", () => {
 
 		const rec = await go(main).promHandle
 		expect(rec).toEqual("ok")
-		const exp = Err("Bad", "child1")
+		const exp = _Er("Bad", "child1")
 		expect((chldJob as _Job)._v).toStrictEqual(exp)
 	})
 })
@@ -330,7 +330,7 @@ describe("cancel(...jobs).maxWait(ms)", () => {
 		const rec = await go(main).promHandle
 		const exp =
 			_Err("main",
-				Err(TIME_OUT, CANCEL_ALL_OP_NAME)
+				_Er(TIME_OUT, CANCEL_ALL_OP_NAME)
 			)
 		expect(rec).toStrictEqual(exp)
 		expect(ctx.count).toBe(0)
@@ -397,7 +397,7 @@ describe("cancel(...jobs).maxWait(ms).handle", () => {
 		}
 
 		const rec = await go(main).promHandle
-		const exp = Err(TIME_OUT, CANCEL_ALL_OP_NAME)
+		const exp = _Er(TIME_OUT, CANCEL_ALL_OP_NAME)
 		expect(rec).toStrictEqual(exp)
 		expect(ctx.count).toBe(0)
 	})

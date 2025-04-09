@@ -1,8 +1,22 @@
-import { go, sleep, isErr, Err, errIs } from "ribu"
-import { type ECancOk } from "../source/errors.js"
+import { go, sleep, isErr, errIs } from "ribu"
+import { type ECancOk, Err, RibuErr } from "../source/errors.js"
 import { cancel } from "../source/cancelAllJobs.js"
 import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr, groupByState } from "../source/job-helpers.js"
 import {type OkJob, type ErrJob, DoneJob, type ByStateJobBase, Job } from "../source/job.js"
+
+
+const errInfo = {
+	syscall: "read",
+	fileName: "/etc/passwd"
+}
+
+type A = typeof errInfo
+const err1 = Err("NotFound")
+const err2 = Err("NoPerms", errInfo)
+
+type Err2 = typeof err2
+
+const err3 = new RibuErr("Other").addP(errInfo)
 
 export function* jobFn1(x?: number) {
 	yield* sleep(1)
@@ -13,7 +27,7 @@ export function* jobFn1(x?: number) {
 		return 1
 	}
 	if (x < 10) {
-		return Err("Error0")
+		return Err("Error0", errInfo)
 	}
 	return Err("Error1")
 }

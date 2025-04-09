@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { go, Err, sleep, onEnd } from "ribu"
-import { _Err } from "../source/errors.js"
+import { _Err, _Er } from "../source/errors.js"
 
 function* child(ctx: {count: number}) {
 	yield* sleep(3)
@@ -132,7 +132,7 @@ describe("job.cancel()", () => {
 
 		expect(cancelRes).toStrictEqual(undefined)
 
-		const exp = Err("Bad", "child1")
+		const exp = _Er("Bad", "child1")
 		const rec = childJob.isDone() && childJob.val
 		expect(rec).toStrictEqual(exp)
 	})
@@ -240,7 +240,7 @@ describe("yield* job.cancelErr()", () => {
 
 		expect(cancelRes).toEqual(undefined)
 
-		const exp = Err("Bad", "child1")
+		const exp = _Er("Bad", "child1")
 		const rec = chldJob.isDone() && chldJob.val
 		expect(rec).toStrictEqual(exp)
 	})
