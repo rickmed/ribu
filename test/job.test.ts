@@ -240,14 +240,16 @@ describe("Access job states", () => {
 		expect(job.isOk()).toBe(false)
 		expect(job.isErr()).toBe(false)
 		expect(job.st).toBe("running")
+
 		await job
-		expect(job.isOk()).toBe(true)
+
+		expect(job.isOk() && job.val).toBe("allOk")
 		expect(job.isDone() && job.val).toBe("allOk")
 		expect(job.isErr()).toBe(false)
 		expect(job.st).toBe("ok")
 	})
 
-	it("failed job", async () => {
+	it.only("failed job", async () => {
 
 		function* badJob () {
 			yield* sleep(1)
@@ -258,9 +260,15 @@ describe("Access job states", () => {
 		expect(job.isDone()).toBe(false)
 		expect(job.isOk()).toBe(false)
 		expect(job.isErr()).toBe(false)
-		await job
-		expect(job.isDone() && job.val).toBe("allOk")
-		expect(job.st).toBe("done")
+		expect(job.st).toBe("running")
+
+		await job.promHandle
+
+		const errRes = _E("Bad", "badJob")
+		expect(job.isErr() && job.reason).toStrictEqual(errRes)
+		expect(job.isDone() && job.val).toStrictEqual(errRes)
+		expect(job.isOk()).toBe(false)
+		expect(job.st).toBe("err")
 
 	})
 })

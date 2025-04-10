@@ -3,7 +3,7 @@ import util from "util"
 
 if (process.env.DEBUG === "true") {
 	// @ts-ignore
-	globalThis.zz = debugPrint
+	globalThis._p = debugPrint
 }
 
 function debugPrint(obj: unknown) {
