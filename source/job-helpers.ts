@@ -15,7 +15,7 @@ import {
 	ERR_IN_ONEND,
 	addErrorToJobVal,
 } from "./job.js"
-import { _Er, type Er } from "./errors.js"
+import { _E, type Err } from "./errors.js"
 import { SysIterable, VOID_LINK, VOID_OBJ } from "./system.js"
 
 // todo: consider passing a timeout parameter
@@ -91,8 +91,8 @@ pool.isIdle()	Returns true if all jobs are settled (i.e. inFlight === 0)
  *  is empty.
  */
 
-export const EMPTY_ARGS = "EmptyArguments"
-export type EmptyArgsErr = Er<typeof EMPTY_ARGS>
+export const EMPTY_ARGS = "EmptyArgs"
+export type EmptyArgsErr = Err<typeof EMPTY_ARGS>
 export type NotErrs<Ret> = Exclude<Ret, Error>
 
 // Reuse Job flags since they won't be used in JobPlus instances.
@@ -101,7 +101,7 @@ const FAIL = HALT | ERR_IN_GENFN
 const WAITING_CANCELLED_JOBS = WAITING_CHILDREN
 
 export const TIME_OUT = "Timeout"
-export type TimeoutErr = Er<typeof TIME_OUT>
+export type TimeoutErr = Err<typeof TIME_OUT>
 
 export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 	extends _Job<Ok, E, Ctx> {
@@ -118,7 +118,7 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 	_go(jobs: Job[], cancel = false) {
 		if (jobs.length === 0) {
 			this._st |= (SETTLED | ERR_IN_GENFN)
-			this._v = _Er(EMPTY_ARGS, this._nm) as Ok | E
+			this._v = _E(EMPTY_ARGS, this._nm) as Ok | E
 		}
 		else {
 			this._init()
@@ -130,7 +130,7 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 	_onTgDone(tgJob: Job): void {
 		if (this._st & WAITING_CANCELLED_JOBS) {
 			if ((tgJob as _Job)._st & ERR_IN_ONEND) {
-				addErrorToJobVal(this, (tgJob as _Job)._v as Er, ERR_IN_GENFN)
+				addErrorToJobVal(this, (tgJob as _Job)._v as Err, ERR_IN_GENFN)
 			}
 		}
 		else {
@@ -183,7 +183,7 @@ function maxWaitFired(thisJob: JobPlus) {
 	thisJob._tm = VOID_OBJ
 	// Reset ._st and .val in case some passed-in jobs already settled with Err.
 	thisJob._st = 0
-	thisJob._v = _Er(TIME_OUT, thisJob._nm)
+	thisJob._v = _E(TIME_OUT, thisJob._nm)
 	// Make caller fail if it didn't call .handle.
 	thisJob._st |= ERR_IN_GENFN
 	unlinkFromAllJobs(thisJob)
@@ -248,7 +248,7 @@ function makeJobCombinator<Jobs extends Job[], Ok, E>(
 	cancel = false
 ) {
 
-	class JobCombinator extends JobPlus<Ok, E | Er<typeof EMPTY_ARGS>> {
+	class JobCombinator extends JobPlus<Ok, E | Err<typeof EMPTY_ARGS>> {
 		_nm = name
 	}
 
@@ -292,7 +292,7 @@ export const allOrErr = makeJobCombinator(
 )
 
 const JOB_HAD_ERR = "JobHadErr"
-export type JobHadErr = Er<typeof JOB_HAD_ERR>
+export type JobHadErr = Err<typeof JOB_HAD_ERR>
 
 function allOrErrOnTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[number]) {
 	let results = this._v as AllOkRet<Jobs>[]
@@ -302,7 +302,7 @@ function allOrErrOnTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[numb
 
 function allOrErrOnFailedTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[number]) {
 	this._st |= FAIL
-	return this._v = _Er(JOB_HAD_ERR, this._nm, (tgJob as _Job)._v as Er)
+	return this._v = _E(JOB_HAD_ERR, this._nm, (tgJob as _Job)._v as Err)
 }
 
 function allOrErrInit(this: JobPlus) {
@@ -480,16 +480,8 @@ export function groupByState<J extends Job>(jobs: J[]) {
 	return { ok, err, live }
 }
 
-export function doneJob<J extends Job>(job: J): job is DoneJobFrom<J> {
-	return !(job as unknown as _Job)._done
-}
-
 function isOkJob<J extends Job>(job: J): job is OkJobFrom<J> {
 	return (job as unknown as _Job)._doneOk
-}
-
-function isErrJob<J extends Job>(job: J): job is ErrJobFrom<J> {
-	return (job as unknown as _Job)._doneErr
 }
 
 type OkJobFrom<J> = J extends Job<infer Ok, infer _E, infer Ctx>
@@ -500,6 +492,10 @@ type PrettyOkJob<J> = J extends Job<infer Ok, infer _E, infer Ctx>
 	? OkJob<Ok, Ctx>
 	: never
 
+function isErrJob<J extends Job>(job: J): job is ErrJobFrom<J> {
+	return (job as unknown as _Job)._doneErr
+}
+
 type ErrJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
 	? J & ErrJob<E, Ctx>
 	: never
@@ -507,6 +503,10 @@ type ErrJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
 type PrettyErrJob<J> = J extends Job<infer _Ok, infer E, infer Ctx>
 	? ErrJob<E, Ctx>
 	: never
+
+export function doneJob<J extends Job>(job: J): job is DoneJobFrom<J> {
+	return !(job as unknown as _Job)._done
+}
 
 type DoneJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
 	? J & DoneJob<_Ok, E, Ctx>
@@ -517,8 +517,8 @@ type DoneJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
 
 // const dummyGen = (function* dummyGenFn() {})()
 
-// export function newJob<Ret = unknown, Errs = ECancOK |  | __Err>(jobName = "") {
-// 	return new Job<Ret, Errs | ECancOK |  | __Err>(dummyGen, jobName)
+// export function newJob<Ret = unknown, Errs = ErCancOK |  | __Err>(jobName = "") {
+// 	return new Job<Ret, Errs | ErCancOK |  | __Err>(dummyGen, jobName)
 // }
 
 

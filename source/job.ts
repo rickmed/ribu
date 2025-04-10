@@ -14,7 +14,8 @@ import {
 	type SysIterable,
 	ensurePreviousYieldAndSetCallerJobNextSt,
 } from "./system.js"
-import { type Er, RibuErr, E_CANC_OK, ECancOk, _Err } from "./errors.js"
+
+import { type Err, _Err, ER_CANC_OK, ErCancOk, _Er } from "./errors.js"
 import { Chan, PutterLink, ReceiverLink } from "./channel.js"
 
 // todo: implement "unsub() to have something like trio's moveOnAfter()
@@ -150,7 +151,7 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 			(_st & PARKED_CANCEL) && (tgSt & ERR_IN_ONEND)
 
 		if (shouldThisJobFail) {
-			genFnFailed(this, _Err(this._nm, tgJob._v as Er))
+			genFnFailed(this, _Er(this._nm, tgJob._v as Err))
 			return
 		}
 
@@ -173,7 +174,7 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 
 	cancelHandle() {
 		processCancel(this, ".cancelHandle()", PARKED_CANCEL_ERR)
-		return SYS_ITERABLE as SysIterable<void | Er>
+		return SYS_ITERABLE as SysIterable<void | Err>
 	}
 
 	get _done() {
@@ -201,9 +202,9 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 	}
 
 	get st() {
-		if (this._done) return "done"
 		if (this._doneErr) return "err"
 		if (this._doneOk) return "ok"
+		if (this._done) return "done"
 		return "running"
 	}
 
@@ -300,7 +301,7 @@ function processCancel(job: _Job, opName: string, callerJobNextSt: _Job["_st"]) 
 		}
 		if (_st & ERR_IN_ONEND) {
 			iterRes.done = false
-			genFnFailed(callerJob, _Err(callerJob._nm, val))
+			genFnFailed(callerJob, _Er(callerJob._nm, val))
 			return
 		}
 
@@ -336,7 +337,7 @@ function jobIterator<T>(job: _Job) {
 			(callerSt & PARKED_JOB) && (thisSt & ANY_ERR_OR_CANCOK)
 
 		if (shouldCallerFail) {
-			genFnFailed(callerJob, _Err(callerJob._nm, job._v as Er))
+			genFnFailed(callerJob, _Er(callerJob._nm, job._v as Err))
 			iterRes.done = false
 		}
 		else {
@@ -395,11 +396,11 @@ export function resumeJob(thisJob: _Job, val?: unknown) {
 		return
 	}
 
-	if (value instanceof RibuErr) {
+	if (value instanceof _Err) {
 		genFnFailed(thisJob, decorateRibuErr(value, thisJob._nm))
 	}
 	else if (genFnThrew || value instanceof Error) {
-		genFnFailed(thisJob, _Err(thisJob._nm, value))
+		genFnFailed(thisJob, _Er(thisJob._nm, value))
 	}
 	else {
 		thisJob._v = value
@@ -417,7 +418,7 @@ function onGenFnDone(thisJob: _Job, cancelChildren = false) {
 	loop_tg(thisJob, true, cancelChildren)
 }
 
-function genFnFailed(thisJob: _Job, jobVal: RibuErr) {
+function genFnFailed(thisJob: _Job, jobVal: _Err) {
 	thisJob._v = jobVal
 	thisJob._st |= ERR_IN_GENFN
 	thisJob._st |= CANCEL_SIBLINGS_ON_ERR
@@ -471,11 +472,11 @@ function execOnEndsRecur(thisJob: _Job) {
 }
 
 function onOnEndResult(thisJob: _Job, onEndResult: unknown, onEnd: OnEnd, threw = false) {
-	if (onEndResult instanceof RibuErr) {
+	if (onEndResult instanceof _Err) {
 		addOnEndErr(thisJob, decorateRibuErr(onEndResult, onEnd.name))
 	}
 	else if (threw || onEndResult instanceof Error) {
-		addOnEndErr(thisJob, _Err(onEnd.name, onEndResult))
+		addOnEndErr(thisJob, _Er(onEnd.name, onEndResult))
 	}
 
 	execOnEndsRecur(thisJob)
@@ -483,17 +484,17 @@ function onOnEndResult(thisJob: _Job, onEndResult: unknown, onEnd: OnEnd, threw 
 
 function onOnEndJobDone(val: unknown, tg: _Job, ob: _Job) {
 	if (tg._st & HAD_ERR) {
-		if (val instanceof RibuErr) {
+		if (val instanceof _Err) {
 			addOnEndErr(ob, decorateRibuErr(val, ob._nm))
 		}
 		else if (val instanceof Error) {
-			addOnEndErr(ob, _Err(ob._nm, val))
+			addOnEndErr(ob, _Er(ob._nm, val))
 		}
 	}
 	execOnEndsRecur(ob)
 }
 
-function decorateRibuErr(ribuErr: RibuErr, fnName: string) {
+function decorateRibuErr(ribuErr: _Err, fnName: string) {
 	if (!ribuErr.fn && fnName !== "") {
 		// @ts-ignore .fn being readonly.
 		ribuErr.fn = fnName
@@ -503,7 +504,7 @@ function decorateRibuErr(ribuErr: RibuErr, fnName: string) {
 
 const CANCELLED_STR = "Cancelled"
 
-function addOnEndErr(thisJob: _Job, err: Error | RibuErr) {
+function addOnEndErr(thisJob: _Job, err: Error | _Err) {
 	addErrorToJobVal(thisJob, err, ERR_IN_ONEND)
 	if (thisJob._st & CANCELLED) {
 		// @ts-ignore job.val is Err now and mutation of .msg readonly property
@@ -521,7 +522,7 @@ function settleJob(thisJob: _Job) {
 	}
 
 	if (_st & CANCELLED && !(_st & ERR_IN_ONEND)) {
-		thisJob._v = E_CANC_OK
+		thisJob._v = ER_CANC_OK
 		thisJob._st = CANCOK
 	}
 
@@ -554,7 +555,7 @@ export function markSettledAndNotifyObs(thisJob: _Job) {
 
 function onChildDone(job: _Job, child: _Job) {
 	if (child._st & HAD_ERR) {
-		addErrorToJobVal(job, child._v as Er, ERR_IN_GENFN)
+		addErrorToJobVal(job, child._v as Err, ERR_IN_GENFN)
 		const { _st } = job
 		if ((_st & CANCEL_SIBLINGS_ON_ERR) && !(_st & CHILDREN_CANCELLED)) {
 			loop_tg(job, false, true)
@@ -641,11 +642,11 @@ export function loop_tg(thisJob: _Job, observe: boolean, cancel: boolean) {
 	} while (childLink !== VOID_LINK)
 }
 
-export function addErrorToJobVal(thisJob: _Job, err: Error | RibuErr, errFlag: _Job["_st"]) {
+export function addErrorToJobVal(thisJob: _Job, err: Error | _Err, errFlag: _Job["_st"]) {
 	if (!(thisJob._st & HAD_ERR)) {
-		thisJob._v = _Err(thisJob._nm)
+		thisJob._v = _Er(thisJob._nm)
 	}
-	const errVal = thisJob._v as Er
+	const errVal = thisJob._v as Err
 	if (errFlag & ERR_IN_GENFN) {
 		errVal._addErr(err)
 	}
@@ -774,7 +775,7 @@ export interface JobBase<Ok = unknown, E = unknown, Ctx = unknown> {
 	setCtx: <NewCtx>(ctx: NewCtx) => Job<Ok, E, NewCtx>
 	readonly ctx: Ctx
 	cancel: () => SysIterable<void>
-	cancelHandle: () => SysIterable<void | Er>
+	cancelHandle: () => SysIterable<void | Err>
 	onEnd: (fn: OnEnd) => void
 	then: (res: (val: Ok) => void, rej: (err: E) => void) => void
 	readonly promHandle: Promise<Ok | E>
@@ -790,14 +791,16 @@ export interface JobBase<Ok = unknown, E = unknown, Ctx = unknown> {
 		| ErrJob<E, Ctx>
 }
 
+type RibuErrs = ErCancOk | Err
+
 export function go<Args extends unknown[], GenFnRet>(
 	genFn: RibuGenFn<GenFnRet, Args>,
 	...args: Args
-): Job<NotErrs<GenFnRet>, Errs<GenFnRet> | ECancOk | Er> {
+) {
 	const gen = genFn(...args)
 	const job = new _Job(genFn.name, gen, sys.runningJob)
 	resumeJob(job)
-	return job as Job<NotErrs<GenFnRet>, Errs<GenFnRet> | ECancOk | Er>
+	return job as Job<_NotErrs<GenFnRet>, _Errs<GenFnRet> | RibuErrs>
 }
 
 export function me(): _Job {
@@ -842,5 +845,23 @@ export type DoneJob<Ok, E, Ctx = unknown> = JobBase<Ok, E, Ctx> & {
 } & ByStateJobBase
 
 
-export type Errs<T> = Extract<T, RibuErr>
-export type NotErrs<T> = Exclude<T, RibuErr>
+export type _Errs<T> = Extract<T, _Err>
+export type _NotErrs<T> = Exclude<T, _Err>
+
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type Errs<G extends (...args: Args[]) => RibuGen<Args>, Args = any> =
+	G extends (...args: Args[]) => RibuGen<infer Ret>
+	? _Errs<Ret> | RibuErrs
+	: never;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type NotErrs<G extends (...args: Args[]) => RibuGen<Args>, Args = any> =
+	G extends (...args: Args[]) => RibuGen<infer Ret>
+	? _NotErrs<Ret> | RibuErrs
+	: never;
+
+export type JobErrs<_J extends Job<_Ok, E>, _Ok, E> = E
+
+export type JobNotErrs<Fn extends RibuGenFn<Ret>, Ret = unknown> =
+	_NotErrs<ReturnType<Fn>>

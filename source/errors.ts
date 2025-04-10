@@ -1,9 +1,9 @@
-const RIBU_ERR_KIND = "$RibuErr$"
+const RIBU_ERR_KIND = "_RibuErr$"
 type RibuErrKind = typeof RIBU_ERR_KIND
-export type Er<Kind extends string = RibuErrKind> = RibuErr<Kind>
+export type Err<Kind = RibuErrKind> = _Err & { $err: Kind }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-type InnerErr = Error | RibuErr | {} | null | undefined
+type InnerErr = Error | _Err | {} | null | undefined
 type InnerErrs = InnerErr | InnerErr[]
 
 /**
@@ -18,14 +18,14 @@ type InnerErrs = InnerErr | InnerErr[]
  * _oe:
  * 	Errors that occurred in onEnd() functions.
  */
-export class RibuErr<Kind = unknown> {
+export class _Err {
 
-	$err: Kind
+	$err: string
 	readonly fn: string
 	_errs?: InnerErrs
 	readonly msg?: string
 
-	constructor(kind: Kind, fnName = "", errs?: RibuErr["_errs"], msg?: string) {
+	constructor(kind = RIBU_ERR_KIND, fnName = "", errs?: _Err["_errs"], msg?: string) {
 		this.$err = kind
 		this.fn = fnName
 		if (errs) {
@@ -36,7 +36,7 @@ export class RibuErr<Kind = unknown> {
 		}
 	}
 
-	_addErr(error: Error | RibuErr) {
+	_addErr(error: Error | _Err) {
 		const { _errs } = this
 		if (_errs === undefined) {
 			this._errs = error
@@ -60,79 +60,76 @@ export class RibuErr<Kind = unknown> {
 	}
 
 	Err<Kind extends string>(kind: Kind, msg?: string, fnName?: string) {
-		return new RibuErr<Kind>(kind, fnName, this, msg) as Er<Kind>
+		return new _Err(kind, fnName, this, msg) as Err<Kind>
 	}
 }
 
-export function Err<Kind extends string>(kind: Kind, fnName?: string, msg?: string, errs?: RibuErr["_errs"]) {
-	return new RibuErr<Kind>(kind, fnName, errs, msg) as Er<Kind>
+
+export type ErrX<K extends string, P> = Err<K> & P
+
+type NoRibuErrKeys<P> = P & {
+	[K in keyof _Err]?: never
 }
 
-export const E_CANC_OK = new RibuErr("ECancOk")
-export type ECancOk = RibuErr & {
+export function Err<Kind extends string>(
+	kind: Kind,
+	msg?: string,
+	fnName?: string
+): Err<Kind>
+export function Err<Kind extends string, P extends object>(
+	kind: Kind,
+	payload: NoRibuErrKeys<P>,
+	msg?: string,
+	fnName?: string
+): ErrX<Kind, P>
+export function Err<Kind extends string, P extends object>(
+	kind: Kind,
+	payload?: NoRibuErrKeys<P>,
+	msg?: string,
+	fnName?: string
+): ErrX<Kind, P> | Err<Kind> {
+	const err = new _Err(kind, fnName, undefined, msg)
+	if (payload) {
+		Object.assign(err, payload)
+		return err as ErrX<Kind, P>
+	}
+	return err as Err<Kind>
+}
+
+export class Public_Err extends _Err {
+	constructor(fnName = "", msg?: string) {
+		super(undefined, fnName, undefined, msg)
+	}
+}
+
+
+export const ER_CANC_OK = new _Err("ECancOk")
+export type ErCancOk = _Err & {
 	readonly $err: "ECancOk"
 }
+
 
 export function isErr<Kind>(x: unknown): x is { $err: Kind } {
 	return typeof x === "object" && x !== null && "$err" in x
 }
 
-export function errIsNot<X, K extends string>(kind: K, x: X):
-	x is Exclude<X, { $err: K }>
-{
-	return isErr(x) && x.$err !== kind
+export function errIs<X, Kind extends Extract<X, Err<string>>["$err"]>(x: X, kind: Kind): x is Extract<X, Err<Kind>> {
+	return isErr<Kind>(x) && x.$err === kind
 }
 
-export function errIs<X, K extends string>(kind: K, x: X):
-	x is Extract<X, { $err: K }>
-{
-	return isErr(x) && x.$err === kind
+export function errIsNot<X, Kind extends Extract<X, Err<string>>["$err"]>(x: X, kind: Kind): x is Exclude<X, Err<Kind>> {
+	return isErr<Kind>(x) && x.$err === kind
 }
 
-
-export function _Err(fnName: string, errs?: RibuErr["_errs"], msg?: string): Er {
-	return new RibuErr(RIBU_ERR_KIND, fnName, errs, msg)
+export function _Er(fnName: string, errs?: _Err["_errs"], msg?: string) {
+	return new _Err(RIBU_ERR_KIND, fnName, errs, msg)
 }
 
-export function _Er<Kind extends string>(
+export function _E<Kind extends string> (
 	kind: Kind,
 	fnName?: string,
-	errs?: RibuErr["_errs"],
+	errs?: _Err["_errs"],
 	msg?: string,
 ) {
-	return new RibuErr(kind, fnName, errs, msg)
+	return new _Err(kind, fnName, errs, msg) as Err<Kind>
 }
-
-
-// new stuff down here
-
-function Err_v2<
-	Kind extends string,
-	P extends object,
->(kind: Kind, p: P): Er<Kind> & P {
-	const baseErr = new RibuErr(kind)
-	Object.assign(baseErr, p)
-	return baseErr as Er<Kind> & P
-}
-
-
-
-
-
-// Base error interface with kind as a generic
-export interface TypedErr<K extends string = string> extends RibuErr<K> {
-	$err: K;
- }
-
-// Enhanced error creation function with type erasure
-export function Err_v3<
-	K extends string,
-	P extends object
- >(kind: K, payload: P): TypedErr<K> {
-	const baseErr = new RibuErr(kind)
-	return Object.assign(baseErr, payload) as TypedErr<K>
-}
-
-type MyErr2 = Er<"MyErr"> & { sysCode: number, fileName: string };
-const myErr = Err_v2("MyErr", { sysCode: 1, fileName: "file1.ts" }) as MyErr2
-const myErr2 = Err_v2("MyErr", { sysCode: 1, fileName: "file1.ts" })

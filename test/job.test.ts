@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { Err, go, sleep } from "ribu"
-import { _Err, _Er, isErr } from "../source/errors.js"
+import { Err, go, sleep, _Err } from "ribu"
+import { _Er, _E, errIs } from "../source/errors.js"
 
 describe("yield*", () => {
 
@@ -38,8 +38,8 @@ describe("yield* automatic error propagation", () => {
 
 		const rec = await go(main).promHandle
 		const exp =
-			_Err("main",
-				_Er("Recovered", "child")
+			_Er("main",
+				_E("Recovered", "child")
 			)
 		expect(rec).toStrictEqual(exp)
 	})
@@ -59,8 +59,8 @@ describe("yield* automatic error propagation", () => {
 
 		const rec = await go(main).promHandle
 		const exp =
-			_Err("main",
-				_Err("child",
+			_Er("main",
+				_Er("child",
 					Error("SomeErrorTag")
 				)
 			)
@@ -84,8 +84,8 @@ describe("yield* automatic error propagation", () => {
 
 		const rec = await go(main).promHandle
 		const exp =
-			_Err("main",
-				_Err("child", "Bad")
+			_Er("main",
+				_Er("child", "Bad")
 			)
 		expect(rec).toStrictEqual(exp)
 	})
@@ -126,7 +126,7 @@ describe("yield* job.handle", () => {
 		}
 
 		const rec = await go(main).promHandle
-		const exp = _Er("Recovered", "child")
+		const exp = _E("Recovered", "child")
 		expect(rec).toStrictEqual(exp)
 	})
 
@@ -143,7 +143,7 @@ describe("yield* job.handle", () => {
 		}
 
 		const rec = await go(main).promHandle
-		const exp = _Err("child", Error("Bad"))
+		const exp = _Er("child", Error("Bad"))
 		expect(rec).toStrictEqual(exp)
 	})
 
@@ -161,44 +161,71 @@ describe("yield* job.handle", () => {
 		}
 
 		const rec = await go(main).promHandle
-		const exp = _Err("child", "Really Bad")
+		const exp = _Er("child", "Really Bad")
 		expect(rec).toStrictEqual(exp)
 	})
 
+	/* Demo of a few ways to create/type Errors in Ribu and handle them manually */
 	it("caller job can handle ::Err", async () => {
 
-		function* job1(x?: number) {
+		class Err3 extends _Err {
+			readonly $err = "Err3"
+			constructor(readonly w: number) {
+				super()
+			}
+		}
+
+		function* job1(x: string) {
 			yield* sleep(1)
-			if (!x) {
-				return "ok"
+			if (x == "ok") {
+				return true
 			}
-			if (x < 10) {
-				return Err("Error0")
+			if (x == "er0") {
+				return Err("Err0")
 			}
-			return Err("Error1")
+			if (x == "er1") {
+				return Err("Err1", { y: false as const })
+			}
+			if (x == "er2") {
+				const payload = { z: "no" as const }
+				type Er2 = Err<"Err2"> & typeof payload
+				return Err("Err2", payload) as Er2
+			}
+			return new Err3(0)
 		}
 
 		function* main() {
-			const res = yield* go(job1, 5).handle
-			if (isErr(res)) {
-				return res.Err("Recovered")
+			let errs: ("Err0" | false | "no" | number)[] = []
+
+			const res0 = yield* go(job1, "er0").handle
+			if (errIs(res0, "Err0")) {
+				errs.push(res0.$err)
 			}
-			return res
+
+			const res1 = yield* go(job1, "er1").handle
+			if (errIs(res1, "Err1")) {
+				errs.push(res1.y)
+			}
+
+			const res2 = yield* go(job1, "er2").handle
+			if (errIs(res2, "Err2")) {
+				errs.push(res2.z)
+			}
+
+			const res3 = yield* go(job1, "er3").handle
+			if (errIs(res3, "Err3")) {
+				errs.push(res3.w)
+			}
+
+			return errs
 		}
 
 		const rec = await go(main).promHandle
-		const exp =
-			_Er("Recovered", "main",
-				_Er("Error0", "job1")
-			)
+		const exp = ["Err0", false, "no", 0]
 		expect(rec).toStrictEqual(exp)
 	})
-
-
-
 })
 
-// todo
 describe("Access job states", () => {
 
 	it("successful job", async () => {
@@ -212,17 +239,28 @@ describe("Access job states", () => {
 		expect(job.isDone()).toBe(false)
 		expect(job.isOk()).toBe(false)
 		expect(job.isErr()).toBe(false)
+		expect(job.st).toBe("running")
+		await job
+		expect(job.isOk()).toBe(true)
+		expect(job.isDone() && job.val).toBe("allOk")
+		expect(job.isErr()).toBe(false)
+		expect(job.st).toBe("ok")
+	})
+
+	it("failed job", async () => {
+
+		function* badJob () {
+			yield* sleep(1)
+			return Err("Bad")
+		}
+
+		const job = go(badJob)
+		expect(job.isDone()).toBe(false)
+		expect(job.isOk()).toBe(false)
+		expect(job.isErr()).toBe(false)
 		await job
 		expect(job.isDone() && job.val).toBe("allOk")
 		expect(job.st).toBe("done")
+
 	})
-
-	// it("failed job", async () => {
-
-	// 	function* badJob () {
-	// 		yield* sleep(1)
-	// 		throw Error("SomeErrorTag")
-	// 	}
-
-	// })
 })

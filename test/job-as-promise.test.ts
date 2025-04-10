@@ -1,6 +1,6 @@
 import { expect, it } from "vitest"
 import { go, sleep } from "ribu"
-import { _Err } from "../source/errors.js"
+import { _Er } from "../source/errors.js"
 
 function* failJob() {
 	yield* sleep(1)
@@ -23,7 +23,7 @@ it("promise rejects if job fails", async () => {
 		throw Error("promise should have rejected")
 	}
 	catch (rec) {
-		const exp = _Err("failJob", Error("test"))
+		const exp = _Er("failJob", Error("test"))
 		expect(rec).toStrictEqual(exp)
 	}
 })
@@ -39,6 +39,6 @@ it(".promErr resolves with the job's value if it succeeds", async () => {
 
 it(".promErr returns Err if job fails", async () => {
 	const rec = await go(failJob).promHandle
-	const exp = _Err("failJob", Error("test"))
+	const exp = _Er("failJob", Error("test"))
 	expect(rec).toStrictEqual(exp)
 })

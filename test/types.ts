@@ -1,8 +1,11 @@
-import { go, sleep, isErr, errIs } from "ribu"
-import { type ECancOk, type Er, Err, errIsNot } from "../source/errors.js"
+import { go, sleep, isErr, errIs, Err } from "ribu"
+import { type ErCancOk, ErrX, errIsNot } from "../source/errors.js"
 import { cancel } from "../source/cancelAllJobs.js"
 import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr, groupByState } from "../source/job-helpers.js"
 import {type OkJob, type ErrJob, DoneJob, type ByStateJobBase, Job } from "../source/job.js"
+
+const payload = { w: false }
+type Er2 = Err<"Error2"> & typeof payload
 
 export function* jobFn1(x?: number) {
 	yield* sleep(1)
@@ -15,7 +18,10 @@ export function* jobFn1(x?: number) {
 	if (x < 10) {
 		return Err("Error0")
 	}
-	return Err("Error1")
+	if (x < 20) {
+		return Err("Error1", { z: 1 })
+	}
+	return Err("Error2", payload) as Er2
 }
 
 type SomeObj = {c: number}
@@ -32,14 +38,14 @@ export function* jobFn2(x?: number) {
 	return Err("Error2")
 }
 
-type RibuErrs = Er | ECancOk
+type RibuErrs = Err | ErCancOk
 
-type ErrsJob1 = Er<"Error0"> | Er<"Error1">
+type ErrsJob1 = Err<"Error0"> | ErrX<"Error1", { z: number}> | Er2
 type AllErrsJob1 = ErrsJob1 | RibuErrs
 type OksJob1 = false | 1
 type AllJob1 = OksJob1 | AllErrsJob1
 
-type ErrsJob2 = Er<"Error2">
+type ErrsJob2 = Err<"Error2">
 type AllErrsJob2 = ErrsJob2 | RibuErrs
 type OksJob2 = "hi" | SomeObj
 
@@ -58,7 +64,7 @@ export const tests = {
 	},
 
 	/* When using .handle, the returned type is the type returned from the
-		generator function, plus ECancOK (in case the job was cancelled) and the
+		generator function, plus ErCancOK (in case the job was cancelled) and the
 		generic Ribu Err from unexpected values.
 	*/
 	*["yield* job.handle"]() {
@@ -80,8 +86,8 @@ export const tests = {
 
 	*["yield* job.handle using errIs()"]() {
 		const res = yield* go(jobFn1).handle
-		type Err0 = Er<"Error0">
-		if (errIs("Error0", res)) {
+		type Err0 = Err<"Error0">
+		if (errIs(res, "Error0")) {
 			type Exp = Err0
 			true satisfies Equal<typeof res, Exp>
 			return res
@@ -92,8 +98,8 @@ export const tests = {
 
 	*["yield* job.handle using errIsNot()"]() {
 		const res = yield* go(jobFn1).handle
-		type Err0 = Er<"Error0">
-		if (errIsNot("Error0", res)) {
+		type Err0 = Err<"Error0">
+		if (errIsNot(res, "Error0")) {
 			type Exp = Exclude<AllJob1, Err0>
 			true satisfies Equal<typeof res, Exp>
 			return res
@@ -109,7 +115,7 @@ export const tests = {
 	},
 
 	*["yield* job.cancelErr()"]() {
-		type Exp = void | Er
+		type Exp = void | Err
 		const _rec = yield* go(jobFn1).cancelHandle()
 		true satisfies Equal<typeof _rec, Exp>
 	},
@@ -204,14 +210,14 @@ export const tests = {
 	},
 
 	*["yield* cancel(...jobs).handle"]() {
-		type Exp = void | EmptyArgsErr | Er
+		type Exp = void | EmptyArgsErr | Err
 		const jobs = [go(jobFn1), go(jobFn2)]
 		const _rec = yield* cancel(jobs).handle
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* cancel(...jobs).maxWait(ms).handle"]() {
-		type Exp = void | EmptyArgsErr | Er | TimeoutErr
+		type Exp = void | EmptyArgsErr | Err | TimeoutErr
 		const jobs = [go(jobFn1), go(jobFn2)]
 		const _rec = yield* cancel(jobs).maxWait(1).handle
 		true satisfies Equal<typeof _rec, Exp>
