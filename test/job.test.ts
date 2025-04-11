@@ -249,7 +249,7 @@ describe("Access job states", () => {
 		expect(job.st).toBe("ok")
 	})
 
-	it.only("failed job", async () => {
+	it("failed job", async () => {
 
 		function* badJob () {
 			yield* sleep(1)

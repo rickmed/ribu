@@ -75,6 +75,70 @@ describe("allOrErr()", () => {
 		expect(rec.res).toStrictEqual(exp)
 		expect(ctx.count).toBe(0)
 	})
+
+	it("manual handling of error", async () => {
+
+		let ctx = { count: 0 }
+
+		function* jobFailsCancelling(ctx: {count: number}) {
+			onEnd(() => Err("BadCancelling"))
+			yield* sleep(5)
+			ctx.count++
+		}
+
+		function* main() {
+			const jobs = [go(jobFailsCancelling, ctx), go(badJob)]
+			const res = yield* allOrErr(jobs).handle
+			return { res }
+		}
+
+		const rec = await go(main)
+
+		const exp =
+			_E("JobHadErr", "allOrErr", [
+				_E("Bad", "badJob"),
+				_Er("jobFailsCancelling", _E("BadCancelling"), "Cancelled")
+			])
+		expect(rec.res).toStrictEqual(exp)
+		expect(ctx.count).toBe(0)
+	})
+
+	it("works with a single job", async () => {
+		function* singleJob() {
+			yield* sleep(5)
+			return "single"
+		}
+
+		function* main() {
+			const jobs = [go(singleJob)]
+			const res = yield* allOrErr(jobs)
+			return res
+		}
+
+		const rec = await go(main)
+		expect(rec).toStrictEqual(["single"])
+	})
+
+	it("handles nested allOrErr calls", async () => {
+		function* job1() {
+			yield* sleep(5)
+			return "job1"
+		}
+
+		function* job2() {
+			yield* sleep(5)
+			return "job2"
+		}
+
+		function* main() {
+			const jobs = [allOrErr([go(job1), go(job2)]), allOrErr([go(job1), go(job2)])]
+			const res = yield* allOrErr(jobs)
+			return res
+		}
+
+		const rec = await go(main)
+		expect(rec).toStrictEqual([["job1", "job2"], ["job1", "job2"]])
+	})
 })
 
 
