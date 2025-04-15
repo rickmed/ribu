@@ -50,7 +50,7 @@ type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
 type JobsLink = Link<_Job, _Job>
 type JobChanLink = Link<_Job, Chan>
 type WaitingChdLink = JobsLink
-type TgLink = JobChanLink | WaitingChdLink | PutterLink | ReceiverLink
+export type TgLink = JobChanLink | WaitingChdLink | PutterLink | ReceiverLink
 
 type OnJobDone<T = _Job> = (val: unknown, tg: _Job, bPosInLink: T) => void
 type CallbackLink<T = _Job> = Link<OnJobDone<T>, T>

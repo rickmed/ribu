@@ -14,6 +14,9 @@ import {
 	WAITING_CHILDREN,
 	ERR_IN_ONEND,
 	addErrorToJobVal,
+	removeTgLink,
+	addTgLink,
+	TgLink,
 } from "./job.js"
 import { _E, type Err } from "./errors.js"
 import { SysIterable, VOID_LINK, VOID_OBJ } from "./system.js"
@@ -110,6 +113,10 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 		super("")
 	}
 
+	get handle(): SysIterable<Ok | E> {
+		return processHandle(this)
+	}
+
 	maxWait(ms: number) {
 		this._tm = setTimeout(maxWaitFired, ms, this)
 		return this as _Job<Ok, Ok | E | TimeoutErr, Ctx>
@@ -122,6 +129,8 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 		}
 		else {
 			this._init()
+
+
 			observeJobs(this, jobs, cancel)
 		}
 		return this
@@ -168,8 +177,8 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 		markSettledAndNotifyObs(this)
 	}
 
-	get handle(): SysIterable<Ok | E> {
-		return processHandle(this)
+	_settleCancel() {
+
 	}
 
 	// To be overridden by subclasses
@@ -190,7 +199,7 @@ function maxWaitFired(thisJob: JobPlus) {
 	markSettledAndNotifyObs(thisJob)
 }
 
-export function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
+function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
 	let unsettledTargets = false
 	const len = jobs.length
 	for (let i = 0; i < len; i++) {
@@ -240,6 +249,15 @@ function checkIfTgSettledSync(thisJob: JobPlus, tgJob: _Job, unsettledTargets: b
 	return 1
 }
 
+function steal(job: _Job, newParent: _Job) {
+	const { _pr } = job
+	if (_pr === VOID_LINK) {
+		return
+	}
+	removeTgLink(job, _pr)
+	addTgLink(newParent, _pr as TgLink)
+}
+
 function makeJobCombinator<Jobs extends Job[], Ok, E>(
 	name: string,
 	_onTgJobDone?: (this: JobPlus, tgJob: Jobs[number]) => Ok,
@@ -269,7 +287,6 @@ function makeJobCombinator<Jobs extends Job[], Ok, E>(
 		return instance._go(jobs, cancel)
 	}
 }
-
 
 type AllOkRet<Jobs extends Job[]> = Jobs[number] extends Job<infer A, unknown> ? A : never
 
