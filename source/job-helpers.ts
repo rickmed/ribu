@@ -1,6 +1,5 @@
 import {
 	_Job,
-	cancelJob,
 	ERR_IN_GENFN,
 	type Job,
 	linkJobs,
@@ -162,7 +161,7 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 			do {
 				let job = jobLink.b as _Job
 				const nextLink = jobLink.nB
-				cancelJob(job)
+				job._cancel()
 				jobLink = nextLink
 			} while (jobLink !== VOID_LINK)
 		}
@@ -213,7 +212,7 @@ function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
 			continue
 		}
 		if (cancel) {
-			cancelJob(job as _Job)
+			(job as _Job)._cancel()
 			const res = checkIfTgSettledSync(obJob, job as _Job, unsettledTargets)
 			if (res === 3) {
 				return

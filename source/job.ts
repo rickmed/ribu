@@ -85,6 +85,7 @@ const PARKED_CH = PARKED_CH_PUT | PARKED_CH_REC
 export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_CANCEL | PARKED_CANCEL_ERR| PARKED_SLEEP | PARKED_CH
 const HAD_ERR = ERR_IN_GENFN | ERR_IN_ONEND
 export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
+const CANCEL_NOOP = SETTLED | WAITING_ONENDS
 
 /** Job Class
  *  _v:
@@ -175,6 +176,52 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 	cancelHandle() {
 		processCancel(this, ".cancelHandle()", PARKED_CANCEL_ERR)
 		return SYS_ITERABLE as SysIterable<void | Err>
+	}
+
+	// Is cancelJob() caller responsibility to not subscribe if job is done,
+	// otherwise, observer job will be blocked forever.
+	_cancel() {
+		const { _st } = this
+		if (_st & CANCEL_NOOP) {
+			return
+		}
+
+		this._st |= CANCELLED
+
+		if (_st & PARKED_SLEEP) {
+			clearTimeout(this._tm as NodeJS.Timeout)
+			this._st &= ~PARKED_SLEEP
+			this._tm = VOID_OBJ
+		}
+		else if (_st & PARKED_CH) {
+			// todo: unsub from channel
+		}
+		else { // parked by a ::Job
+			const link = this._tg as JobsLink
+			removeTgLink(this, link)
+			removeOb(link.b, link)
+			disposeLink(link)
+		}
+
+		if (this._tg === VOID_LINK) {
+			execOnEndsRecur(this)
+			return
+		}
+
+		// Children already cancelled and job is linked/waiting for them.
+		if (_st & CHILDREN_CANCELLED) {
+			return
+		}
+
+		// Waiting for children but not cancelled yet, so trigger cancel
+		// but don't link them again.
+		if (this._st & WAITING_CHILDREN) {
+			loop_tg(this, false, true)
+			return
+		}
+
+		// Trigger cancel and link to them.
+		loop_tg(this, true, true)
 	}
 
 	get _done() {
@@ -289,7 +336,7 @@ function processCancel(job: _Job, opName: string, callerJobNextSt: _Job["_st"]) 
 
 	const callerJob = ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt, opName)
 
-	cancelJob(job)
+	job._cancel()
 
 	const { _st, _v: val } = job
 
@@ -568,53 +615,6 @@ function onChildDone(job: _Job, child: _Job) {
 	}
 }
 
-// Is cancelJob() caller responsibility to not subscribe if job is done,
-// otherwise, observer job will be blocked forever.
-const CANCEL_NOOP = SETTLED | WAITING_ONENDS
-export function cancelJob(thisJob: _Job) {
-	const { _st } = thisJob
-	if (_st & CANCEL_NOOP) {
-		return
-	}
-
-	thisJob._st |= CANCELLED
-
-	if (_st & PARKED_SLEEP) {
-		clearTimeout(thisJob._tm as NodeJS.Timeout)
-		thisJob._st &= ~PARKED_SLEEP
-		thisJob._tm = VOID_OBJ
-	}
-	else if (_st & PARKED_CH) {
-		// todo: unsub from channel
-	}
-	else { // parked by a ::Job
-		const link = thisJob._tg as JobsLink
-		removeTgLink(thisJob, link)
-		removeOb(link.b, link)
-		disposeLink(link)
-	}
-
-	if (thisJob._tg === VOID_LINK) {
-		execOnEndsRecur(thisJob)
-		return
-	}
-
-	// Children already cancelled and job is linked/waiting for them.
-	if (_st & CHILDREN_CANCELLED) {
-		return
-	}
-
-	// Waiting for children but not cancelled yet, so trigger cancel
-	// but don't link them again.
-	if (thisJob._st & WAITING_CHILDREN) {
-		loop_tg(thisJob, false, true)
-		return
-	}
-
-	// Trigger cancel and link to them.
-	loop_tg(thisJob, true, true)
-}
-
 export function loop_tg(thisJob: _Job, observe: boolean, cancel: boolean) {
 	if (cancel) {
 		thisJob._st |= CHILDREN_CANCELLED
@@ -636,7 +636,7 @@ export function loop_tg(thisJob: _Job, observe: boolean, cancel: boolean) {
 		// synchronously and remove link from .tg_ch LL.
 		const nextLink = childLink.nB
 		if (cancel) {
-			cancelJob(childJob)
+			childJob._cancel()
 		}
 		childLink = nextLink
 	} while (childLink !== VOID_LINK)
