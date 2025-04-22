@@ -23,7 +23,7 @@ describe("allOrErr()", () => {
 		}
 
 		function* main() {
-			const jobs = [go(job1), go(job2)]
+			const jobs = [() => go(job1), () => go(job2)]
 			const res = yield* allOrErr(jobs)
 			return res
 		}
@@ -60,7 +60,7 @@ describe("allOrErr()", () => {
 		}
 
 		function* main() {
-			const jobs = [go(jobFailsCancelling, ctx), go(badJob)]
+			const jobs = [() => go(jobFailsCancelling, ctx), () => go(badJob)]
 			const res = yield* allOrErr(jobs).handle
 			return { res }
 		}
@@ -87,7 +87,7 @@ describe("allOrErr()", () => {
 		}
 
 		function* main() {
-			const jobs = [go(jobFailsCancelling, ctx), go(badJob)]
+			const jobs = [() => go(jobFailsCancelling, ctx), () => go(badJob)]
 			const res = yield* allOrErr(jobs).handle
 			return { res }
 		}
@@ -110,7 +110,7 @@ describe("allOrErr()", () => {
 		}
 
 		function* main() {
-			const jobs = [go(singleJob)]
+			const jobs = [() => go(singleJob)]
 			const res = yield* allOrErr(jobs)
 			return res
 		}
@@ -131,7 +131,10 @@ describe("allOrErr()", () => {
 		}
 
 		function* main() {
-			const jobs = [allOrErr([go(job1), go(job2)]), allOrErr([go(job1), go(job2)])]
+			const jobs = [
+				() => allOrErr([() => go(job1), () => go(job2)]),
+				() => allOrErr([() => go(job1), () => go(job2)])
+			]
 			const res = yield* allOrErr(jobs)
 			return res
 		}

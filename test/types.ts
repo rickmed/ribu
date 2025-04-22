@@ -256,29 +256,29 @@ export const tests = {
 
 	*["yield* allOrErr()"]() {
 		type Exp = NotErrs
-		const jobs = [go(jobFn1), go(jobFn2)]
-		const _rec = yield* allOrErr(jobs)
+		const args = [() => go(jobFn1), () => go(jobFn2)]
+		const _rec = yield* allOrErr(args)
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* allOrErr().handle"]() {
 		type Exp = NotErrs | JobHadErr | EmptyArgsErr
-		const jobs = [go(jobFn1), go(jobFn2)]
-		const _rec = yield* allOrErr(jobs).handle
+		const args = [() => go(jobFn1), () => go(jobFn2)]
+		const _rec = yield* allOrErr(args).handle
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* allOrErr().maxWait(ms)"]() {
 		type Exp = NotErrs
-		const jobs = [go(jobFn1), go(jobFn2)]
-		const _rec = yield* allOrErr(jobs).maxWait(1)
+		const args = [() => go(jobFn1), () => go(jobFn2)]
+		const _rec = yield* allOrErr(args).maxWait(1)
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* allOrErr().maxWait(ms).handle"]() {
 		type Exp = NotErrs | JobHadErr | EmptyArgsErr | TimeoutErr
-		const jobs = [go(jobFn1), go(jobFn2)]
-		const _rec = yield* allOrErr(jobs).maxWait(1).handle
+		const args = [() => go(jobFn1), () => go(jobFn2)]
+		const _rec = yield* allOrErr(args).maxWait(1).handle
 		true satisfies Equal<typeof _rec, Exp>
 	},
 

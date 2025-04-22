@@ -13,9 +13,12 @@ import {
 	WAITING_CHILDREN,
 	ERR_IN_ONEND,
 	addErrorToJobVal,
-	removeTgLink,
 	addTgLink,
 	TgLink,
+	removeTgLink,
+	// removeTgLink, // No longer needed after removing steal()
+	// addTgLink, // No longer needed after removing steal()
+	// TgLink, // No longer needed after removing steal()
 } from "./job.js"
 import { _E, type Err } from "./errors.js"
 import { SysIterable, VOID_LINK, VOID_OBJ } from "./system.js"
@@ -85,6 +88,29 @@ pool.awaitOkRatio(ratio)	Resolves when okCount / total >= ratio
 pool.isIdle()	Returns true if all jobs are settled (i.e. inFlight === 0)
 */
 
+/*
+
+WHAT GENERAL CLASS TO USE
+need a PoolBase that I give an array of jobs and let me know when
+  a job settled.
+	- cancel? cancelErr? unSub? maxWait?
+
+Job Class is used currently, but these props are not being used:
+	_gn: generator
+	_pr: parent
+	_oe: onEnds
+
+Pool Props Needed:
+	fnArrJobIsDone:
+		(this: Job, tgJob: Job) => void
+	_ob:
+		Needed if caller is cancelled, can remove itself from Pool._ob
+	_tg: so that observing jobs can remove themselves from ob._tg when done
+
+*/
+
+// todo: provide map, filter, reduce helpers.
+
 
 /** *****************  Base JobPlus Class  ********************************** */
 
@@ -128,8 +154,6 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 		}
 		else {
 			this._init()
-
-
 			observeJobs(this, jobs, cancel)
 		}
 		return this
@@ -248,14 +272,6 @@ function checkIfTgSettledSync(thisJob: JobPlus, tgJob: _Job, unsettledTargets: b
 	return 1
 }
 
-function steal(job: _Job, newParent: _Job) {
-	const { _pr } = job
-	if (_pr === VOID_LINK) {
-		return
-	}
-	removeTgLink(job, _pr)
-	addTgLink(newParent, _pr as TgLink)
-}
 
 function makeJobCombinator<Jobs extends Job[], Ok, E>(
 	name: string,
@@ -281,8 +297,9 @@ function makeJobCombinator<Jobs extends Job[], Ok, E>(
 
 	return factory
 
-	function factory(jobs: Jobs) {
+	function factory(fns: { [K in keyof Jobs]: () => Jobs[K] }) {
 		const instance = new JobCombinator()
+		const jobs = fns.map(fn => fn())
 		return instance._go(jobs, cancel)
 	}
 }
@@ -327,34 +344,7 @@ function allOrErrInit(this: JobPlus) {
 
 
 
-/*
 
-WHAT GENERAL CLASS TO USE
-need a PoolBase that I give an array of jobs and let me know when
-  a job settled.
-	- cancel? cancelErr? unSub? maxWait?
-
-Job Class is used currently, but these props are not being used:
-	_gn: generator
-	_pr: parent
-	_oe: onEnds
-
-Pool Props Needed:
-	fnArrJobIsDone:
-		(this: Job, tgJob: Job) => void
-	_ob:
-		Needed if caller is cancelled, can remove itself from Pool._ob
-	_tg: so that observing jobs can remove themselves from ob._tg when done
-
-
-
-
-all:
-	- Need to count jobs?
-
-*/
-
-// todo: provide map, filter, reduce helpers.
 
 
 
@@ -551,3 +541,12 @@ type DoneJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
 
 // 	return job
 // }
+
+export function steal(job: _Job, newParent: _Job) {
+	const { _pr } = job
+	if (_pr === VOID_LINK) {
+		return
+	}
+	removeTgLink(job, _pr)
+	addTgLink(newParent, _pr as TgLink)
+}

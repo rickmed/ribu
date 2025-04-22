@@ -25,6 +25,9 @@ import { Chan, PutterLink, ReceiverLink } from "./channel.js"
 // 	check when a function is called and obj is in pool, throw (with flags)
 // 	evaluate for channels as well
 
+// todo: need to call gen.return() so that [symbol.dispose] works
+// ie for channel or pool.
+
 // todo: evaluate passing me().cancel to cancel() (maybe use same internal function
 // 	as pool's cancel)
 
@@ -178,7 +181,7 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 		return SYS_ITERABLE as SysIterable<void | Err>
 	}
 
-	// Is cancelJob() caller responsibility to not subscribe if job is done,
+	// Is _cancel() caller responsibility to not subscribe if job is done,
 	// otherwise, observer job will be blocked forever.
 	_cancel() {
 		const { _st } = this
@@ -213,8 +216,8 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 			return
 		}
 
-		// Waiting for children but not cancelled yet, so trigger cancel
-		// but don't link them again.
+		// Job is waiting for children but children are not cancelled yet, so
+		// trigger cancel but don't link again.
 		if (this._st & WAITING_CHILDREN) {
 			loop_tg(this, false, true)
 			return
@@ -326,7 +329,7 @@ export function processHandle<T>(job: _Job) {
 	return JOB_ITERABLE as SysIterable<T>
 }
 
-
+// todo: move this to _cancel()
 function processCancel(job: _Job, opName: string, callerJobNextSt: _Job["_st"]) {
 	if (job._st & SETTLED) {
 		iterRes.done = true
@@ -340,7 +343,7 @@ function processCancel(job: _Job, opName: string, callerJobNextSt: _Job["_st"]) 
 
 	const { _st, _v: val } = job
 
-	if (_st & SETTLED) {  // job settled synchronously just after canceJob() call above
+	if (_st & SETTLED) {  // job settled synchronously just after cancel called
 		if (callerJobNextSt & PARKED_CANCEL_ERR) {
 			iterRes.done = true
 			iterRes.value = _st & ERR_IN_ONEND ? val : undefined
@@ -627,12 +630,12 @@ export function loop_tg(thisJob: _Job, observe: boolean, cancel: boolean) {
 		if (observe) {
 			// Parent-child are already connected via ._tg/._pr, so we need to
 			// move child._pr link and add it to child._ob, so child doesn't
-			// process its relationship in settle() with parent twice (once via
-			// .pr and once via ._ob).
+			// process its relationship with parent twice (once via
+			// .pr and once via ._ob) in settle().
 			addObserver(childJob, childJob._pr as JobsLink)
 			childJob._pr = VOID_LINK
 		}
-		// Need to save nextLink here because child can resolve its cancellation
+		// Need to have nextLink here because child can resolve its cancellation
 		// synchronously and remove link from .tg_ch LL.
 		const nextLink = childLink.nB
 		if (cancel) {
@@ -861,7 +864,5 @@ export type NotErrs<G extends (...args: Args[]) => RibuGen<Args>, Args = any> =
 	? _NotErrs<Ret> | RibuErrs
 	: never;
 
+export type JobOks<_J extends Job<Ok>, Ok = unknown> = Ok
 export type JobErrs<_J extends Job<_Ok, E>, _Ok, E> = E
-
-export type JobNotErrs<Fn extends RibuGenFn<Ret>, Ret = unknown> =
-	_NotErrs<ReturnType<Fn>>
