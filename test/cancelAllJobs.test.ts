@@ -72,6 +72,34 @@ describe("yield* cancel(...jobs)", () => {
 		const exp = _E("Bad", "child1")
 		expect((chldJob as _Job)._v).toStrictEqual(exp)
 	})
+
+	it("works if child is cancel(). Parent settles after cancel() settles", async () => {
+
+		let cancelJobSettled = false
+
+		function* child() {
+			yield* sleep(5)
+			return "never reached"
+		}
+
+		function* parent() {
+			const chld = go(child)
+			yield* sleep(1)
+			const job = cancel([chld])
+			onEnd(() => {
+				cancelJobSettled = job.isDone()
+			})
+		}
+
+		function* main() {
+			const res = yield* go(parent).cancel()
+			return res
+		}
+
+		const rec = await go(main)
+		expect(cancelJobSettled).toBe(true)
+		expect(rec).toBe(undefined)
+	})
 })
 
 

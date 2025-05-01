@@ -193,6 +193,12 @@ export const tests = {
 		true satisfies Equal<typeof _sameJobRef.ctx, boolean>
 	},
 
+	[`job doesn't expose internal methods`]() {
+		const _job = go(jobFn1)
+		type Internal = InternalMethods<typeof _job>
+		true satisfies Equal<Internal, never>
+	},
+
 	/* *************** cancel(...jobs) *************************************** */
 
 	*["yield* cancel(...jobs)"]() {
@@ -221,6 +227,13 @@ export const tests = {
 		const jobs = [go(jobFn1), go(jobFn2)]
 		const _rec = yield* cancel(jobs).maxWait(1).handle
 		true satisfies Equal<typeof _rec, Exp>
+	},
+
+	[`cancel() doesn't expose internal methods`]() {
+		const jobs = [go(jobFn1), go(jobFn2)]
+		const _job = cancel(jobs)
+		type Internal = InternalMethods<typeof _job>
+		true satisfies Equal<Internal, never>
 	},
 
 
@@ -282,6 +295,13 @@ export const tests = {
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
+	[`allOrErr() doesn't expose internal methods`]() {
+		const args = [() => go(jobFn1), () => go(jobFn2)]
+		const _job = allOrErr(args)
+		type Internal = InternalMethods<typeof _job>
+		true satisfies Equal<Internal, never>
+	},
+
 	// todo: not sure if can be cancelled
 	// *["yield* allOrErr().cancel()"]() {
 	// 	type Exp = void
@@ -336,3 +356,7 @@ type Equal<Rec, Exp> =
 type Not<T extends boolean> = T extends true ? false : true
 
 type HasKey<T, K extends string> = K extends keyof T ? true : false
+
+type InternalMethods<T> = {
+	[K in keyof T]: K extends `_${string}` ? K : never
+}[keyof T]

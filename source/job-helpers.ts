@@ -16,12 +16,56 @@ import {
 	addTgLink,
 	TgLink,
 	removeTgLink,
-	// removeTgLink, // No longer needed after removing steal()
-	// addTgLink, // No longer needed after removing steal()
-	// TgLink, // No longer needed after removing steal()
 } from "./job.js"
 import { _E, type Err } from "./errors.js"
 import { SysIterable, VOID_LINK, VOID_OBJ } from "./system.js"
+
+
+/* cancelJobish()._cancel() problem:
+	* only called by parent (there's no .cancel(), only _cancel())
+
+* ISSUE: it's sync so it doesn't notify parent (parent never settles)
+	* in fact, most cancellations are sync, but work bc either:
+		* yield* cancel() returns immediately in sync.
+		* link already there waiting children.
+	* exploring code...
+
+OPTIONS:
+	** Return something if it settled sync?
+	(then think if maybe subscription param)
+
+NEEEXXTTT step is: ok so all tests passses,
+	Should i optimize _cancel()
+
+
+
+._cancel() called from:
+	* .cancel/cancelHandle
+	* loop_tg:
+		* cancelling all children (eg: genFnErr)
+		* child failed while waiting for them (don't subscribe)
+	* jobComb when callback signals HALT.
+	* cancelAll via jobPlus
+
+
+Job._cancel() does:
+	1) Return if already cancelled
+	2) set |= CANCELLED
+	3) unsub from yield* job/ch/sleep...
+	4) run onEnds
+
+	5) trigger cancel and link if necessary
+
+jobCombinator:
+	* Can be cancelled by user.
+	* Doesn't need 3, 4, 5, if checks.
+
+
+
+
+
+
+*/
 
 // todo: consider passing a timeout parameter
 
@@ -155,6 +199,7 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 		else {
 			this._init()
 			observeJobs(this, jobs, cancel)
+			// here: ??
 		}
 		return this
 	}
@@ -178,6 +223,7 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 			this._settleJob()
 			return
 		}
+
 		if (this._st & HALT) {
 			// Trigger cancel on rest of passed-in jobs
 			this._st |= WAITING_CANCELLED_JOBS
@@ -272,6 +318,7 @@ function checkIfTgSettledSync(thisJob: JobPlus, tgJob: _Job, unsettledTargets: b
 	return 1
 }
 
+type JobComb<T> = RemoveUnderscoreProps<T>
 
 function makeJobCombinator<Jobs extends Job[], Ok, E>(
 	name: string,
@@ -300,7 +347,8 @@ function makeJobCombinator<Jobs extends Job[], Ok, E>(
 	function factory(fns: { [K in keyof Jobs]: () => Jobs[K] }) {
 		const instance = new JobCombinator()
 		const jobs = fns.map(fn => fn())
-		return instance._go(jobs, cancel)
+		const x = instance._go(jobs, cancel)
+		return x as JobComb<typeof x>
 	}
 }
 
@@ -550,3 +598,7 @@ export function steal(job: _Job, newParent: _Job) {
 	removeTgLink(job, _pr)
 	addTgLink(newParent, _pr as TgLink)
 }
+
+export type RemoveUnderscoreProps<T> = Omit<T, {
+	[K in keyof T]: K extends `_${string}` ? K : never
+}[keyof T]>

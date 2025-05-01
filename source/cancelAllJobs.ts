@@ -1,4 +1,4 @@
-import { EmptyArgsErr, JobPlus } from "./job-helpers.js"
+import { EmptyArgsErr, JobPlus, RemoveUnderscoreProps } from "./job-helpers.js"
 import { addErrorToJobVal, ERR_IN_GENFN, type _Job, Job, ERR_IN_ONEND } from "./job.js"
 import { type Err } from "./errors.js"
 import { VOID_LINK } from "./system.js"
@@ -24,5 +24,8 @@ class CancellAll<Ok, E> extends JobPlus<Ok, E | EmptyArgsErr> {
 }
 
 export function cancel(jobs: Job[]) {
-	return new CancellAll<void, Err>()._go(jobs, true)
+	const x = new CancellAll<void, Err>()._go(jobs, true)
+	return x as CancelJob<typeof x>
 }
+
+type CancelJob<T> = RemoveUnderscoreProps<T>

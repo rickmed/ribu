@@ -1,5 +1,5 @@
 import { expect, it } from "vitest"
-import { Err, go, me, sleep } from "ribu"
+import { Err, go, me, onEnd, sleep } from "ribu"
 import { _E, _Er } from "../source/errors.js"
 
 /*
@@ -120,4 +120,31 @@ it("if child fails and parent is set up at cancelSiblingsOnErr(), parent " +
 		)
 	expect(rec).toStrictEqual(exp)
 	expect(childrenFinished).toBe(0)
+})
+
+it("onEnds are executed after children settle", async () => {
+
+	let thingsDone: string[] = []
+
+	function* child1() {
+		yield* sleep(2)
+		thingsDone.push("child1")
+	}
+
+	function* child2() {
+		yield* sleep(3)
+		thingsDone.push("child2")
+	}
+
+	function* main() {
+		onEnd(() => {
+			thingsDone.push("main onEnd")
+		})
+		go(child1)
+		go(child2)
+		yield* sleep(1)
+	}
+
+	await go(main)
+	expect(thingsDone).toStrictEqual(["child1", "child2", "main onEnd"])
 })

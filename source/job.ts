@@ -73,14 +73,13 @@ export const PARKED_SLEEP = 1 << 4  // 16
 export const PARKED_CH_PUT = 1 << 5  // 32
 export const PARKED_CH_REC = 1 << 6  // 64
 export const WAITING_CHILDREN = 1 << 7  // 128
-const CHILDREN_CANCELLED = 1 << 8  // 256
-const WAITING_ONENDS = 1 << 9  // 512
-export const CANCELLED = 1 << 10  // 1024
-export const SETTLED = 1 << 11  // 2048
-const CANCOK = 1 << 12  // 4096
-export const ERR_IN_GENFN = 1 << 13  // 8192
-export const ERR_IN_ONEND = 1 << 14  // 16384
-const CANCEL_SIBLINGS_ON_ERR = 1 << 15  // 32768
+const WAITING_ONENDS = 1 << 8  // 256
+export const CANCELLED = 1 << 9  // 512
+export const SETTLED = 1 << 10  // 1024
+const CANCOK = 1 << 11  // 2048
+export const ERR_IN_GENFN = 1 << 12  // 4096
+export const ERR_IN_ONEND = 1 << 13  // 8192
+const CANCEL_SIBLINGS_ON_ERR = 1 << 14  // 16384
 // todo: implement this when [Symbol.dispose] is implemented
 // const JOB_IN_POOL = 1 << 16  // 65536
 
@@ -106,8 +105,8 @@ const CANCEL_NOOP = SETTLED | WAITING_ONENDS
  * 	A combined LL of the target the job is blocked by at yield* (tg) and its
  *  	children (chd), as "targets".
  * 	Since a job can only be blocked at yield* by one object at a time, we
- * 	store it as the head of the LL and store its respective PARKED_XYZ flag.
- * 	The next links are to child jobs.
+ * 	store it as the head of the LL and store its respective PARKED_THING flag.
+ * 	The next links are of child jobs.
  *  _pr:
  * 	Link to parent job.
  *  _oe:
@@ -208,11 +207,6 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 
 		if (this._tg === VOID_LINK) {
 			execOnEndsRecur(this)
-			return
-		}
-
-		// Children already cancelled and job is linked/waiting for them.
-		if (_st & CHILDREN_CANCELLED) {
 			return
 		}
 
@@ -341,17 +335,18 @@ function processCancel(job: _Job, opName: string, callerJobNextSt: _Job["_st"]) 
 
 	job._cancel()
 
-	const { _st, _v: val } = job
+	const { _st } = job
 
-	if (_st & SETTLED) {  // job settled synchronously just after cancel called
+	// Job settled synchronously just after cancel called.
+	if (_st & SETTLED) {
 		if (callerJobNextSt & PARKED_CANCEL_ERR) {
 			iterRes.done = true
-			iterRes.value = _st & ERR_IN_ONEND ? val : undefined
+			iterRes.value = _st & ERR_IN_ONEND ? job.val : undefined
 			return
 		}
 		if (_st & ERR_IN_ONEND) {
 			iterRes.done = false
-			genFnFailed(callerJob, _Er(callerJob._nm, val))
+			genFnFailed(callerJob, _Er(callerJob._nm, job.val))
 			return
 		}
 
@@ -382,7 +377,7 @@ function jobIterator<T>(job: _Job) {
 
 	if (thisSt & SETTLED) {
 
-		// maybe unify this logic shared with Job._onTgJobDone()
+		// todo: maybe unify this logic shared with Job._onTgJobDone()
 		const shouldCallerFail =
 			(callerSt & PARKED_JOB) && (thisSt & ANY_ERR_OR_CANCOK)
 
@@ -607,7 +602,8 @@ function onChildDone(job: _Job, child: _Job) {
 	if (child._st & HAD_ERR) {
 		addErrorToJobVal(job, child._v as Err, ERR_IN_GENFN)
 		const { _st } = job
-		if ((_st & CANCEL_SIBLINGS_ON_ERR) && !(_st & CHILDREN_CANCELLED)) {
+		// If a previous child also failed, don't cancel trigger cancel again.
+		if ((_st & CANCEL_SIBLINGS_ON_ERR) && !(_st & CANCELLED)) {
 			loop_tg(job, false, true)
 		}
 	}
@@ -619,10 +615,6 @@ function onChildDone(job: _Job, child: _Job) {
 }
 
 export function loop_tg(thisJob: _Job, observe: boolean, cancel: boolean) {
-	if (cancel) {
-		thisJob._st |= CHILDREN_CANCELLED
-	}
-
 	let childLink = thisJob._tg
 	// Can start loop right away bc caller guards against job state.
 	do {
@@ -806,7 +798,7 @@ export function go<Args extends unknown[], GenFnRet>(
 	return job as Job<_NotErrs<GenFnRet>, _Errs<GenFnRet> | RibuErrs>
 }
 
-export function me(): _Job {
+export function me() {
 	return sys.runningJob
 }
 
