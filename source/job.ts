@@ -138,6 +138,7 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 			addTgLink(parent, link)
 		}
 	}
+
 	_onTgDone(tgJob: _Job) {
 		const { _st } = this
 
@@ -146,8 +147,8 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 			return
 		}
 
-		// Parked at yield* tgJob or yield* tgJob.handle/cancel/cancelErr.
-		const { _st: tgSt } = tgJob
+		// Parked at yield*
+		const tgSt = tgJob._st
 
 		const shouldThisJobFail =
 			(_st & PARKED_JOB) && (tgSt & ANY_ERR_OR_CANCOK) ||
@@ -181,7 +182,7 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 	}
 
 	// Is _cancel() caller responsibility to not subscribe if job is done,
-	// otherwise, observer job will be blocked forever.
+	// otherwise, observer will never settle.
 	_cancel() {
 		const { _st } = this
 		if (_st & CANCEL_NOOP) {
@@ -323,7 +324,6 @@ export function processHandle<T>(job: _Job) {
 	return JOB_ITERABLE as SysIterable<T>
 }
 
-// todo: move this to _cancel()
 function processCancel(job: _Job, opName: string, callerJobNextSt: _Job["_st"]) {
 	if (job._st & SETTLED) {
 		iterRes.done = true
@@ -337,7 +337,7 @@ function processCancel(job: _Job, opName: string, callerJobNextSt: _Job["_st"]) 
 
 	const { _st } = job
 
-	// Job settled synchronously just after cancel called.
+	// Check if Job settled synchronously just after cancel called.
 	if (_st & SETTLED) {
 		if (callerJobNextSt & PARKED_CANCEL_ERR) {
 			iterRes.done = true

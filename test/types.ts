@@ -199,7 +199,7 @@ export const tests = {
 		true satisfies Equal<Internal, never>
 	},
 
-	/* *************** cancel(...jobs) *************************************** */
+	/* *************** cancel) *********************************************** */
 
 	*["yield* cancel(...jobs)"]() {
 		type Exp = void
@@ -284,7 +284,10 @@ export const tests = {
 	*["yield* allOrErr().maxWait(ms)"]() {
 		type Exp = NotErrs
 		const args = [() => go(jobFn1), () => go(jobFn2)]
-		const _rec = yield* allOrErr(args).maxWait(1)
+		const jobCbom = allOrErr(args).maxWait(1)
+		const _rec = yield* jobCbom
+		type Internal = InternalMethods<typeof jobCbom>
+		true satisfies Equal<Internal, never>
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
@@ -295,6 +298,20 @@ export const tests = {
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
+	*["yield* allOrErr().cancel()"]() {
+		type Exp = void
+		const args = [() => go(jobFn1), () => go(jobFn2)]
+		const _rec = yield* allOrErr(args).cancel()
+		true satisfies Equal<typeof _rec, Exp>
+	},
+
+	*["yield* allOrErr().cancelErr()"]() {
+		type Exp = void | Err
+		const args = [() => go(jobFn1), () => go(jobFn2)]
+		const _rec = yield* allOrErr(args).cancelHandle()
+		true satisfies Equal<typeof _rec, Exp>
+	},
+
 	[`allOrErr() doesn't expose internal methods`]() {
 		const args = [() => go(jobFn1), () => go(jobFn2)]
 		const _job = allOrErr(args)
@@ -302,12 +319,7 @@ export const tests = {
 		true satisfies Equal<Internal, never>
 	},
 
-	// todo: not sure if can be cancelled
-	// *["yield* allOrErr().cancel()"]() {
-	// 	type Exp = void
-	// 	const rec = yield* allOrErr2(go(jobFn), go(jobFn2)).cancel()
-	// 	check_Eq<Exp>()(rec)
-	// },
+
 
 	// *["yield* allOrErr().cancelErr()"]() {
 	// },

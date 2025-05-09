@@ -142,6 +142,32 @@ describe("allOrErr()", () => {
 		const rec = await go(main)
 		expect(rec).toStrictEqual([["job1", "job2"], ["job1", "job2"]])
 	})
+
+	it("can be cancelled", async () => {
+		let ctx = { count: 0 }
+
+		function* job1() {
+			yield* sleep(5)
+			ctx.count++
+			return "job1"
+		}
+
+		function* job2() {
+			yield* sleep(5)
+			ctx.count++
+			return "job2"
+		}
+
+		function* main() {
+			const jobs = [() => go(job1), () => go(job2)]
+			const res = yield* allOrErr(jobs).cancel()
+			return res
+		}
+
+		const rec = await go(main)
+		expect(rec).toBe(undefined)
+		expect(ctx.count).toBe(0)
+	})
 })
 
 

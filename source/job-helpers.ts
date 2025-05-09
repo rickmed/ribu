@@ -4,13 +4,14 @@ import {
 	type Job,
 	linkJobs,
 	markSettledAndNotifyObs,
-	PARKED_CH_REC, SETTLED,
+	SETTLED,
+	CANCELLED,
+	PARKED_CH_REC,
 	unlinkFromAllJobs,
 	OkJob,
 	ErrJob,
 	DoneJob,
-	processHandle,
-	WAITING_CHILDREN,
+	loop_tg,
 	ERR_IN_ONEND,
 	addErrorToJobVal,
 	addTgLink,
@@ -18,51 +19,13 @@ import {
 	removeTgLink,
 } from "./job.js"
 import { _E, type Err } from "./errors.js"
-import { SysIterable, VOID_LINK, VOID_OBJ } from "./system.js"
+import { VOID_LINK, VOID_OBJ } from "./system.js"
 
 
-/* cancelJobish()._cancel() problem:
-	* only called by parent (there's no .cancel(), only _cancel())
+/*
 
-* ISSUE: it's sync so it doesn't notify parent (parent never settles)
-	* in fact, most cancellations are sync, but work bc either:
-		* yield* cancel() returns immediately in sync.
-		* link already there waiting children.
-	* exploring code...
-
-OPTIONS:
-	** Return something if it settled sync?
-	(then think if maybe subscription param)
-
-NEEEXXTTT step is: ok so all tests passses,
-	Should i optimize _cancel()
-
-
-
-._cancel() called from:
-	* .cancel/cancelHandle
-	* loop_tg:
-		* cancelling all children (eg: genFnErr)
-		* child failed while waiting for them (don't subscribe)
-	* jobComb when callback signals HALT.
-	* cancelAll via jobPlus
-
-
-Job._cancel() does:
-	1) Return if already cancelled
-	2) set |= CANCELLED
-	3) unsub from yield* job/ch/sleep...
-	4) run onEnds
-
-	5) trigger cancel and link if necessary
-
-jobCombinator:
-	* Can be cancelled by user.
-	* Doesn't need 3, 4, 5, if checks.
-
-
-
-
+=> type cancelAll
+	- thinking about cancel().cancel()
 
 
 */
@@ -89,7 +52,7 @@ onEach(fn) — observe every job as it completes
 
 | Category        | Method / Property           | Description                                                                 |
 |----------------|-----------------------------|-----------------------------------------------------------------------------|
-| 🧠 Tracking     | `pool.settledCount`         | Number of jobs that have finished                                           |
+| 🧠 Tracking    | `pool.settledCount`         | Number of jobs that have finished                                           |
 |                | `pool.failedCount`          | Number of jobs that failed                                                  |
 |                | `pool.okCount`              | Number of jobs that succeeded                                               |
 |                | `pool.remainingJobs()`      | Returns array of jobs that haven't settled yet                              |
@@ -163,17 +126,22 @@ Pool Props Needed:
  *  is empty.
  */
 
+interface JobComb<Ok, E, Ctx = void> extends Job<Ok, E, Ctx> {
+  maxWait: (ms: number) => JobComb<Ok, E | TimeoutErr, Ctx>
+}
+
 export const EMPTY_ARGS = "EmptyArgs"
 export type EmptyArgsErr = Err<typeof EMPTY_ARGS>
 export type NotErrs<Ret> = Exclude<Ret, Error>
-
-// Reuse Job flags since they won't be used in JobPlus instances.
-const HALT = PARKED_CH_REC
-const FAIL = HALT | ERR_IN_GENFN
-const WAITING_CANCELLED_JOBS = WAITING_CHILDREN
-
 export const TIME_OUT = "Timeout"
 export type TimeoutErr = Err<typeof TIME_OUT>
+
+const HALT = PARKED_CH_REC  // Can reuse Job flags since they won't be used in JobPlus instances.
+const FAIL = HALT | ERR_IN_GENFN
+const SETTLED_OR_CANCELLED = SETTLED | CANCELLED
+const SETTLED_OR_ERR_IN_GENFN = SETTLED | ERR_IN_GENFN
+
+type JobOrJobThunkArr = Job[] | (() => Job)[]
 
 export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 	extends _Job<Ok, E, Ctx> {
@@ -182,40 +150,35 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 		super("")
 	}
 
-	get handle(): SysIterable<Ok | E> {
-		return processHandle(this)
-	}
-
 	maxWait(ms: number) {
 		this._tm = setTimeout(maxWaitFired, ms, this)
-		return this as _Job<Ok, Ok | E | TimeoutErr, Ctx>
+		return this as JobComb<Ok, Ok | E | TimeoutErr, Ctx>
 	}
 
-	_go(jobs: Job[], cancel = false) {
+	_go(jobs: JobOrJobThunkArr, cancel = false) {
 		if (jobs.length === 0) {
-			this._st |= (SETTLED | ERR_IN_GENFN)
+			this._st |= SETTLED_OR_ERR_IN_GENFN
 			this._v = _E(EMPTY_ARGS, this._nm) as Ok | E
 		}
 		else {
 			this._init()
 			observeJobs(this, jobs, cancel)
-			// here: ??
 		}
 		return this
 	}
 
 	_onTgDone(tgJob: Job): void {
-		if (this._st & WAITING_CANCELLED_JOBS) {
+		if (this._st & CANCELLED) {
 			if ((tgJob as _Job)._st & ERR_IN_ONEND) {
 				addErrorToJobVal(this, (tgJob as _Job)._v as Err, ERR_IN_GENFN)
 			}
 		}
 		else {
 			if ((tgJob as _Job)._doneErr) {
-				this._onFailedTgDoneExec(tgJob)
+				this._onErrTgDone(tgJob)
 			}
 			else {
-				this._onTgDoneExec(tgJob)
+				this._onOkTgDone(tgJob)
 			}
 		}
 
@@ -226,7 +189,7 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 
 		if (this._st & HALT) {
 			// Trigger cancel on rest of passed-in jobs
-			this._st |= WAITING_CANCELLED_JOBS
+			this._st |= CANCELLED
 			let jobLink = this._tg
 			do {
 				let job = jobLink.b as _Job
@@ -246,14 +209,18 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 		markSettledAndNotifyObs(this)
 	}
 
-	_settleCancel() {
-
+	_cancel() {
+		if (this._st & SETTLED_OR_CANCELLED) {
+			return
+		}
+		this._st |= CANCELLED
+		loop_tg(this, false, true)
 	}
 
 	// To be overridden by subclasses
 	_init(): void {}
-	_onTgDoneExec(_: Job) {}
-	_onFailedTgDoneExec(_: Job) {}
+	_onOkTgDone(_: Job) {}
+	_onErrTgDone(_: Job) {}
 }
 
 
@@ -268,12 +235,13 @@ function maxWaitFired(thisJob: JobPlus) {
 	markSettledAndNotifyObs(thisJob)
 }
 
-function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
+function observeJobs(obJob: JobPlus, jobs: JobOrJobThunkArr, cancel = false) {
 	let unsettledTargets = false
 	const len = jobs.length
 	for (let i = 0; i < len; i++) {
 
-		const job = jobs[i]!
+		const jobOrThunk = jobs[i]!
+		const job = typeof jobOrThunk === "function" ? jobOrThunk() : jobOrThunk
 		const res = checkIfTgSettledSync(obJob, job as _Job, unsettledTargets)
 		if (res === 3) {
 			return
@@ -305,7 +273,7 @@ function observeJobs(obJob: JobPlus, jobs: Job[], cancel = false) {
 // 3: thisJob halted
 function checkIfTgSettledSync(thisJob: JobPlus, tgJob: _Job, unsettledTargets: boolean): number {
 	if (tgJob._st & SETTLED) {
-		thisJob._onTgDoneExec(tgJob)
+		thisJob._onOkTgDone(tgJob)
 		if (thisJob._st & HALT) {
 			if (unsettledTargets) {
 				unlinkFromAllJobs(thisJob)
@@ -318,12 +286,12 @@ function checkIfTgSettledSync(thisJob: JobPlus, tgJob: _Job, unsettledTargets: b
 	return 1
 }
 
-type JobComb<T> = RemoveUnderscoreProps<T>
+type JobThunkArray<Jobs> = { [K in keyof Jobs]: () => Jobs[K] }
 
 function makeJobCombinator<Jobs extends Job[], Ok, E>(
 	name: string,
-	_onTgJobDone?: (this: JobPlus, tgJob: Jobs[number]) => Ok,
-	_onFailedTgJobDone?: (this: JobPlus, tgJob: Jobs[number]) => E,
+	_onOkTgDone?: (this: JobPlus, tgJob: Jobs[number]) => Ok,
+	_onErrTgDoneExec?: (this: JobPlus, tgJob: Jobs[number]) => E,
 	_init?: (this: JobPlus) => void,
 	cancel = false
 ) {
@@ -332,11 +300,11 @@ function makeJobCombinator<Jobs extends Job[], Ok, E>(
 		_nm = name
 	}
 
-	if (_onTgJobDone) {
-		JobCombinator.prototype._onTgDoneExec = _onTgJobDone
+	if (_onOkTgDone) {
+		JobCombinator.prototype._onOkTgDone = _onOkTgDone
 	}
-	if (_onFailedTgJobDone) {
-		JobCombinator.prototype._onFailedTgDoneExec = _onFailedTgJobDone
+	if (_onErrTgDoneExec) {
+		JobCombinator.prototype._onErrTgDone = _onErrTgDoneExec
 	}
 	if (_init) {
 		JobCombinator.prototype._init = _init
@@ -344,11 +312,9 @@ function makeJobCombinator<Jobs extends Job[], Ok, E>(
 
 	return factory
 
-	function factory(fns: { [K in keyof Jobs]: () => Jobs[K] }) {
+	function factory(fns: JobThunkArray<Jobs>) {
 		const instance = new JobCombinator()
-		const jobs = fns.map(fn => fn())
-		const x = instance._go(jobs, cancel)
-		return x as JobComb<typeof x>
+		return instance._go(fns, cancel) as JobComb<Ok, E | Err<typeof EMPTY_ARGS>>
 	}
 }
 
@@ -367,26 +333,26 @@ type AllOkRet<Jobs extends Job[]> = Jobs[number] extends Job<infer A, unknown> ?
  */
 export const allOrErr = makeJobCombinator(
 	"allOrErr",
-	allOrErrOnTgJobDone,
-	allOrErrOnFailedTgJobDone,
-	allOrErrInit
+	allOrErr_onOkTgJobDone,
+	allOrErr_onErrTgJobDone,
+	allOrErr_init
 )
 
 const JOB_HAD_ERR = "JobHadErr"
 export type JobHadErr = Err<typeof JOB_HAD_ERR>
 
-function allOrErrOnTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[number]) {
+function allOrErr_onOkTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[number]) {
 	let results = this._v as AllOkRet<Jobs>[]
 	results.push((tgJob as _Job)._v as AllOkRet<Jobs>)
 	return results
 }
 
-function allOrErrOnFailedTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[number]) {
+function allOrErr_onErrTgJobDone<Jobs extends Job[]>(this: JobPlus, tgJob: Jobs[number]) {
 	this._st |= FAIL
 	return this._v = _E(JOB_HAD_ERR, this._nm, (tgJob as _Job)._v as Err)
 }
 
-function allOrErrInit(this: JobPlus) {
+function allOrErr_init(this: JobPlus) {
 	this._v = []
 }
 
@@ -598,7 +564,3 @@ export function steal(job: _Job, newParent: _Job) {
 	removeTgLink(job, _pr)
 	addTgLink(newParent, _pr as TgLink)
 }
-
-export type RemoveUnderscoreProps<T> = Omit<T, {
-	[K in keyof T]: K extends `_${string}` ? K : never
-}[keyof T]>
