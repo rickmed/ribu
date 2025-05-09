@@ -25,8 +25,7 @@ import { VOID_LINK, VOID_OBJ } from "./system.js"
 /*
 
 => type cancelAll
-	- thinking about cancel().cancel()
-
+	=> implement _cancel() which just unsub from jobs.
 
 */
 
@@ -100,7 +99,7 @@ pool.isIdle()	Returns true if all jobs are settled (i.e. inFlight === 0)
 WHAT GENERAL CLASS TO USE
 need a PoolBase that I give an array of jobs and let me know when
   a job settled.
-	- cancel? cancelErr? unSub? maxWait?
+	- cancel? cancelErr? unSub?
 
 Job Class is used currently, but these props are not being used:
 	_gn: generator
@@ -126,15 +125,9 @@ Pool Props Needed:
  *  is empty.
  */
 
-interface JobComb<Ok, E, Ctx = void> extends Job<Ok, E, Ctx> {
-  maxWait: (ms: number) => JobComb<Ok, E | TimeoutErr, Ctx>
-}
-
 export const EMPTY_ARGS = "EmptyArgs"
 export type EmptyArgsErr = Err<typeof EMPTY_ARGS>
 export type NotErrs<Ret> = Exclude<Ret, Error>
-export const TIME_OUT = "Timeout"
-export type TimeoutErr = Err<typeof TIME_OUT>
 
 const HALT = PARKED_CH_REC  // Can reuse Job flags since they won't be used in JobPlus instances.
 const FAIL = HALT | ERR_IN_GENFN
@@ -148,11 +141,6 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 
 	constructor() {
 		super("")
-	}
-
-	maxWait(ms: number) {
-		this._tm = setTimeout(maxWaitFired, ms, this)
-		return this as JobComb<Ok, Ok | E | TimeoutErr, Ctx>
 	}
 
 	_go(jobs: JobOrJobThunkArr, cancel = false) {
@@ -221,18 +209,6 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
 	_init(): void {}
 	_onOkTgDone(_: Job) {}
 	_onErrTgDone(_: Job) {}
-}
-
-
-function maxWaitFired(thisJob: JobPlus) {
-	thisJob._tm = VOID_OBJ
-	// Reset ._st and .val in case some passed-in jobs already settled with Err.
-	thisJob._st = 0
-	thisJob._v = _E(TIME_OUT, thisJob._nm)
-	// Make caller fail if it didn't call .handle.
-	thisJob._st |= ERR_IN_GENFN
-	unlinkFromAllJobs(thisJob)
-	markSettledAndNotifyObs(thisJob)
 }
 
 function observeJobs(obJob: JobPlus, jobs: JobOrJobThunkArr, cancel = false) {
@@ -314,7 +290,7 @@ function makeJobCombinator<Jobs extends Job[], Ok, E>(
 
 	function factory(fns: JobThunkArray<Jobs>) {
 		const instance = new JobCombinator()
-		return instance._go(fns, cancel) as JobComb<Ok, E | Err<typeof EMPTY_ARGS>>
+		return instance._go(fns, cancel) as Job<Ok, E | Err<typeof EMPTY_ARGS>>
 	}
 }
 

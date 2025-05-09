@@ -1,7 +1,7 @@
 import { go, sleep, isErr, errIs, Err } from "ribu"
 import { type ErCancOk, ErrX, errIsNot } from "../source/errors.js"
 import { cancel } from "../source/cancelAllJobs.js"
-import { allOrErr, EmptyArgsErr, JobHadErr, TimeoutErr, groupByState } from "../source/job-helpers.js"
+import { allOrErr, EmptyArgsErr, JobHadErr, groupByState } from "../source/job-helpers.js"
 import {type OkJob, type ErrJob, DoneJob, type ByStateJobBase, Job } from "../source/job.js"
 
 const payload = { w: false }
@@ -208,24 +208,10 @@ export const tests = {
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
-	*["yield* cancel(...jobs).maxWait(ms)"]() {
-		type Exp = void
-		const jobs = [go(jobFn1), go(jobFn2)]
-		const _rec = yield* cancel(jobs).maxWait(1)
-		true satisfies Equal<typeof _rec, Exp>
-	},
-
 	*["yield* cancel(...jobs).handle"]() {
 		type Exp = void | EmptyArgsErr | Err
 		const jobs = [go(jobFn1), go(jobFn2)]
 		const _rec = yield* cancel(jobs).handle
-		true satisfies Equal<typeof _rec, Exp>
-	},
-
-	*["yield* cancel(...jobs).maxWait(ms).handle"]() {
-		type Exp = void | EmptyArgsErr | Err | TimeoutErr
-		const jobs = [go(jobFn1), go(jobFn2)]
-		const _rec = yield* cancel(jobs).maxWait(1).handle
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
@@ -278,23 +264,6 @@ export const tests = {
 		type Exp = NotErrs | JobHadErr | EmptyArgsErr
 		const args = [() => go(jobFn1), () => go(jobFn2)]
 		const _rec = yield* allOrErr(args).handle
-		true satisfies Equal<typeof _rec, Exp>
-	},
-
-	*["yield* allOrErr().maxWait(ms)"]() {
-		type Exp = NotErrs
-		const args = [() => go(jobFn1), () => go(jobFn2)]
-		const jobCbom = allOrErr(args).maxWait(1)
-		const _rec = yield* jobCbom
-		type Internal = InternalMethods<typeof jobCbom>
-		true satisfies Equal<Internal, never>
-		true satisfies Equal<typeof _rec, Exp>
-	},
-
-	*["yield* allOrErr().maxWait(ms).handle"]() {
-		type Exp = NotErrs | JobHadErr | EmptyArgsErr | TimeoutErr
-		const args = [() => go(jobFn1), () => go(jobFn2)]
-		const _rec = yield* allOrErr(args).maxWait(1).handle
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
