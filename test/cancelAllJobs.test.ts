@@ -115,7 +115,7 @@ describe("yield* cancel(...jobs).handle", () => {
 			const job1 = go(incCountOnDoneJob, ctx)
 			const job2 = go(child2, ctx)
 			yield* sleep(1)
-			const res = yield* cancel([job1, job2]).handle
+			const res = yield* cancel([job1, job2]).handleErr
 			return res
 		}
 
@@ -138,7 +138,7 @@ describe("yield* cancel(...jobs).handle", () => {
 			const job1 = go(incCountOnDoneJob, ctx)
 			const job2 = go(badChild, ctx)
 			yield* sleep(1)
-			const res = yield* cancel([job1, job2]).handle
+			const res = yield* cancel([job1, job2]).handleErr
 			// Recovering: if res !== undefined, cancelling failed.
 			if (res) {
 				return "recovered"
@@ -236,8 +236,7 @@ describe("yield* cancel(...jobs).handle", () => {
 				AsyncBad, AsyncOk,
 			]
 			const jobs = children.map(go)
-			yield* sleep(1)
-			const res = yield* cancel(jobs).handle
+			const res = yield* cancel(jobs).handleErr
 			return res
 		}
 
@@ -288,7 +287,7 @@ describe("yield* cancel(...jobs).handle", () => {
 		function* main() {
 			chldJob = go(child1)
 			yield* sleep(2)
-			const cancelThing = cancel([chldJob]).handle
+			const cancelThing = cancel([chldJob]).handleErr
 			yield* cancelThing
 			return "ok"
 		}
@@ -298,4 +297,52 @@ describe("yield* cancel(...jobs).handle", () => {
 		const exp = _E("Bad", "child1")
 		expect((chldJob as _Job)._v).toStrictEqual(exp)
 	})
+})
+
+// .cancel() on cancelJob just unsubscribes from the cancellation result
+// of the passed-in jobs, ie, it "moves on".
+it(".cancel() can be called on cancel job", async () => {
+
+	function* child() {
+		onEnd(function* () {
+			yield* sleep(2)
+		})
+		yield* sleep(5)
+		return "never reached"
+	}
+
+	function* main() {
+		const chld = go(child)
+		yield* sleep(1)
+		const job = cancel([chld])
+		const res = yield* job.cancel()
+		return res
+	}
+
+	const rec = await go(main).promHandle
+	expect(rec).toBe(undefined)
+})
+
+// .cancelHandle() behaves like .cancel(), ie, no error is possible.
+// So this method would never make sense to be used.
+it(".cancelHandle() could be called on cancel job", async () => {
+
+	function* child() {
+		onEnd(function* () {
+			yield* sleep(2)
+		})
+		yield* sleep(5)
+		return "never reached"
+	}
+
+	function* main() {
+		const chld = go(child)
+		yield* sleep(1)
+		const job = cancel([chld])
+		const res = yield* job.cancelHandleErr()
+		return res
+	}
+
+	const rec = await go(main).promHandle
+	expect(rec).toBe(undefined)
 })

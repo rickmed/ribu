@@ -50,7 +50,7 @@ export type RibuGen<Ret = unknown> =
 type RibuGenFn<Ret = unknown, Args extends unknown[] = unknown[]> =
 	(...args: Args) => RibuGen<Ret>
 
-type JobsLink = Link<_Job, _Job>
+export type JobsLink = Link<_Job, _Job>
 type JobChanLink = Link<_Job, Chan>
 type WaitingChdLink = JobsLink
 export type TgLink = JobChanLink | WaitingChdLink | PutterLink | ReceiverLink
@@ -167,8 +167,10 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 		return jobIterator<Ok>(this)
 	}
 
-	get handle(): SysIterable<Ok | E> {
-		return processHandle<Ok | E>(this)
+	get handleErr(): SysIterable<Ok | E> {
+		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, ".handle")
+		self = this
+		return JOB_ITERABLE as SysIterable<Ok | E>
 	}
 
 	cancel() {
@@ -176,7 +178,7 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 		return SYS_ITERABLE as SysIterable<void>
 	}
 
-	cancelHandle() {
+	cancelHandleErr() {
 		processCancel(this, ".cancelHandle()", PARKED_CANCEL_ERR)
 		return SYS_ITERABLE as SysIterable<void | Err>
 	}
@@ -318,26 +320,20 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 	}
 }
 
-export function processHandle<T>(job: _Job) {
-	self = job
-	ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, ".handle")
-	return JOB_ITERABLE as SysIterable<T>
-}
-
 function processCancel(job: _Job, opName: string, callerJobNextSt: _Job["_st"]) {
+	const callerJob = ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt, opName)
+
 	if (job._st & SETTLED) {
 		iterRes.done = true
 		iterRes.value = undefined
 		return
 	}
 
-	const callerJob = ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt, opName)
-
 	job._cancel()
 
 	const { _st } = job
 
-	// Check if Job settled synchronously just after cancel called.
+	// Check if Job settled synchronously just after. _cancel() called.
 	if (_st & SETTLED) {
 		if (callerJobNextSt & PARKED_CANCEL_ERR) {
 			iterRes.done = true
@@ -376,7 +372,6 @@ function jobIterator<T>(job: _Job) {
 	const thisSt = job._st
 
 	if (thisSt & SETTLED) {
-
 		// todo: maybe unify this logic shared with Job._onTgJobDone()
 		const shouldCallerFail =
 			(callerSt & PARKED_JOB) && (thisSt & ANY_ERR_OR_CANCOK)
@@ -766,11 +761,11 @@ export function next(): _Job | false {
 export interface JobBase<Ok = unknown, E = unknown, Ctx = unknown> {
 
 	[Symbol.iterator]: () => SysIterator<Ok>
-	readonly handle: SysIterable<Ok | E>
+	readonly handleErr: SysIterable<Ok | E>
 	setCtx: <NewCtx>(ctx: NewCtx) => Job<Ok, E, NewCtx>
 	readonly ctx: Ctx
 	cancel: () => SysIterable<void>
-	cancelHandle: () => SysIterable<void | Err>
+	cancelHandleErr: () => SysIterable<void | Err>
 	onEnd: (fn: OnEnd) => void
 	then: (res: (val: Ok) => void, rej: (err: E) => void) => void
 	readonly promHandle: Promise<Ok | E>

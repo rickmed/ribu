@@ -22,89 +22,45 @@ import { _E, type Err } from "./errors.js"
 import { VOID_LINK, VOID_OBJ } from "./system.js"
 
 
-/*
+/* No yield* issue:
+so check can be done at any ribu system part
+operator sets PARKED and PENDING_YIELD = true
+then, .next() sets PENDING_YIELD = false
 
-=> type cancelAll
-	=> implement _cancel() which just unsub from jobs.
+if PENDING_YIELD = true, throw.
+
+
+ok, which job forgot?
+sys.runningJob
+which op?
+branch over job._st
+- pleace function in all ops and resumeJob()
+
+do few tests:
+in child job, when op is last in job, etc.
+
 
 */
 
-// todo: consider passing a timeout parameter
-
-// todo:
-// make a (slower) wait-group like that implements interator so that
-// for (const job of waitGroup) works.
-
 /*
-Optional Add-ons Later
-You could extend Pool to support:
+Pool (select) supports
+- .cancel()
+	on yield* pool, parent should call headTg.unsub()
+- .size (inFlight)
+- [Symbol.dispose()], unsub from all jobs (for "using")
 
-cancelRemaining() — for early exits
+IMPLEMENTATION: use Job class.
 
-timeout(ms) — to fail the pool after a deadline
+NEEDED:
+_st:
+_v: could reuse for .count
+_nm: could use it.
+_onTgDone() -> overwrite
+	pool job calls when done
+	needs to override any ways.
+_tg: keep jobs here.
+_ob: all which call yield*
 
-progress tracking (settled / total ratio)
-
-onEach(fn) — observe every job as it completes
-
-
-
-| Category        | Method / Property           | Description                                                                 |
-|----------------|-----------------------------|-----------------------------------------------------------------------------|
-| 🧠 Tracking    | `pool.settledCount`         | Number of jobs that have finished                                           |
-|                | `pool.failedCount`          | Number of jobs that failed                                                  |
-|                | `pool.okCount`              | Number of jobs that succeeded                                               |
-|                | `pool.remainingJobs()`      | Returns array of jobs that haven't settled yet                              |
-|                | `pool.progress()`           | Returns object: `{ total, settled, failed, ok }`                            |
-|                | `pool.status()`             | Returns summary string: "5/10 settled (3 ok, 2 failed)"                     |
-|----------------|-----------------------------|-----------------------------------------------------------------------------|
-| 🔁 Control      | `pool.cancelRemaining()`    | Cancels all in-flight jobs                                                  |
-|                | `pool.timeout(ms)`          | Fails the pool if not complete within given time                            |
-|                | `pool.awaitAtLeast(n)`      | Yields once *n* jobs have settled                                           |
-|                | `pool.awaitNOk(n)`          | Yields once *n* jobs have succeeded                                         |
-|----------------|-----------------------------|-----------------------------------------------------------------------------|
-| 👁️ Observability | `pool.onEach(fn)`           | Calls `fn(job)` every time a job settles                                    |
-|                | `pool.onEnd(fn)`            | Calls `fn()` when all jobs are finished                                     |
-|----------------|-----------------------------|-----------------------------------------------------------------------------|
-| 🧩 Grouping     | `pool.groupBy(fn)`          | Groups jobs by key derived from `fn(job)`                                   |
-|                | `pool.partition()`          | Returns `[okJobs, failedJobs]` (original jobs, just filtered)               |
-|----------------|-----------------------------|-----------------------------------------------------------------------------|
-| 🧪 Utilities    | `pool.retryFailed(n)`       | Retries failed jobs up to `n` times                                         |
-|                | `pool.cleanFailed()`        | Removes failed jobs from the pool                                           |
-|                | `pool.shuffle()`            | Randomizes job order (for stress testing)                                   |
-|                | `pool.testMode()`           | Makes job behavior predictable for testing                                  |
-
-Method / Property	Description
-pool.getFirstOk()	Returns the first job that succeeded (or null)
-pool.getFirstFailure()	Returns the first job that failed
-pool.failedJobs()	Shortcut for jobs.filter(j => j.failed)
-pool.okJobs()	Shortcut for jobs.filter(j => j.ok)
-pool.avgDuration()	Average duration of completed jobs (if jobs track .startTime / .endTime)
-pool.longestJob()	Returns the job with the highest duration
-pool.lastSettled()	Returns the most recently completed job (live or after awaitAll)
-
-Method	Description
-pool.pause() / resume()	Temporarily stop the pool from starting or reacting to jobs
-pool.throttle(n)	Run only n jobs concurrently (like a batch limiter)
-pool.awaitFirstOkThenCancel()	Resolves on first success, cancels rest
-pool.awaitMajority()	Resolves once >50% jobs are settled
-pool.until(conditionFn)	Continues yielding until custom condition returns true
-pool.awaitOkRatio(ratio)	Resolves when okCount / total >= ratio
-
-pool.isIdle()	Returns true if all jobs are settled (i.e. inFlight === 0)
-*/
-
-/*
-
-WHAT GENERAL CLASS TO USE
-need a PoolBase that I give an array of jobs and let me know when
-  a job settled.
-	- cancel? cancelErr? unSub?
-
-Job Class is used currently, but these props are not being used:
-	_gn: generator
-	_pr: parent
-	_oe: onEnds
 
 Pool Props Needed:
 	fnArrJobIsDone:
@@ -113,9 +69,8 @@ Pool Props Needed:
 		Needed if caller is cancelled, can remove itself from Pool._ob
 	_tg: so that observing jobs can remove themselves from ob._tg when done
 
-*/
 
-// todo: provide map, filter, reduce helpers.
+*/
 
 
 /** *****************  Base JobPlus Class  ********************************** */
@@ -131,13 +86,12 @@ export type NotErrs<Ret> = Exclude<Ret, Error>
 
 const HALT = PARKED_CH_REC  // Can reuse Job flags since they won't be used in JobPlus instances.
 const FAIL = HALT | ERR_IN_GENFN
-const SETTLED_OR_CANCELLED = SETTLED | CANCELLED
+export const SETTLED_OR_CANCELLED = SETTLED | CANCELLED
 const SETTLED_OR_ERR_IN_GENFN = SETTLED | ERR_IN_GENFN
 
 type JobOrJobThunkArr = Job[] | (() => Job)[]
 
-export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown>
-	extends _Job<Ok, E, Ctx> {
+export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown> extends _Job<Ok, E, Ctx> {
 
 	constructor() {
 		super("")

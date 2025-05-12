@@ -26,7 +26,7 @@ describe("job.cancel()", () => {
 	/**
 	 * NOTE:
 	 * Users should NOT use plain `yield* cancel()` to handle the return value.
-	 * Use `.cancelErr()` instead.
+	 * Use `.cancelHandle()` instead.
 	 */
 	it("returns undefined if job cancelled ok", async () => {
 
@@ -112,7 +112,7 @@ describe("job.cancel()", () => {
 	 *
 	 * NOTE:
 	 *  Users should NOT use plain `yield* cancel()` to handle the return value.
-	 *  Use `.cancelErr()` instead.
+	 *  Use `.cancelHandle()` instead.
 	 */
 	it(".cancel() is a no-op on already settled jobs and returns undefined", async () => {
 
@@ -142,7 +142,7 @@ describe("job.cancel()", () => {
 /**
  * Handle unhappy paths manually.
  */
-describe("yield* job.cancelErr()", () => {
+describe("yield* job.cancelHandle()", () => {
 
 	it("user can recover from cancelling errors", async () => {
 
@@ -154,7 +154,7 @@ describe("yield* job.cancelErr()", () => {
 		function* main() {
 			const chld = go(child1)
 			yield* sleep(1)
-			const res = yield* chld.cancelHandle()
+			const res = yield* chld.cancelHandleErr()
 			// Recovering: if res !== undefined, cancelling failed.
 			if (res) {
 				return "saved"
@@ -173,7 +173,7 @@ describe("yield* job.cancelErr()", () => {
 		function* main() {
 			const chld = go(child, ctx)
 			yield* sleep(1)
-			return yield* chld.cancelHandle()
+			return yield* chld.cancelHandleErr()
 		}
 
 		const rec = await go(main).promHandle
@@ -196,7 +196,7 @@ describe("yield* job.cancelErr()", () => {
 		function* main() {
 			const chld = go(child1)
 			yield* sleep(2)
-			const rec = yield* chld.cancelHandle()
+			const rec = yield* chld.cancelHandleErr()
 			return { rec }
 		}
 
@@ -232,7 +232,7 @@ describe("yield* job.cancelErr()", () => {
 		function* main() {
 			const chldJob = go(child1)
 			yield* sleep(3)
-			const cancelRes = yield* chldJob.cancelHandle()
+			const cancelRes = yield* chldJob.cancelHandleErr()
 			return { cancelRes, chldJob }
 		}
 

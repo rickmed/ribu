@@ -1,4 +1,4 @@
-import { go, sleep, isErr, errIs, Err } from "ribu"
+import { go, sleep, isErr, errIs, Err, Pool } from "ribu"
 import { type ErCancOk, ErrX, errIsNot } from "../source/errors.js"
 import { cancel } from "../source/cancelAllJobs.js"
 import { allOrErr, EmptyArgsErr, JobHadErr, groupByState } from "../source/job-helpers.js"
@@ -69,12 +69,12 @@ export const tests = {
 	*/
 	*["yield* job.handle"]() {
 		type Exp = OksJob1 | AllErrsJob1
-		const _rec = yield* go(jobFn1).handle
+		const _rec = yield* go(jobFn1).handleErr
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
 	*["yield* job.handle using isErr()"]() {
-		const res = yield* go(jobFn1).handle
+		const res = yield* go(jobFn1).handleErr
 		if (isErr(res)) {
 			type Exp = AllErrsJob1
 			true satisfies Equal<typeof res, Exp>
@@ -85,7 +85,7 @@ export const tests = {
 	},
 
 	*["yield* job.handle using errIs()"]() {
-		const res = yield* go(jobFn1).handle
+		const res = yield* go(jobFn1).handleErr
 		type Err0 = Err<"Error0">
 		if (errIs(res, "Error0")) {
 			type Exp = Err0
@@ -97,7 +97,7 @@ export const tests = {
 	},
 
 	*["yield* job.handle using errIsNot()"]() {
-		const res = yield* go(jobFn1).handle
+		const res = yield* go(jobFn1).handleErr
 		type Err0 = Err<"Error0">
 		if (errIsNot(res, "Error0")) {
 			type Exp = Exclude<AllJob1, Err0>
@@ -114,9 +114,9 @@ export const tests = {
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
-	*["yield* job.cancelErr()"]() {
+	*["yield* job.cancelHandle()"]() {
 		type Exp = void | Err
-		const _rec = yield* go(jobFn1).cancelHandle()
+		const _rec = yield* go(jobFn1).cancelHandleErr()
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
@@ -199,7 +199,7 @@ export const tests = {
 		true satisfies Equal<Internal, never>
 	},
 
-	/* *************** cancel) *********************************************** */
+	/* *************** cancel() ********************************************** */
 
 	*["yield* cancel(...jobs)"]() {
 		type Exp = void
@@ -211,7 +211,7 @@ export const tests = {
 	*["yield* cancel(...jobs).handle"]() {
 		type Exp = void | EmptyArgsErr | Err
 		const jobs = [go(jobFn1), go(jobFn2)]
-		const _rec = yield* cancel(jobs).handle
+		const _rec = yield* cancel(jobs).handleErr
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
@@ -220,6 +220,32 @@ export const tests = {
 		const _job = cancel(jobs)
 		type Internal = InternalMethods<typeof _job>
 		true satisfies Equal<Internal, never>
+	},
+
+	*["yield* cancel(...jobs).cancel()"]() {
+		type Exp = void
+		const jobs = [go(jobFn1), go(jobFn2)]
+		const _rec = yield* cancel(jobs).cancel()
+		true satisfies Equal<typeof _rec, Exp>
+	},
+
+	*["yield* cancel(...jobs).cancelHandle()"]() {
+		type Exp = void | Err
+		const jobs = [go(jobFn1), go(jobFn2)]
+		const _rec = yield* cancel(jobs).cancelHandleErr()
+		true satisfies Equal<typeof _rec, Exp>
+	},
+
+
+	/* *************** Pool ************************************************** */
+
+	*["yield* Pool"]() {
+		const job1 = go(jobFn1)
+		const job2 = go(jobFn2)
+		const pool = Pool([job1, job2])
+		const _rec = yield* pool
+		type Exp = typeof job1 | typeof job2
+		true satisfies Equal<typeof _rec, Exp>
 	},
 
 
@@ -263,7 +289,7 @@ export const tests = {
 	*["yield* allOrErr().handle"]() {
 		type Exp = NotErrs | JobHadErr | EmptyArgsErr
 		const args = [() => go(jobFn1), () => go(jobFn2)]
-		const _rec = yield* allOrErr(args).handle
+		const _rec = yield* allOrErr(args).handleErr
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
@@ -274,10 +300,10 @@ export const tests = {
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
-	*["yield* allOrErr().cancelErr()"]() {
+	*["yield* allOrErr().cancelHandle()"]() {
 		type Exp = void | Err
 		const args = [() => go(jobFn1), () => go(jobFn2)]
-		const _rec = yield* allOrErr(args).cancelHandle()
+		const _rec = yield* allOrErr(args).cancelHandleErr()
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
@@ -287,11 +313,6 @@ export const tests = {
 		type Internal = InternalMethods<typeof _job>
 		true satisfies Equal<Internal, never>
 	},
-
-
-
-	// *["yield* allOrErr().cancelErr()"]() {
-	// },
 }
 
 

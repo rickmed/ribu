@@ -63,7 +63,7 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 			// Add link to receiver Job so it can unlink if cancelled.
 			addTgLink(recJob, link)
 
-			// Block receiver
+			// Park receiver
 			recJob._st |= PARKED_CH_REC
 			iterRes.done = false
 		}
@@ -84,7 +84,6 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 
 			const putType = _pt.b
 			const putVal = _pt.a
-
 
 			if (putType === 0) {  // putter is a job
 				const putJob = putVal as _Job

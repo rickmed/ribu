@@ -25,7 +25,6 @@ class System {
 export let sys = new System()
 
 
-export type IterRes = IteratorResult<unknown>
 export let iterRes = {
 	done: false,
 	value: 0 as unknown,
@@ -34,9 +33,6 @@ export let iterRes = {
 export type SysIterator<V> = Iterator<unknown, V>
 export const SYS_ITERATOR = {
 	next() {
-		if (iterRes.done === true) {
-			sys.runningJob._st &= ~PARKED
-		}
 		return iterRes
 	}
 }

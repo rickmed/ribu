@@ -61,7 +61,7 @@ describe("allOrErr()", () => {
 
 		function* main() {
 			const jobs = [() => go(jobFailsCancelling, ctx), () => go(badJob)]
-			const res = yield* allOrErr(jobs).handle
+			const res = yield* allOrErr(jobs).handleErr
 			return { res }
 		}
 
@@ -88,7 +88,7 @@ describe("allOrErr()", () => {
 
 		function* main() {
 			const jobs = [() => go(jobFailsCancelling, ctx), () => go(badJob)]
-			const res = yield* allOrErr(jobs).handle
+			const res = yield* allOrErr(jobs).handleErr
 			return { res }
 		}
 

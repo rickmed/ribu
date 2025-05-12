@@ -105,7 +105,7 @@ describe("yield* job.handle", () => {
 		}
 
 		function* main() {
-			const res = yield* go(child).handle
+			const res = yield* go(child).handleErr
 			return res
 		}
 
@@ -121,7 +121,7 @@ describe("yield* job.handle", () => {
 		}
 
 		function* main() {
-			const res = yield* go(child).handle
+			const res = yield* go(child).handleErr
 			return res
 		}
 
@@ -138,7 +138,7 @@ describe("yield* job.handle", () => {
 		}
 
 		function* main() {
-			const res = yield* go(child).handle
+			const res = yield* go(child).handleErr
 			return res
 		}
 
@@ -156,7 +156,7 @@ describe("yield* job.handle", () => {
 		}
 
 		function* main() {
-			const res = yield* go(child).handle
+			const res = yield* go(child).handleErr
 			return res
 		}
 
@@ -197,22 +197,22 @@ describe("yield* job.handle", () => {
 		function* main() {
 			let errs: ("Err0" | false | "no" | number)[] = []
 
-			const res0 = yield* go(job1, "er0").handle
+			const res0 = yield* go(job1, "er0").handleErr
 			if (errIs(res0, "Err0")) {
 				errs.push(res0.$err)
 			}
 
-			const res1 = yield* go(job1, "er1").handle
+			const res1 = yield* go(job1, "er1").handleErr
 			if (errIs(res1, "Err1")) {
 				errs.push(res1.y)
 			}
 
-			const res2 = yield* go(job1, "er2").handle
+			const res2 = yield* go(job1, "er2").handleErr
 			if (errIs(res2, "Err2")) {
 				errs.push(res2.z)
 			}
 
-			const res3 = yield* go(job1, "er3").handle
+			const res3 = yield* go(job1, "er3").handleErr
 			if (errIs(res3, "Err3")) {
 				errs.push(res3.w)
 			}
