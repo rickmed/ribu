@@ -13,12 +13,13 @@ import {
 	DoneJob,
 	loop_tg,
 	ERR_IN_ONEND,
-	addErrorToJobVal,
+	addErrorToJob,
 	addTgLink,
 	TgLink,
 	removeTgLink,
+	CANCOK,
 } from "./job.js"
-import { _E, type Err } from "./errors.js"
+import { _E, ERR_CANC_OK, type Err } from "./errors.js"
 import { VOID_LINK, VOID_OBJ } from "./system.js"
 
 
@@ -109,14 +110,14 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown> extends _Job<Ok, 
 		return this
 	}
 
-	_onTgDone(tgJob: Job): void {
+	_onTgDone(tgJob: _Job): void {
 		if (this._st & CANCELLED) {
-			if ((tgJob as _Job)._st & ERR_IN_ONEND) {
-				addErrorToJobVal(this, (tgJob as _Job)._v as Err, ERR_IN_GENFN)
+			if (tgJob._st & ERR_IN_ONEND) {
+				addErrorToJob(this, tgJob._v as Err, ERR_IN_GENFN)
 			}
 		}
 		else {
-			if ((tgJob as _Job)._doneErr) {
+			if (tgJob._doneErr) {
 				this._onErrTgDone(tgJob)
 			}
 			else {
@@ -148,6 +149,11 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown> extends _Job<Ok, 
 			clearTimeout(this._tm as NodeJS.Timeout)
 			this._tm = VOID_OBJ
 		}
+		const thisSt = this._st
+		if (thisSt & CANCELLED && !(thisSt & ERR_IN_ONEND)) {
+			this._st = CANCOK
+			this._v = ERR_CANC_OK as typeof this._v
+		}
 		markSettledAndNotifyObs(this)
 	}
 
@@ -160,9 +166,9 @@ export class JobPlus<Ok = unknown, E = unknown, Ctx = unknown> extends _Job<Ok, 
 	}
 
 	// To be overridden by subclasses
-	_init(): void {}
-	_onOkTgDone(_: Job) {}
-	_onErrTgDone(_: Job) {}
+	_init(): void { }
+	_onOkTgDone(_: Job) { }
+	_onErrTgDone(_: Job) { }
 }
 
 function observeJobs(obJob: JobPlus, jobs: JobOrJobThunkArr, cancel = false) {
@@ -467,8 +473,8 @@ type DoneJobFrom<J> = J extends Job<infer _Ok, infer E, infer Ctx>
 
 // const dummyGen = (function* dummyGenFn() {})()
 
-// export function newJob<Ret = unknown, Errs = ErCancOK |  | __Err>(jobName = "") {
-// 	return new Job<Ret, Errs | ErCancOK |  | __Err>(dummyGen, jobName)
+// export function newJob<Ret = unknown, Errs = ErrCancOk |  | __Err>(jobName = "") {
+// 	return new Job<Ret, Errs | ErrCancOk |  | __Err>(dummyGen, jobName)
 // }
 
 

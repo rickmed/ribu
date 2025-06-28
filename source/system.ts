@@ -1,4 +1,4 @@
-import { PARKED, type _Job } from "./job.js"
+import { type _Job } from "./job.js"
 
 
 export const VOID_OBJ = { _v: 0 } as const
@@ -44,26 +44,6 @@ export const SYS_ITERABLE = {
 	[Symbol.iterator]() {
 		return SYS_ITERATOR
 	}
-}
-
-
-export function ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt: _Job["_st"], opName: string) {
-	const callerJob = sys.runningJob
-	if (callerJob._st & PARKED) {
-		throwNotYielded(opName)
-	}
-	// eslint-disable-next-line functional/immutable-data
-	callerJob._st |= callerJobNextSt
-	return callerJob
-}
-
-export function throwNotYielded(currentOp: string) {
-	const errMsg = `
-		Ribu: Did you forget to yield* at the operation before this one?
-		Current yieldable operation: ${currentOp}.
-		Job: ${sys.runningJob._nm}.
-	`
-	throw Error(errMsg)
 }
 
 

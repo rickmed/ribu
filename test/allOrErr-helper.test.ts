@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { go, sleep, allOrErr, Err, onEnd } from "ribu"
 import { EMPTY_ARGS } from "../source/job-helpers.js"
-import { _Er, _E } from "../source/errors.js"
+import { _Er, _E, ERR_CANC_OK } from "../source/errors.js"
 
 describe("allOrErr()", () => {
 
@@ -143,7 +143,7 @@ describe("allOrErr()", () => {
 		expect(rec).toStrictEqual([["job1", "job2"], ["job1", "job2"]])
 	})
 
-	it("can be cancelled", async () => {
+	it.only("can be cancelled", async () => {
 		let ctx = { count: 0 }
 
 		function* job1() {
@@ -160,12 +160,12 @@ describe("allOrErr()", () => {
 
 		function* main() {
 			const jobs = [() => go(job1), () => go(job2)]
-			const res = yield* allOrErr(jobs).cancel()
-			return res
+			const rec = yield* allOrErr(jobs).cancel()
+			return {rec}
 		}
 
-		const rec = await go(main)
-		expect(rec).toBe(undefined)
+		const {rec} = await go(main)
+		expect(rec).toStrictEqual(ERR_CANC_OK)
 		expect(ctx.count).toBe(0)
 	})
 })

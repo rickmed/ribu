@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { go, Err, sleep, onEnd } from "ribu"
-import { _Er, _E } from "../source/errors.js"
+import { go, Err, sleep, onEnd, Job } from "ribu"
+import { _Er, _E, ERR_CANC_OK } from "../source/errors.js"
 
-function* child(ctx: {count: number}) {
+function* child(ctx: { count: number }) {
 	yield* sleep(3)
 	ctx.count++
 }
@@ -26,9 +26,9 @@ describe("job.cancel()", () => {
 	/**
 	 * NOTE:
 	 * Users should NOT use plain `yield* cancel()` to handle the return value.
-	 * Use `.cancelHandle()` instead.
+	 * Use `.cancelHandleErr()` instead.
 	 */
-	it("returns undefined if job cancelled ok", async () => {
+	it("returns Cancel OK Err if job cancelled ok", async () => {
 
 		let ctx = { count: 0 }
 
@@ -48,7 +48,7 @@ describe("job.cancel()", () => {
 		}
 
 		const rec = await go(main).promHandle
-		expect(rec).toStrictEqual(undefined)
+		expect(rec).toStrictEqual(ERR_CANC_OK)
 		expect(ctx.count).toBe(0)
 	})
 
@@ -105,36 +105,39 @@ describe("job.cancel()", () => {
 		expect(rec).toStrictEqual(exp)
 	})
 
-	/**
-	 *  If a job is already settled, calling `.cancel()` won't change the state
-	 *  of the target job. Even if the target job settled with errors, those
-	 *  errors won't be propagated to the caller.
-	 *
-	 * NOTE:
-	 *  Users should NOT use plain `yield* cancel()` to handle the return value.
-	 *  Use `.cancelHandle()` instead.
-	 */
-	it(".cancel() is a no-op on already settled jobs and returns undefined", async () => {
+	it(".cancel() side effects only run once", async () => {
+
+		let onEndCalledTimes = 0
 
 		function* child1() {
-			yield* sleep(1)
-			return Err("Bad")
+			onEnd(function* end() {
+				onEndCalledTimes++
+				yield* sleep(2)
+			})
+			yield* sleep(5)
 		}
 
 		function* main() {
 			const childJob = go(child1)
-			yield* sleep(3)
-			const cancelRes = yield* childJob.cancel()
-			return { cancelRes, childJob }
+			yield* sleep(1)
+			const firstCancelRes = yield* childJob.cancel()
+
+			// Late cancel works with .cancel()
+			const lateCancelRes1 = yield* childJob.cancel()
+
+			// Late cancel works with .cancelHandleErr()
+			const lateCancelRes2 = yield* childJob.cancelHandleErr()
+
+			const childSettledVal = childJob.isDone() && childJob.val
+			return { firstCancelRes, lateCancelRes1, lateCancelRes2, childSettledVal }
 		}
 
-		const { cancelRes, childJob } = await go(main)
-
-		expect(cancelRes).toStrictEqual(undefined)
-
-		const exp = _E("Bad", "child1")
-		const rec = childJob.isDone() && childJob.val
-		expect(rec).toStrictEqual(exp)
+		const { firstCancelRes, lateCancelRes1, lateCancelRes2, childSettledVal } = await go(main)
+		expect(firstCancelRes).toStrictEqual(ERR_CANC_OK)
+		expect(lateCancelRes1).toStrictEqual(ERR_CANC_OK)
+		expect(lateCancelRes2).toStrictEqual(ERR_CANC_OK)
+		expect(onEndCalledTimes).toBe(1)
+		expect(childSettledVal).toStrictEqual(ERR_CANC_OK)
 	})
 })
 
@@ -142,7 +145,7 @@ describe("job.cancel()", () => {
 /**
  * Handle unhappy paths manually.
  */
-describe("yield* job.cancelHandle()", () => {
+describe("yield* job.cancelHandleErr()", () => {
 
 	it("user can recover from cancelling errors", async () => {
 
@@ -177,7 +180,7 @@ describe("yield* job.cancelHandle()", () => {
 		}
 
 		const rec = await go(main).promHandle
-		expect(rec).toBe(undefined)
+		expect(rec).toBe(ERR_CANC_OK)
 		expect(ctx.count).toBe(0)
 	})
 
@@ -214,34 +217,5 @@ describe("yield* job.cancelHandle()", () => {
 		}
 
 		expect(rec).toEqual(exp)
-	})
-
-	/**
-	 * If a job is already settled, calling `cancel()` won't change the state of
-	 * the target job.
-	 * Also, even if the target job settled with errors, those errors won't be
-	 * propagated to the caller.
-	 */
-	it("is a no-op on already settled jobs", async () => {
-
-		function* child1() {
-			yield* sleep(1)
-			return Err("Bad")
-		}
-
-		function* main() {
-			const chldJob = go(child1)
-			yield* sleep(3)
-			const cancelRes = yield* chldJob.cancelHandleErr()
-			return { cancelRes, chldJob }
-		}
-
-		const { cancelRes, chldJob } = await go(main)
-
-		expect(cancelRes).toEqual(undefined)
-
-		const exp = _E("Bad", "child1")
-		const rec = chldJob.isDone() && chldJob.val
-		expect(rec).toStrictEqual(exp)
 	})
 })

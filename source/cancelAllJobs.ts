@@ -1,5 +1,5 @@
 import { EmptyArgsErr, JobPlus, SETTLED_OR_CANCELLED } from "./job-helpers.js"
-import { addErrorToJobVal, ERR_IN_GENFN, type _Job, Job, ERR_IN_ONEND, CANCELLED, markSettledAndNotifyObs, unlinkFromAllJobs } from "./job.js"
+import { addErrorToJob, ERR_IN_GENFN, type _Job, Job, ERR_IN_ONEND, CANCELLED, markSettledAndNotifyObs, unlinkFromAllJobs } from "./job.js"
 import { type Err } from "./errors.js"
 import { VOID_LINK } from "./system.js"
 
@@ -8,7 +8,7 @@ export const CANCEL_ALL_OP_NAME = "cancel"
 class CancelAll<Ok, E> extends JobPlus<Ok, E | EmptyArgsErr> {
 	_nm = CANCEL_ALL_OP_NAME
 
-	// todo: maybe have a custom cancelHandle type
+	// todo: maybe have a custom cancelHandleErr type
 	_onTgDone(tgJob: _Job): void {
 		this._onOkTgDone(tgJob)
 		if (this._tg === VOID_LINK) {
@@ -18,7 +18,7 @@ class CancelAll<Ok, E> extends JobPlus<Ok, E | EmptyArgsErr> {
 
 	_onOkTgDone(tgJob: _Job): void {
 		if (tgJob._st & ERR_IN_ONEND) {
-			addErrorToJobVal(this, tgJob._v as Err, ERR_IN_GENFN)
+			addErrorToJob(this, tgJob._v as Err, ERR_IN_GENFN)
 		}
 	}
 

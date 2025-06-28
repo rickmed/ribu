@@ -77,7 +77,6 @@ export class _Pool<Jobs> extends _Job {
 		} while (obLink !== VOID_LINK)
 	}
 
-	// thinking about ensurePreviousYieldAndSetCallerJobNextSt()
 	[Symbol.iterator]() {
 		const doneJobsLLHead = this._pr
 		if (doneJobsLLHead !== VOID_LINK) {

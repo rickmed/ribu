@@ -103,9 +103,9 @@ export class Public_Err extends _Err {
 }
 
 
-export const ER_CANC_OK = new _Err("ECancOk")
-export type ErCancOk = _Err & {
-	readonly $err: "ECancOk"
+export const ERR_CANC_OK = new _Err("ErrCancOk")
+export type ErrCancOk = _Err & {
+	readonly $err: "ErrCancOk"
 }
 
 

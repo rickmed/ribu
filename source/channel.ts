@@ -1,5 +1,5 @@
-import { addTgLink, _Job, PARKED, PARKED_CH_PUT, PARKED_CH_REC, removeTgLink, resumeJob } from "./job.js"
-import { SysIterable, freshLink, iterRes, type Link, type VoidLink, VOID_LINK, disposeLink, sys, throwNotYielded } from "./system.js"
+import { addTgLink, _Job, PARKED_CH_PUT, PARKED_CH_REC, removeTgLink, resumeJob } from "./job.js"
+import { SysIterable, freshLink, iterRes, type Link, type VoidLink, VOID_LINK, disposeLink, sys } from "./system.js"
 
 
 /*
@@ -37,9 +37,6 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 
 	get rec() {
 		const recJob = sys.runningJob
-		if (recJob._st & PARKED) {
-			throwNotYielded("ch.rec")
-		}
 
 		const { _pt } = this
 
@@ -105,9 +102,6 @@ export class Chan<V = undefined> implements OutCh<V>, InCh<V> {
 
 	put(msg: PutVal<V>) {
 		const putJob = sys.runningJob
-		if (putJob._st & PARKED) {
-			throwNotYielded("ch.put")
-		}
 
 		const link = pullRecLink(this)
 

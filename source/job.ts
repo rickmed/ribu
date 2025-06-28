@@ -12,10 +12,9 @@ import {
 	type SysIterator,
 	SYS_ITERABLE,
 	type SysIterable,
-	ensurePreviousYieldAndSetCallerJobNextSt,
 } from "./system.js"
 
-import { type Err, _Err, ER_CANC_OK, ErCancOk, _Er } from "./errors.js"
+import { type Err, _Err, ERR_CANC_OK, type ErrCancOk, _Er } from "./errors.js"
 import { Chan, PutterLink, ReceiverLink } from "./channel.js"
 
 // todo: implement "unsub() to have something like trio's moveOnAfter()
@@ -41,7 +40,7 @@ import { Chan, PutterLink, ReceiverLink } from "./channel.js"
 
 //* **********************  Job Class  ************************************* *//
 
-const DUMMY_GEN = (function* () {})()
+const DUMMY_GEN = (function* () { })()
 let self: _Job
 
 export type RibuGen<Ret = unknown> =
@@ -65,26 +64,26 @@ type OnEnd = SyncFn | AsyncFn | RibuGenFn
 type OnEndLink = Link<OnEnd, _Job>
 
 /* **** State Flags **** */
-export const PARKED_CONTINUE = 1 << 0  // 1
-const PARKED_JOB = 1 << 1  // 2
-const PARKED_CANCEL = 1 << 2  // 4
-const PARKED_CANCEL_ERR = 1 << 3  // 8
-export const PARKED_SLEEP = 1 << 4  // 16
-export const PARKED_CH_PUT = 1 << 5  // 32
-export const PARKED_CH_REC = 1 << 6  // 64
-export const WAITING_CHILDREN = 1 << 7  // 128
-const WAITING_ONENDS = 1 << 8  // 256
-export const CANCELLED = 1 << 9  // 512
-export const SETTLED = 1 << 10  // 1024
-const CANCOK = 1 << 11  // 2048
-export const ERR_IN_GENFN = 1 << 12  // 4096
-export const ERR_IN_ONEND = 1 << 13  // 8192
-const CANCEL_SIBLINGS_ON_ERR = 1 << 14  // 16384
+export const PARKED_CONTINUE = 1      // 1 << 0
+const PARKED_JOB = 2                  // 1 << 1
+const PARKED_CANCEL = 4               // 1 << 2
+const PARKED_CANCEL_CONTINUE = 8      // 1 << 3
+export const PARKED_SLEEP = 16        // 1 << 4
+export const PARKED_CH_PUT = 32       // 1 << 5
+export const PARKED_CH_REC = 64       // 1 << 6
+export const WAITING_CHILDREN = 128   // 1 << 7
+const WAITING_ONENDS = 256            // 1 << 8
+export const CANCELLED = 512          // 1 << 9
+export const SETTLED = 1024           // 1 << 10
+export const CANCOK = 2048                   // 1 << 11
+export const ERR_IN_GENFN = 4096      // 1 << 12
+export const ERR_IN_ONEND = 8192      // 1 << 13
+const CANCEL_SIBLINGS_ON_ERR = 16384  // 1 << 14
 // todo: implement this when [Symbol.dispose] is implemented
 // const JOB_IN_POOL = 1 << 16  // 65536
 
 const PARKED_CH = PARKED_CH_PUT | PARKED_CH_REC
-export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_CANCEL | PARKED_CANCEL_ERR| PARKED_SLEEP | PARKED_CH
+export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_CANCEL | PARKED_CANCEL_CONTINUE | PARKED_SLEEP | PARKED_CH
 const HAD_ERR = ERR_IN_GENFN | ERR_IN_ONEND
 export const ANY_ERR_OR_CANCOK = HAD_ERR | CANCOK
 const CANCEL_NOOP = SETTLED | WAITING_ONENDS
@@ -143,11 +142,24 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 		const { _st } = this
 
 		if (_st & WAITING_CHILDREN) {
-			onChildDone(this, tgJob)
+			if (tgJob._st & HAD_ERR) {
+				addErrorToJob(this, tgJob._v as Err, ERR_IN_GENFN)
+				const { _st } = this
+				// If a previous child also failed, don't cancel trigger cancel again.
+				if ((_st & CANCEL_SIBLINGS_ON_ERR) && !(_st & CANCELLED)) {
+					loop_tg(this, false, true)
+				}
+			}
+
+			if (this._tg === VOID_LINK) {
+				execOnEndsRecur(this)
+			}
+
 			return
 		}
 
 		// Parked at yield*
+
 		const tgSt = tgJob._st
 
 		const shouldThisJobFail =
@@ -163,24 +175,23 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 	}
 
 	[Symbol.iterator]() {
-		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_JOB, `yield* ${this._nm}`)
+		sys.runningJob._st |= PARKED_JOB
 		return jobIterator<Ok>(this)
 	}
 
 	get handleErr(): SysIterable<Ok | E> {
-		ensurePreviousYieldAndSetCallerJobNextSt(PARKED_CONTINUE, ".handle")
 		self = this
 		return JOB_ITERABLE as SysIterable<Ok | E>
 	}
 
 	cancel() {
-		processCancel(this, ".cancel()", PARKED_CANCEL)
-		return SYS_ITERABLE as SysIterable<void>
+		processCancel(this, PARKED_CANCEL)
+		return SYS_ITERABLE as SysIterable<ErrCancOk>
 	}
 
 	cancelHandleErr() {
-		processCancel(this, ".cancelHandle()", PARKED_CANCEL_ERR)
-		return SYS_ITERABLE as SysIterable<void | Err>
+		processCancel(this, PARKED_CANCEL_CONTINUE)
+		return SYS_ITERABLE as SysIterable<ErrCancOk | Err>
 	}
 
 	// Is _cancel() caller responsibility to not subscribe if job is done,
@@ -320,39 +331,47 @@ export class _Job<Ok = unknown, E = unknown, Ctx = unknown> implements JobBase<O
 	}
 }
 
-function processCancel(job: _Job, opName: string, callerJobNextSt: _Job["_st"]) {
-	const callerJob = ensurePreviousYieldAndSetCallerJobNextSt(callerJobNextSt, opName)
+function processCancel(
+	thisJob: _Job,
+	callerJobNextSt: typeof PARKED_CANCEL | typeof PARKED_CANCEL_CONTINUE
+) {
 
-	if (job._st & SETTLED) {
-		iterRes.done = true
-		iterRes.value = undefined
+	if (ifJobSettledOnCancel(thisJob, callerJobNextSt)) {
 		return
 	}
 
-	job._cancel()
+	thisJob._cancel()
 
-	const { _st } = job
-
-	// Check if Job settled synchronously just after. _cancel() called.
-	if (_st & SETTLED) {
-		if (callerJobNextSt & PARKED_CANCEL_ERR) {
-			iterRes.done = true
-			iterRes.value = _st & ERR_IN_ONEND ? job.val : undefined
-			return
-		}
-		if (_st & ERR_IN_ONEND) {
-			iterRes.done = false
-			genFnFailed(callerJob, _Er(callerJob._nm, job.val))
-			return
-		}
-
-		iterRes.done = true
-		iterRes.value = undefined
+	if (ifJobSettledOnCancel(thisJob, callerJobNextSt)) {
 		return
 	}
 
-	linkJobs(callerJob, job)
+	sys.runningJob._st |= callerJobNextSt
+	linkJobs(sys.runningJob, thisJob)
 	iterRes.done = false
+}
+
+function ifJobSettledOnCancel(
+	thisJob: _Job,
+	callerJobNextSt: typeof PARKED_CANCEL | typeof PARKED_CANCEL_CONTINUE,
+) {
+	const jobSt = thisJob._st
+
+	if (!(jobSt & SETTLED)) {
+		return false
+	}
+
+	if (callerJobNextSt == PARKED_CANCEL_CONTINUE || !(jobSt & ERR_IN_ONEND)) {
+		iterRes.done = true
+		iterRes.value = thisJob._v
+	}
+	else {
+		iterRes.done = false
+		const callerJob = sys.runningJob
+		genFnFailed(callerJob, _Er(callerJob._nm, thisJob.val))
+	}
+
+	return true
 }
 
 function resolveJobThenable<OkRet, GetterErr>(res: (val: OkRet) => void, rej: (err: GetterErr) => void, thisJob: _Job) {
@@ -372,7 +391,6 @@ function jobIterator<T>(job: _Job) {
 	const thisSt = job._st
 
 	if (thisSt & SETTLED) {
-		// todo: maybe unify this logic shared with Job._onTgJobDone()
 		const shouldCallerFail =
 			(callerSt & PARKED_JOB) && (thisSt & ANY_ERR_OR_CANCOK)
 
@@ -465,8 +483,8 @@ function genFnFailed(thisJob: _Job, jobVal: _Err) {
 	onGenFnDone(thisJob, true)
 }
 
-const syncFnCtor = (function DUMMY_SYNC_FN() {}).constructor
-const genFnCtor = (function* DUMMY_GEN_FN() {}).constructor
+const syncFnCtor = (function DUMMY_SYNC_FN() { }).constructor
+const genFnCtor = (function* DUMMY_GEN_FN() { }).constructor
 
 function execOnEndsRecur(thisJob: _Job) {
 	const onEndLink = thisJob._oe
@@ -545,7 +563,7 @@ function decorateRibuErr(ribuErr: _Err, fnName: string) {
 const CANCELLED_STR = "Cancelled"
 
 function addOnEndErr(thisJob: _Job, err: Error | _Err) {
-	addErrorToJobVal(thisJob, err, ERR_IN_ONEND)
+	addErrorToJob(thisJob, err, ERR_IN_ONEND)
 	if (thisJob._st & CANCELLED) {
 		// @ts-ignore job.val is Err now and mutation of .msg readonly property
 		thisJob._v.msg = CANCELLED_STR
@@ -553,8 +571,9 @@ function addOnEndErr(thisJob: _Job, err: Error | _Err) {
 }
 
 function settleJob(thisJob: _Job) {
-	// Release parent-child link.
 	const { _pr, _st } = thisJob
+
+	// Release parent-child link.
 	if (_pr !== VOID_LINK) {
 		removeTgLink(_pr.a as _Job, _pr)
 		thisJob._pr = VOID_LINK
@@ -562,8 +581,8 @@ function settleJob(thisJob: _Job) {
 	}
 
 	if (_st & CANCELLED && !(_st & ERR_IN_ONEND)) {
-		thisJob._v = ER_CANC_OK
 		thisJob._st = CANCOK
+		thisJob._v = ERR_CANC_OK
 	}
 
 	markSettledAndNotifyObs(thisJob)
@@ -593,22 +612,6 @@ export function markSettledAndNotifyObs(thisJob: _Job) {
 	}
 }
 
-function onChildDone(job: _Job, child: _Job) {
-	if (child._st & HAD_ERR) {
-		addErrorToJobVal(job, child._v as Err, ERR_IN_GENFN)
-		const { _st } = job
-		// If a previous child also failed, don't cancel trigger cancel again.
-		if ((_st & CANCEL_SIBLINGS_ON_ERR) && !(_st & CANCELLED)) {
-			loop_tg(job, false, true)
-		}
-	}
-
-	if (job._tg === VOID_LINK) {
-		execOnEndsRecur(job)
-		return
-	}
-}
-
 export function loop_tg(thisJob: _Job, observe: boolean, cancel: boolean) {
 	let childLink = thisJob._tg
 	// Can start loop right away bc caller guards against job state.
@@ -632,19 +635,13 @@ export function loop_tg(thisJob: _Job, observe: boolean, cancel: boolean) {
 	} while (childLink !== VOID_LINK)
 }
 
-export function addErrorToJobVal(thisJob: _Job, err: Error | _Err, errFlag: _Job["_st"]) {
+export function addErrorToJob(thisJob: _Job, err: Error | _Err, errFlag: _Job["_st"]) {
+	let jobVal = thisJob._v as _Err
 	if (!(thisJob._st & HAD_ERR)) {
-		thisJob._v = _Er(thisJob._nm)
+		jobVal = thisJob._v = _Er(thisJob._nm)
 	}
-	const errVal = thisJob._v as Err
-	if (errFlag & ERR_IN_GENFN) {
-		errVal._addErr(err)
-	}
-	else {
-		errVal._addErr(err)
-	}
+	jobVal._addErr(err)
 	thisJob._st |= errFlag
-	return errVal
 }
 
 /* *********************  Job LLs Operations  ******************** */
@@ -764,8 +761,8 @@ export interface JobBase<Ok = unknown, E = unknown, Ctx = unknown> {
 	readonly handleErr: SysIterable<Ok | E>
 	setCtx: <NewCtx>(ctx: NewCtx) => Job<Ok, E, NewCtx>
 	readonly ctx: Ctx
-	cancel: () => SysIterable<void>
-	cancelHandleErr: () => SysIterable<void | Err>
+	cancel: () => SysIterable<ErrCancOk>
+	cancelHandleErr: () => SysIterable<ErrCancOk | Err>
 	onEnd: (fn: OnEnd) => void
 	then: (res: (val: Ok) => void, rej: (err: E) => void) => void
 	readonly promHandle: Promise<Ok | E>
@@ -781,7 +778,7 @@ export interface JobBase<Ok = unknown, E = unknown, Ctx = unknown> {
 		| ErrJob<E, Ctx>
 }
 
-type RibuErrs = ErCancOk | Err
+type RibuErrs = ErrCancOk | Err
 
 export function go<Args extends unknown[], GenFnRet>(
 	genFn: RibuGenFn<GenFnRet, Args>,

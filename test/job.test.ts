@@ -28,7 +28,7 @@ describe("yield* automatic error propagation", () => {
 
 		function* child() {
 			yield* sleep(1)
-			return Err("Recovered")
+			return Err("SomeErr")
 		}
 
 		function* main() {
@@ -39,7 +39,7 @@ describe("yield* automatic error propagation", () => {
 		const rec = await go(main).promHandle
 		const exp =
 			_Er("main",
-				_E("Recovered", "child")
+				_E("SomeErr", "child")
 			)
 		expect(rec).toStrictEqual(exp)
 	})

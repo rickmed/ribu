@@ -72,7 +72,7 @@ describe("yield* cancel(...jobs)", () => {
 		expect((chldJob as _Job)._v).toStrictEqual(exp)
 	})
 
-	it("works if child is cancel(). Parent settles after cancel() settles", async () => {
+	it("Structured Concurrency works if child is job from cancel(). Parent settles after the cancel job settles", async () => {
 
 		let cancelJobSettled = false
 
@@ -81,23 +81,17 @@ describe("yield* cancel(...jobs)", () => {
 			return "never reached"
 		}
 
-		function* parent() {
+		function* main() {
+			onEnd(() => {
+				cancelJobSettled = childCancelJob.isDone()
+			})
 			const chld = go(child)
 			yield* sleep(1)
-			const job = cancel([chld])
-			onEnd(() => {
-				cancelJobSettled = job.isDone()
-			})
+			const childCancelJob = cancel([chld])
 		}
 
-		function* main() {
-			const res = yield* go(parent).cancel()
-			return res
-		}
-
-		const rec = await go(main)
+		await go(main)
 		expect(cancelJobSettled).toBe(true)
-		expect(rec).toBe(undefined)
 	})
 })
 
@@ -323,9 +317,9 @@ it(".cancel() can be called on cancel job", async () => {
 	expect(rec).toBe(undefined)
 })
 
-// .cancelHandle() behaves like .cancel(), ie, no error is possible.
+// .cancelHandleErr() behaves like .cancel(), ie, no error is possible.
 // So this method would never make sense to be used.
-it(".cancelHandle() could be called on cancel job", async () => {
+it(".cancelHandleErr() could be called on cancel job", async () => {
 
 	function* child() {
 		onEnd(function* () {

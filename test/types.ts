@@ -1,5 +1,5 @@
 import { go, sleep, isErr, errIs, Err, Pool } from "ribu"
-import { type ErCancOk, ErrX, errIsNot } from "../source/errors.js"
+import { type ErrCancOk, ErrX, errIsNot } from "../source/errors.js"
 import { cancel } from "../source/cancelAllJobs.js"
 import { allOrErr, EmptyArgsErr, JobHadErr, groupByState } from "../source/job-helpers.js"
 import {type OkJob, type ErrJob, DoneJob, type ByStateJobBase, Job } from "../source/job.js"
@@ -38,7 +38,7 @@ export function* jobFn2(x?: number) {
 	return Err("Error2")
 }
 
-type RibuErrs = Err | ErCancOk
+type RibuErrs = Err | ErrCancOk
 
 type ErrsJob1 = Err<"Error0"> | ErrX<"Error1", { z: number}> | Er2
 type AllErrsJob1 = ErrsJob1 | RibuErrs
@@ -64,7 +64,7 @@ export const tests = {
 	},
 
 	/* When using .handle, the returned type is the type returned from the
-		generator function, plus ErCancOK (in case the job was cancelled) and the
+		generator function, plus ErrCancOK (in case the job was cancelled) and the
 		generic Ribu Err from unexpected values.
 	*/
 	*["yield* job.handle"]() {
@@ -109,13 +109,13 @@ export const tests = {
 	},
 
 	*["yield* job.cancel()"]() {
-		type Exp = void
+		type Exp = ErrCancOk
 		const _rec = yield* go(jobFn1).cancel()
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
-	*["yield* job.cancelHandle()"]() {
-		type Exp = void | Err
+	*["yield* job.cancelHandleErr()"]() {
+		type Exp = ErrCancOk | Err
 		const _rec = yield* go(jobFn1).cancelHandleErr()
 		true satisfies Equal<typeof _rec, Exp>
 	},
@@ -223,14 +223,14 @@ export const tests = {
 	},
 
 	*["yield* cancel(...jobs).cancel()"]() {
-		type Exp = void
+		type Exp = ErrCancOk
 		const jobs = [go(jobFn1), go(jobFn2)]
 		const _rec = yield* cancel(jobs).cancel()
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
-	*["yield* cancel(...jobs).cancelHandle()"]() {
-		type Exp = void | Err
+	*["yield* cancel(...jobs).cancelHandleErr()"]() {
+		type Exp = ErrCancOk | Err
 		const jobs = [go(jobFn1), go(jobFn2)]
 		const _rec = yield* cancel(jobs).cancelHandleErr()
 		true satisfies Equal<typeof _rec, Exp>
@@ -294,14 +294,14 @@ export const tests = {
 	},
 
 	*["yield* allOrErr().cancel()"]() {
-		type Exp = void
+		type Exp = ErrCancOk
 		const args = [() => go(jobFn1), () => go(jobFn2)]
 		const _rec = yield* allOrErr(args).cancel()
 		true satisfies Equal<typeof _rec, Exp>
 	},
 
-	*["yield* allOrErr().cancelHandle()"]() {
-		type Exp = void | Err
+	*["yield* allOrErr().cancelHandleErr()"]() {
+		type Exp = ErrCancOk | Err
 		const args = [() => go(jobFn1), () => go(jobFn2)]
 		const _rec = yield* allOrErr(args).cancelHandleErr()
 		true satisfies Equal<typeof _rec, Exp>
