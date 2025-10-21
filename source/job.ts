@@ -64,23 +64,23 @@ type OnEnd = SyncFn | AsyncFn | RibuGenFn
 type OnEndLink = Link<OnEnd, _Job>
 
 /* **** State Flags **** */
-export const PARKED_CONTINUE = 1      // 1 << 0
-const PARKED_JOB = 2                  // 1 << 1
-const PARKED_CANCEL = 4               // 1 << 2
-const PARKED_CANCEL_CONTINUE = 8      // 1 << 3
-export const PARKED_SLEEP = 16        // 1 << 4
-export const PARKED_CH_PUT = 32       // 1 << 5
-export const PARKED_CH_REC = 64       // 1 << 6
-export const WAITING_CHILDREN = 128   // 1 << 7
-const WAITING_ONENDS = 256            // 1 << 8
-export const CANCELLED = 512          // 1 << 9
-export const SETTLED = 1024           // 1 << 10
-export const CANCOK = 2048            // 1 << 11
-export const ERR_IN_GENFN = 4096      // 1 << 12
-export const ERR_IN_ONEND = 8192      // 1 << 13
-const CANCEL_SIBLINGS_ON_ERR = 16384  // 1 << 14
+export const PARKED_CONTINUE = 1 << 0
+const PARKED_JOB = 1 << 1
+const PARKED_CANCEL =  1 << 2
+const PARKED_CANCEL_CONTINUE = 1 << 3
+export const PARKED_SLEEP = 1 << 4
+export const PARKED_CH_PUT = 1 << 5
+export const PARKED_CH_REC = 1 << 6
+export const WAITING_CHILDREN = 1 << 7
+const WAITING_ONENDS = 1 << 8
+export const CANCELLED = 1 << 9
+export const SETTLED = 1 << 10
+export const CANCOK = 1 << 11
+export const ERR_IN_GENFN = 1 << 12
+export const ERR_IN_ONEND = 1 << 13
+const CANCEL_SIBLINGS_ON_ERR = 1 << 14
 // todo: implement this when [Symbol.dispose] is implemented
-// const JOB_IN_POOL = 1 << 16  // 65536
+// const JOB_IN_POOL = 1 << 16
 
 const PARKED_CH = PARKED_CH_PUT | PARKED_CH_REC
 export const PARKED = PARKED_CONTINUE | PARKED_JOB | PARKED_CANCEL | PARKED_CANCEL_CONTINUE | PARKED_SLEEP | PARKED_CH
